@@ -1,0 +1,73 @@
+ Poe Craft Tool（拾刻） - 项目结构 (v1.0.0 发布版)
+====================================================
+
+📦 poe-craft-tool（拾刻）/
+│
+├── 📄 主程序与核心模块
+│   ├── main.py                    # 程序入口点，PySide6 应用初始化
+│   ├── models.py                  # 数据模型：装备、词缀、状态机
+│   ├── storage.py                 # 存储管理：配置读写、JSON 持久化
+│   ├── affix_engine.py            # 词缀计算引擎：component 解析、期望值计算
+│   ├── auto_operator.py           # 自动操作：寻路、点击序列、动作调度
+│   ├── clicker_operator.py        # 连点器：坐标点击、热键控制
+│   ├── foreground.py              # 前台控制：窗口激活、鼠标模拟
+│   ├── key_operator.py            # 键盘操作：按键映射、修饰键处理
+│   ├── widgets.py                 # 自定义控件：可拖拽列表、增强表格等
+│   ├── poe.ico                    # 应用图标（Windows 托盘图标）
+│   ├── requirements.txt           # Python 依赖：PySide6, Pillow, pynput 等
+│   ├── README.txt                 # 用户使用说明
+│   └── DEBUG_GUIDE.md             # 调试与开发指南
+│
+├── 🎨 界面模块 (ui/)
+│   ├── __init__.py                # 包标识
+│   ├── main_window.py             # 主窗口：Tab 布局、全局状态管理
+│   ├── config_tab.py              # 配置页：词缀筛选、MF/均势切换、操作队列
+│   ├── settings_tab.py            # 设置页：热键绑定、声音、Debug 选项
+│   ├── clicker_tab.py             # 连点器页：坐标录制、连点控制
+│   ├── key_tab.py                 # 按键映射页：键位配置
+│   └── __pycache__/               # 编译缓存（*.pyc）
+│
+├── 🔧 数据与预设 (data/)
+│   ├── presets/
+│   │   └── 武器.json              # 武器类装备预设：词缀模板、component 配置
+│   └── __pycache__/               # 运行时生成的缓存目录
+│
+├── 🔊 音效资源 (sounds/)
+│   ├── default_ding.mp3           # 默认提示音（短促）
+│   ├── soundreality-notification-piano-443094.mp3
+│   ├── universfield-new-notification-032-480570.mp3
+│   ├── universfield-new-notification-036-485897.mp3
+│   └── universfield-new-notification-056-494256.mp3
+
+
+
+====================================================
+🔧 技术栈
+====================================================
+- 语言：Python 3.10+
+- GUI 框架：PySide6 (Qt6)
+- 自动化：pynput (键盘鼠标模拟)
+- 图像处理：Pillow (截图、坐标映射)
+- 数据存储：JSON 文件
+- 打包工具：PyInstaller（生成 v23 可执行文件）
+
+====================================================
+📋 关键模块说明
+====================================================
+1. affix_engine.py
+   - 核心算法：词缀期望值计算、component→词缀映射
+   - 外部依赖：data/presets/武器.json
+
+2. auto_operator.py
+   - 自动脚本：寻路、点击、操作队列执行
+   - 依赖：clicker_operator, key_operator, foreground
+
+3. ui/main_window.py
+   - 主界面：Tab 切换、状态同步、热键注册
+   - 子模块：config_tab, settings_tab, clicker_tab, key_tab
+
+4. storage.py
+   - 配置持久化：读写 JSON，管理用户设置
+   - 路径：基于 APPDATA/LOCALAPPDATA
+
+

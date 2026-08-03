@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+data/coordinates.json
+data/rules.json
+data/settings.json
+venv/
+.env
+*.zip
+*.exe
+release/
+build/
+dist/
+*.spec
+platforms/
