@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.2 — 2026-08-04
+
+### 文档补充（重构准备）
+- DEV_GUIDE.md: 明确"装备名字参与匹配"是设计意图（铁律），非容忍的Bug
+- DEV_GUIDE.md: 输入框替代方案补充QLineEdit + QIntValidator（C#/WPF适用）
+- PITFALLS.md: 新增第15条——装备名字必须参与匹配（铁律）
+- PITFALLS.md: 重新编号16→17
+
 ## v1.0.1 — 2026-04-27
 
 ### 初始发布版

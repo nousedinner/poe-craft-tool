@@ -61,8 +61,7 @@ When one line contains multiple affixes (e.g., `"+30 全部抗性, +72 最大生
 
 - Splits by `--------` sections
 - Filters out metadata lines (Rarity, Item Level, Requires, Quality, etc.)
-- **Bug:** Item name and base type are NOT filtered — `pass` statement does nothing, `affix_lines.append(line)` always executes
-- User considers this acceptable (宽松匹配)
+- **⚠️ 铁律：Item name and base type MUST participate in matching — do NOT filter them out.** The `pass` statement does nothing, `affix_lines.append(line)` always executes. This is intentional design (宽松匹配), not a tolerated bug. Equipment name must always be checked against affix rules in all modes. If you're rewriting this, keep item name in the affix list.
 
 ### ⚠️ Chinese Item Text (Tencent Client)
 
@@ -547,7 +546,7 @@ self.primary_max.setValue(self.primary_max.minimum())
 self.primary_max.focusInEvent = lambda e: (super(self.primary_max.__class__, self.primary_max).focusInEvent(e), self.primary_max.selectAll())
 ```
 
-**Alternative approach:** Use QLineEdit with QDoubleValidator for direct typing, but SpinBox with auto-select is simpler and preserves existing validation.
+**Alternative approach:** Use QLineEdit with QIntValidator for direct typing (integer only — PoE affix values are always integers). SpinBox with auto-select is simpler for Python/Qt, but in C#/WPF, TextBox + IntValidationRule is the standard pattern.
 
 **Note:** This pattern can be applied to ALL SpinBoxes in the UI that users need to type into frequently.
 
@@ -1702,7 +1701,7 @@ def _on_show_popup(self, msg: str):
 
 ## Known Issues (Not Bugs Per User)
 
-1. **parse_item_text includes item name** — User accepts 宽松匹配
+1. **parse_item_text includes item name** — **Intentional design (铁律)**: item name and base type MUST participate in matching. Do NOT filter them out during rewrite.
 2. **Mode 2 no exclude check after augmentation** — augmentation only adds 1 mod, final check covers it
 3. **Clipboard delay (33ms×3 ≈ 100ms)** — user-configurable
 4. **10x unchanged clipboard = exhaustion** — probability of false positive near zero
