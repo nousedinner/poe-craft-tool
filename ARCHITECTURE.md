@@ -104,7 +104,7 @@ public sealed class CoordinateSlot
 }
 ```
 
-**实现此接口的工具**：Craft（物品+8种通货=9个槽位）、Clicker（点击目标=1个槽位）
+**实现此接口的工具**：Craft（物品+8种通货=9个槽位）
 
 ### 2.3 HotkeyRequest
 
@@ -268,9 +268,9 @@ Python 版 storage.py 的 settings 是平铺结构（所有键在顶层），C# 
 
 | 旧键（平铺） | 新位置（分节） |
 |-------------|---------------|
-| `craft_hotkey` | `host.hotkeys.start` |
-| `stop_hotkey` | `host.hotkeys.stop` |
-| `coordinate_hotkey` | `host.hotkeys.coordinate` |
+| `hotkey_start` | `host.hotkeys.start` |
+| `hotkey_stop` | `host.hotkeys.stop` |
+| `hotkey_set_coord` | `host.hotkeys.coordinate` |
 | `clicker_hotkey` | `clicker.hotkey` |
 | `clicker_hold_hotkey` | `clicker.hold_hotkey` |
 | `key_loop_hotkey` | `keyloop.hotkey` |
