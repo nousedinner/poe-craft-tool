@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.0.4 — 2026-08-04
+
+### 架构文档审查修正（本地AI审查反馈）
+- ARCHITECTURE.md: 连点器还原为当前位置连点（坐标录制为新增功能，后置）
+- ARCHITECTURE.md: rules.json 补 mode/single_currency 字段
+- ARCHITECTURE.md: 右键通货等待统一为 delay×3（非固定 0.2s）
+- ARCHITECTURE.md: 架构图补顶部广告区（50px）
+- ARCHITECTURE.md: 补错误弹窗防风暴（_errorShown 标志）
+- ARCHITECTURE.md: CoordinateRecorder 补信号分离铁律
+- ARCHITECTURE.md: 补 settings.json 旧版平铺→分节迁移映射表
+- ARCHITECTURE.md: F7 坐标录制 CheckForeground 改为 false
+- ARCHITECTURE.md: 签到 payload 补 Umami 完整字段结构
+- IMPLEMENTATION.md: 同步修正连点器描述 + 右键等待值
+
 ## v1.0.3 — 2026-08-04
 
 ### C# 重构架构文档

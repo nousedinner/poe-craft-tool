@@ -176,7 +176,7 @@
 
 ### 3.2 洗装引擎（CraftEngine）— Mode 1
 - `Mode1_SingleCurrency(token, progress)`：
-  - 右键通货 → 等 0.2s → Shift 按住
+  - 右键通货 → 等 delay×3（默认≈0.1s）→ Shift 按住
   - 循环：ShiftClick 物品 → CtrlAltC → 读剪贴板 → CheckAffixes
   - 命中 → 停止 + 通知 + 音效
   - 耗尽 → 停止 + 通知（连续 10 次剪贴板不变）
@@ -240,15 +240,15 @@
 **目标**：剩余 3 个工具实现。
 
 ### 4.1 ClickerTool
-- `ClickerTool.cs`：ICoordinateProvider（1 个槽位：点击目标）
-- `ClickerPage.xaml`：按键选择 + 间隔滑块 + 坐标录制 + 启停
+- `ClickerTool.cs`：当前位置连点（无坐标录制，Python 版行为）
+- `ClickerPage.xaml`：按键选择 + 间隔滑块 + 启停
 - 热键：F8 Toggle + F11 Hold
 - 后台循环：单 Task 常驻，CTS 控制启停
   - 前台检测 + 紧急停止 + 250ms 节流通知
   - Toggle：F8 按下开始/停止
   - Hold：F11 按住开始/松开停止
 
-**验证**：F8 连点桌面指定位置，F11 按住连点松开停止
+**验证**：F8 连点当前鼠标位置，F11 按住连点松开停止
 
 ### 4.2 KeyLoopTool
 - `KeyLoopTool.cs`

@@ -10,6 +10,9 @@
 ```
 ┌─────────────────────────────────────────────────────┐
 │                    MainWindow.xaml                     │
+│  ┌──────────────────────────────────────────────────┐│
+│  │              顶部广告区（50px，可多条）            ││
+│  └──────────────────────────────────────────────────┘│
 │  ┌──────────┐  ┌──────────────────────────────────┐  │
 │  │  导航栏   │  │          内容区（工具页面）        │  │
 │  │  (ListBox)│  │  ┌────────────────────────────┐  │  │
@@ -211,7 +214,7 @@ public sealed class HotkeyManager
 |------|--------|------|-----------------|
 | 启动洗装 | F5 | Toggle | true |
 | 停止洗装 | F6 | Toggle | **false** |
-| 坐标录制 | F7 | Toggle | true |
+| 坐标录制 | F7 | Toggle | **false**（用户可能已切到游戏，Python 版不检查前台） |
 | 连点器 | F8 | Toggle | true |
 | 按键循环 | F9 | Toggle | true |
 | 连点按住 | F11 | Hold | true |
@@ -259,6 +262,22 @@ public sealed class StorageService
     public void DeletePreset(string name);
 }
 ```
+
+**⚠️ settings.json 旧版迁移：**
+Python 版 storage.py 的 settings 是平铺结构（所有键在顶层），C# 版改为按工具分节。**首次运行时检测旧版 settings.json → 自动迁移**：读旧平铺键 → 映射到新分节 → 写新格式 → 重命名旧文件为 `settings.json.bak`。迁移映射表：
+
+| 旧键（平铺） | 新位置（分节） |
+|-------------|---------------|
+| `craft_hotkey` | `host.hotkeys.start` |
+| `stop_hotkey` | `host.hotkeys.stop` |
+| `coordinate_hotkey` | `host.hotkeys.coordinate` |
+| `clicker_hotkey` | `clicker.hotkey` |
+| `clicker_hold_hotkey` | `clicker.hold_hotkey` |
+| `key_loop_hotkey` | `keyloop.hotkey` |
+| `delay_ms` | `craft.delay_ms` |
+| `target_process` | `host.target_process` |
+| `selected_sound` | `craft.selected_sound` |
+| （其余键按语义归类） | |
 
 **settings.json 结构：**
 ```json
@@ -313,6 +332,8 @@ public sealed class StorageService
 **rules.json / 预设格式（兼容旧版）：**
 ```json
 {
+  "mode": "alt_aug_regal",
+  "single_currency": "chaos",
   "primary_affixes": ["物理伤害提高", "攻击速度"],
   "primary_hit_count": 2,
   "secondary_affixes": ["最大生命"],
@@ -320,6 +341,8 @@ public sealed class StorageService
   "exclude_affixes": ["减少魔力保留"]
 }
 ```
+- `mode`：当前选择的洗装模式（"single" / "alt_aug" / "alt_aug_regal"）
+- `single_currency`：Mode 1 选中的通货类型（"alteration" / "chaos" / "custom"）
 
 ### 3.6 NotificationService
 
@@ -329,11 +352,18 @@ public sealed class NotificationService
     private readonly Window _overlay;  // 无边框 + Topmost + 透明背景 + 不抢焦点
     private readonly DispatcherTimer _dismissTimer;
     private DateTime _lastShowTime;    // 防重：2200ms 内不重复弹
+    private bool _errorShown;          // 防风暴：同类错误只弹一次
 
     public void Show(string message);
     // 1. 检查距上次 Show 是否 < 2200ms → 是则跳过
     // 2. 设置文本、居中、显示
     // 3. 启动 2s 定时器 → 到期 Hide
+
+    public void ShowError(string message);
+    // 防风暴：_errorShown 标志，同一轮运行中重复错误不重复弹窗
+    // （Python main_window.py:437-444 行为）
+
+    public void ResetErrorFlag();  // 新一轮运行开始时重置
 
     public void Hide();
 }
@@ -393,6 +423,9 @@ public sealed class CoordinateRecorder
 }
 ```
 
+**⚠️ 信号分离铁律（Python 坑 #10 CRITICAL）：**
+CoordinateRecorder 的录制触发（F7 → 取坐标 → 存槽位）与工具页面的通货选中逻辑**完全独立**。录制信号 `RecordingCompleted` 和选中信号 `CurrencySelected` 是两个不同的事件，绝不共享。点击"设定坐标"按钮只触发录制流程，不改变当前选中的通货类型。
+
 ### 3.10 NetworkService
 
 ```csharp
@@ -404,7 +437,17 @@ public sealed class NetworkService
     // GET open.cancanneed.top/version.json → 比较版本号
 
     public async Task SendPingAsync(string appName);
-    // POST open.cancanneed.top/api/send → pageview 事件，静默失败
+    // POST open.cancanneed.top/api/send
+    // Payload（Umami 格式）：{
+    //   website: "xxx-xxx-xxx",  // website UUID
+    //   url: "/app/shike",
+    //   hostname: Environment.MachineName,
+    //   screen: $"{Screen.PrimaryScreen.Bounds.Width}x{Screen.PrimaryScreen.Bounds.Height}",
+    //   title: "拾刻",
+    //   name: appName,
+    //   language: "zh-CN"
+    // }
+    // 静默失败，不影响启动
 
     public async Task<List<AdItem>> FetchAdsAsync();
     // GET open.cancanneed.top/ads.json
@@ -572,8 +615,9 @@ Mode3 显示：ALTERATION, AUGMENTATION, REGAL, SCOURING, TRANSMUTATION, EXALTED
 **页面结构：**
 - 按键选择（左键/右键 Radio）
 - 点击间隔（SliderInput，10-200ms，默认 33）
-- 连点目标坐标录制（ICoordinateProvider，1 个槽位）
 - 启动/停止按钮 + 点击计数
+
+> **注意**：Python 版连点器是当前位置连点（鼠标放哪点哪），无坐标录制。ARCHITECTURE 早期版本误加了坐标录制，已还原。坐标版连点器作为后期新增功能。
 
 **热键声明：**
 - F8 连点器（Toggle, CheckForeground=true）
@@ -595,7 +639,8 @@ while (true)
         // 前台检测
         if (!foreground.IsTargetForeground()) { Task.Delay(100); continue; }
 
-        InputSimulator.Click(targetX, targetY);
+        // 当前鼠标位置连点（Python 版行为：pyautogui.click() 无坐标参数）
+        clickFn();
         clickCount++;
         Task.Delay(intervalMs, token);
     }
