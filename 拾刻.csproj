@@ -18,11 +18,19 @@
     <Description>PoE 洗词缀自动化 + 连点器 + 按键循环 + 一键回城聚合工具（C# 重构版）</Description>
   </PropertyGroup>
 
-  <!-- 移除 WinForms/System.Drawing 隐式 using，避免与 WPF 的 Application/Point 撞名；
-       TrayService 等需要时在文件内显式 using System.Windows.Forms -->
+  <!-- WPF 项目的隐式 using 不含 System.IO / System.Net.Http（WindowsDesktop SDK 默认列表差异），显式加回 -->
   <ItemGroup>
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
+    <!-- 移除 WinForms/System.Drawing 隐式 using，避免与 WPF 的 Application/Point 撞名；
+         TrayService 等需要时在文件内显式 using System.Windows.Forms -->
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <!-- poe.ico 嵌入程序集资源：托盘/窗口图标运行时从资源加载，发布不依赖外部文件 -->
+  <ItemGroup>
+    <Resource Include="poe.ico" />
   </ItemGroup>
 
 </Project>

@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.0.6 — 2026-08-04
+
+### C# 重构 阶段2：9 个公共设施（编译通过 + 冒烟验证，行为级验收待阶段3/4 抽屉接入）
+- InputSimulator：SendInput 封装（MoveTo/RightClick/ShiftClick/HoldShift/CtrlAltC/ReleaseAllKeys/Click）+ 光标 ≤(1,1) 紧急停止；时序对齐 Python auto_operator.py 源码
+- HotkeyManager：RegisterHotKey(Toggle) + WH_KEYBOARD_LL(Hold) + 冲突检测收集 + Dispatcher 回 UI 线程 + 两类 ID 分开清理；HotkeyRequest 补 ReleaseHandler 字段（Hold 松开回调）
+- ForegroundDetector：GetForegroundWindow + QueryFullProcessImageNameW + AutoDetectPoe(5 变体)
+- StorageService：settings.json 分节 + 旧版平铺自动迁移(.bak) + coordinates/rules/presets 兼容旧版
+- NotificationService：无边框透明窗（不抢焦点）+ 2s 消失 + 2200ms 防重 + 错误模态防风暴
+- TrayService：NotifyIcon + 关闭拦截（洗装运行中最小化到托盘）
+- SoundService：MediaPlayer + stem 同名不同后缀回退（default_ding.wav → .mp3）
+- CoordinateRecorder：三态录制 + 录制完成事件与选中信号分离（坑 #10）
+- NetworkService：版本检查(System.Version 比较) + 签到(嵌套 payload 对齐 Python) + 广告拉取
+- ToolHost 组装 8 服务 + App 接线（热键注册/0.5s 自动检测 POE/网络后台/退出保存设置）
+- MainWindow：顶部广告区（可多条+占位）+ 完整状态栏（状态点/说明/反馈/底部广告/使用次数）
+- 修正 ARCHITECTURE.md 3 处文档-源码不一致：ShiftClick 时序（纯点击非自带 Shift）、签到 payload（嵌套非 Umami 平铺）、rules mode 格式（旧版 int）
+- 拾刻.csproj：WPF 隐式 using 不含 System.IO/System.Net.Http，显式补回
+- 修复：托盘/窗口图标不显示——poe.ico 嵌入程序集资源（pack URI 加载，原实现依赖 bin 下文件；顺带窗口标题栏/任务栏图标恢复）
+
 ## v1.0.5 — 2026-08-04
 
 ### C# 重构 阶段1：骨架（编译通过，待运行验证）
