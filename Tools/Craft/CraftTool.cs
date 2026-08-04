@@ -53,6 +53,9 @@ public sealed class CraftTool : ITool, ICoordinateProvider
         // 全局错误兜底：洗词缀页未打开时也能看到启动错误（坐标缺失/验证失败等）
         _engine.ErrorOccurred += msg => host.Notification.ShowError(msg);
 
+        // 任何停止路径（F6热键/PollStopKey/匹配成功/耗尽/异常）都弹悬浮窗
+        _engine.Stopped += reason => host.Notification.Show($"⏹ {reason}");
+
         // 从 settings.json 读 host 节热键（默认值以 storage.py 为准）
         try
         {
@@ -192,6 +195,7 @@ public sealed class CraftTool : ITool, ICoordinateProvider
             return;
         }
 
+        _engine.SetStopKey(HotkeyStop); // 设置停止键 VK（GetAsyncKeyState 轮询用）
         _engine.Start(Rules, Coordinates, DelayMs, SoundEnabled, PopupEnabled,
             SelectedSound, ExhaustionThreshold, Mode2ScourAlch, UseExalt);
         if (_engine.IsRunning)
@@ -200,7 +204,29 @@ public sealed class CraftTool : ITool, ICoordinateProvider
 
     private void StartFromHotkey()
     {
-        // 前台检查由 HotkeyManager 的 CheckForeground 完成；
+        // 前台检查（对齐 Python _on_start：目标进程不在前台 → 提示不启动）。
+        // 注：HotkeyRequest.CheckForeground 标志由抽屉自查——HotkeyManager.WndProc 不执行该检查（审查 A）。
+        if (!string.IsNullOrEmpty(_host?.Foreground.TargetProcess) &&
+            !_host.Foreground.IsTargetForeground())
+        {
+            var current = ForegroundDetector.GetForegroundProcessName();
+            Diag.Log($"[洗装] StartFromHotkey: 前台检查失败, TargetProcess={_host!.Foreground.TargetProcess}, 当前前台={current ?? "(null)"}");
+            if (string.IsNullOrEmpty(current))
+            {
+                // 前台进程获取失败：OpenProcess 被拒（游戏管理员 + 拾刻普通权限）
+                _host.Notification.ShowError(
+                    $"无法获取前台进程（目标: {_host.Foreground.TargetProcess}）\n\n" +
+                    "游戏可能以管理员身份运行，而拾刻不是。\n" +
+                    "请关闭拾刻后，右键「以管理员身份运行」再试。");
+            }
+            else
+            {
+                _host.Notification.ShowError(
+                    $"请切换到游戏窗口后重试\n\n当前前台: {current}\n目标: {_host.Foreground.TargetProcess}");
+            }
+            return;
+        }
+        Diag.Log("[洗装] StartFromHotkey: 前台检查通过");
         // 启动前从 UI 收集最新规则（用户在页面配置后切到游戏按 F5，规则必须是最新的）
         _page?.CollectRulesFromUi();
         Start();
@@ -209,7 +235,7 @@ public sealed class CraftTool : ITool, ICoordinateProvider
     public void Stop()
     {
         _engine?.Stop();
-        _host?.Notification.Show("⏹ 洗词缀 停止");
+        // 通知由 _engine.Stopped 事件统一处理（覆盖所有停止路径）
     }
 
     public void OnActivate() { }

@@ -14,9 +14,10 @@ public sealed class ToolHost
     public ToolHost(ToolRegistry registry)
     {
         _registry = registry;
-        Input = new InputSimulator(_emergencyCts);
         Hotkeys = new HotkeyManager();
         Foreground = new ForegroundDetector();
+        // InputSimulator 动态取当前 EmergencyCts（审查 D：Reset 后不再持有旧 CTS）+ 前台检测（审查 B）
+        Input = new InputSimulator(() => _emergencyCts, Foreground);
         Storage = new StorageService();
         Notification = new NotificationService();
         Sound = new SoundService();
@@ -32,7 +33,11 @@ public sealed class ToolHost
     /// 注：InputSimulator 持有旧引用，其 CheckEmergencyStop 的 Cancel 仅对旧令牌生效（无害），
     /// 但抛出的 OperationCanceledException 仍会取消当前运行——紧急停止功能不受影响。
     /// </summary>
-    public void ResetEmergencyStop() => _emergencyCts = new();
+    public void ResetEmergencyStop()
+    {
+        Diag.Log("[宿主] ResetEmergencyStop: 创建新 CTS");
+        _emergencyCts = new();
+    }
 
     public InputSimulator Input { get; }
     public HotkeyManager Hotkeys { get; }

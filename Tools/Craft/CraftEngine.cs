@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using ShiKe.Host;
 using ShiKe.Services;
@@ -35,6 +36,10 @@ public sealed class CraftEngine
     private int _exhaustionThreshold = SettingsDefaults.ClipboardUnchangedThreshold;
     private bool _mode2ScourAlch;
     private bool _useExalt;
+    private ushort _stopKeyVk; // F6 停止键的虚拟键码（轮询兜底用）
+
+    // GetAsyncKeyState：轮询物理按键状态（兜底 RegisterHotKey 可能被游戏吞掉）
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
 
     public bool IsRunning => _running;
     public int UseCount { get; private set; }
@@ -55,6 +60,7 @@ public sealed class CraftEngine
     public CraftEngine(ToolHost host)
     {
         _host = host;
+        Diag.Log("[引擎] CraftEngine 构造，常驻线程启动");
         _thread = Task.Run(Loop); // 单常驻线程，启动即建
     }
 
@@ -71,7 +77,10 @@ public sealed class CraftEngine
             // 上次紧急停止（光标到角落误触发）残留的取消状态会令本次启动立即失效，
             // CTS 不可重置（Python Event.clear() 差异），故每次启动前重置（修复：启动后只动鼠标就停）
             if (_host.EmergencyCts.IsCancellationRequested)
+            {
+                Diag.Log("[引擎] Start: EmergencyCts 已取消，重置");
                 _host.ResetEmergencyStop();
+            }
 
             var missing = CheckCoordinates(rules, coordinates, mode2ScourAlch, useExalt);
             if (missing is not null)
@@ -94,6 +103,7 @@ public sealed class CraftEngine
             _runId++;
             _running = true;
             _wakeSignal.Set();
+            Diag.Log($"[引擎] Start: runId={_runId}, mode={rules.Mode}, delay={delayMs}ms, 坐标数={coordinates.Count}");
         }
     }
 
@@ -101,10 +111,25 @@ public sealed class CraftEngine
     {
         lock (this)
         {
+            Diag.Log($"[引擎] Stop: runId={_runId}, _workCts={(_workCts != null ? "存在" : "null")}, " +
+                     $"EmergencyCts.IsCancellationRequested={_host.EmergencyCts.IsCancellationRequested}");
             _running = false;
             _workCts?.Cancel();
             _wakeSignal.Set();
         }
+    }
+
+    /// <summary>设置停止键 VK 码（CraftTool 启动前调用，用于 GetAsyncKeyState 轮询兜底）。</summary>
+    public void SetStopKey(string key) => _stopKeyVk = KeyCode.Parse(key);
+
+    /// <summary>
+    /// 轮询停止键物理状态（对齐 Python _check_stop_key）。
+    /// RegisterHotKey 在游戏前台可能被吞掉，此方法作为兜底。
+    /// </summary>
+    private bool IsStopKeyPhysicallyPressed()
+    {
+        if (_stopKeyVk == 0) return false;
+        return (GetAsyncKeyState(_stopKeyVk) & 0x8000) != 0;
     }
 
     /// <summary>坐标检查（对齐 Python _check_coordinates；Mode2 按子模式正确检查——修复 Python 错位 bug，方案 §6）。</summary>
@@ -163,22 +188,46 @@ public sealed class CraftEngine
             if (!_running) continue;
 
             var myRunId = _runId;
+            Diag.Log($"[引擎] Loop: 开始运行, runId={myRunId}");
             try
             {
                 _workCts = new CancellationTokenSource();
+
+                // 诊断：检查 EmergencyCts 状态
+                var emergCancelled = _host.EmergencyCts.IsCancellationRequested;
+                if (emergCancelled)
+                    Diag.Log("[引擎] Loop: ⚠️ EmergencyCts 已取消！linked CTS 将立即取消");
+
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(
                     _workCts.Token, _host.EmergencyCts.Token);
 
-                await _host.Input.ReleaseAllKeysAsync(linked.Token);
+                Diag.Log($"[引擎] Loop: linked CTS 创建完成, linked.IsCancellationRequested={linked.IsCancellationRequested}");
+
+                // 启动停止键轮询任务（对齐 Python _check_stop_key 兜底机制）
+                using var pollCts = CancellationTokenSource.CreateLinkedTokenSource(linked.Token);
+                var pollTask = Task.Run(() => PollStopKeyAsync(pollCts.Token));
+
+                await _host.Input.ReleaseAllKeysAsync(linked.Token); // 释放键盘修饰键（对齐 Python _release_all）
+                Diag.Log("[引擎] Loop: ReleaseAllKeys 完成，进入 DoCrafting");
                 await DoCraftingAsync(linked.Token);
+                Diag.Log("[引擎] Loop: DoCrafting 正常结束");
+
+                pollCts.Cancel(); // 停止轮询
+                try { await pollTask; } catch { }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException ex)
             {
-                // 正常取消（停止/紧急停止）
+                // 诊断：区分取消来源
+                var workCancelled = _workCts?.IsCancellationRequested ?? false;
+                var emergCancelled2 = _host.EmergencyCts.IsCancellationRequested;
+                Diag.Log($"[引擎] Loop: OperationCanceledException, runId={myRunId}, " +
+                         $"_workCts.Cancelled={workCancelled}, EmergencyCts.Cancelled={emergCancelled2}, " +
+                         $"message={ex.Message}");
             }
             catch (Exception ex)
             {
                 // 先停线程再发错误信号（坑 #17）
+                Diag.Log($"[引擎] Loop: 异常 runId={myRunId}: {ex}");
                 lock (this)
                 {
                     if (_runId == myRunId) { _running = false; _wakeSignal.Set(); }
@@ -187,18 +236,53 @@ public sealed class CraftEngine
             }
             finally
             {
-                // 兜底释放：任何停止路径（含取消/异常）都必须释放键位与鼠标按键，
-                // 用 CancellationToken.None 保证释放不被取消中断（否则 Shift/右键残留）
+                // 兜底释放：任何停止路径（含取消/异常）都必须释放键盘修饰键，
+                // 用 CancellationToken.None 保证释放不被取消中断（否则 Shift 残留）。
+                // 不释放鼠标按键（对齐 Python _release_all：只释放 shift/ctrl/alt）。
                 try { await _host.Input.ReleaseAllKeysAsync(CancellationToken.None); } catch { }
+                Diag.Log($"[引擎] Loop: finally 兜底释放完成, runId={myRunId}");
+
                 lock (this)
                 {
-                    if (_runId == myRunId) { _running = false; _wakeSignal.Set(); }
+                    if (_runId == myRunId)
+                    {
+                        // 只清理本次运行（审查 E：旧运行 finally 不得 Dispose 新运行的 _workCts）
+                        _running = false;
+                        _wakeSignal.Set();
+                        _workCts?.Dispose();
+                        _workCts = null;
+                    }
                 }
-                _workCts?.Dispose();
-                _workCts = null;
-                Stopped?.Invoke("已停止");
+                if (_runId == myRunId)
+                {
+                    Diag.Log($"[引擎] Loop: Stopped 事件触发, runId={myRunId}");
+                    Stopped?.Invoke("已停止");
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// 停止键轮询任务（对齐 Python _check_stop_key）。
+    /// 每 50ms 检查一次 GetAsyncKeyState，如果停止键被物理按下则调用 Stop()。
+    /// 解决：RegisterHotKey 在游戏前台被吞掉导致 F6 失效的问题。
+    /// </summary>
+    private async Task PollStopKeyAsync(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                await Task.Delay(50, token);
+                if (_running && IsStopKeyPhysicallyPressed())
+                {
+                    Diag.Log("[引擎] PollStopKey: 检测到停止键物理按下，触发 Stop");
+                    Stop();
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
     }
 
     private async Task DoCraftingAsync(CancellationToken token)
@@ -255,6 +339,7 @@ public sealed class CraftEngine
 
     private void OnSuccess()
     {
+        Diag.Log($"[引擎] OnSuccess: 匹配成功! 共{UseCount}次, soundEnabled={_soundEnabled}, selectedSound={_selectedSound}");
         ReportStatus($"匹配成功! 共{UseCount}次", force: true);
         MatchFound?.Invoke();
         if (_soundEnabled) _host.Sound.Play(_selectedSound);
@@ -269,8 +354,12 @@ public sealed class CraftEngine
         var itemCoord = _coordinates["item"];
 
         ReportStatus("启动单通货模式...", force: true);
+        Diag.Log($"[引擎] Mode1: 开始, 通货={_rules.SingleCurrency} ({currCoord.X},{currCoord.Y}), 物品 ({itemCoord.X},{itemCoord.Y})");
+
         await _host.Input.RightClickAsync((int)currCoord.X, (int)currCoord.Y, _delayMs, token);
+        Diag.Log("[引擎] Mode1: 通货右键完成");
         await _host.Input.HoldShiftAsync(token);
+        Diag.Log("[引擎] Mode1: HoldShift 完成，进入循环");
 
         var lastClip = "";
         var clipSameCount = 0;
@@ -288,7 +377,10 @@ public sealed class CraftEngine
                 // 对齐 Python _mode1：剪贴板为空 → 停止（物品不在光标处/剪贴板被占用）
                 if (text.Length == 0)
                 {
+                    Diag.Log("[引擎] Mode1: 剪贴板为空，停止");
                     ReportStatus("剪贴板为空，停止", force: true);
+                    if (_soundEnabled) _host.Sound.Play(_selectedSound);
+                    if (_popupEnabled) _host.Notification.Show("剪贴板为空，已停止");
                     return;
                 }
 
@@ -298,8 +390,10 @@ public sealed class CraftEngine
                     clipSameCount++;
                     if (clipSameCount >= _exhaustionThreshold)
                     {
+                        Diag.Log($"[引擎] Mode1: 通货耗尽 (连续{clipSameCount}次未变), soundEnabled={_soundEnabled}");
                         ReportStatus($"通货可能已耗尽 (连续{clipSameCount}次未变)", force: true);
                         if (_soundEnabled) _host.Sound.Play(_selectedSound);
+                        if (_popupEnabled) _host.Notification.Show($"通货可能已耗尽\n连续{clipSameCount}次未变");
                         return;
                     }
                 }
@@ -324,7 +418,7 @@ public sealed class CraftEngine
         }
         finally
         {
-            await _host.Input.ReleaseShiftAsync(token);
+            try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
         }
     }
 

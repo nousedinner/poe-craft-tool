@@ -23,8 +23,8 @@ public sealed class ForegroundDetector
 
     [DllImport("user32.dll")] private static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
-    [DllImport("kernel32.dll")] private static extern nint OpenProcess(uint access, bool inherit, uint pid);
-    [DllImport("kernel32.dll")] private static extern bool QueryFullProcessImageNameW(nint hProcess, uint flags, char[] buffer, ref uint size);
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern nint OpenProcess(uint access, bool inherit, uint pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool QueryFullProcessImageNameW(nint hProcess, uint flags, char[] buffer, ref uint size);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(nint handle);
 
     private const uint ProcessQueryLimitedInformation = 0x1000;
@@ -35,27 +35,92 @@ public sealed class ForegroundDetector
         try
         {
             var hwnd = GetForegroundWindow();
-            if (hwnd == 0) return null;
+            if (hwnd == 0)
+            {
+                Diag.Log("[前台] GetForegroundWindow 返回 0（无前台窗口）");
+                return null;
+            }
+
             GetWindowThreadProcessId(hwnd, out var pid);
-            var handle = OpenProcess(ProcessQueryLimitedInformation, false, pid);
-            if (handle == 0) return null;
-            try
+            if (pid == 0)
             {
-                var buffer = new char[260];
-                var size = (uint)buffer.Length;
-                if (QueryFullProcessImageNameW(handle, 0, buffer, ref size))
-                    return Path.GetFileName(new string(buffer, 0, (int)size));
+                Diag.Log($"[前台] GetWindowThreadProcessId 返回 pid=0, hwnd=0x{hwnd:X}");
+                return null;
             }
-            finally
+
+            // ── 方法1：P/Invoke QueryFullProcessImageNameW ──
+            var result = TryGetImageNameViaWin32(pid);
+            if (result is not null) return result;
+
+            // ── 方法2：托管 API 兜底（Process.GetProcessById）──
+            result = TryGetImageNameViaManaged(pid);
+            if (result is not null)
             {
-                CloseHandle(handle);
+                Diag.Log($"[前台] Win32 失败，托管 API 成功: pid={pid}, name={result}");
+                return result;
             }
+
+            Diag.Log($"[前台] 两种方法均失败, pid={pid}");
+            return null;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // 对齐 Python：异常静默返回 null
+            Diag.Log($"[前台] GetForegroundProcessName 异常: {ex.Message}");
+            return null;
         }
-        return null;
+    }
+
+    /// <summary>方法1：Win32 P/Invoke（对齐 Python ctypes）。</summary>
+    private static string? TryGetImageNameViaWin32(uint pid)
+    {
+        var handle = OpenProcess(ProcessQueryLimitedInformation, false, pid);
+        if (handle == 0)
+        {
+            var err = Marshal.GetLastWin32Error();
+            Diag.Win32Error($"OpenProcess(pid={pid})", err);
+            return null;
+        }
+
+        try
+        {
+            var buffer = new char[260];
+            var size = (uint)buffer.Length;
+            if (QueryFullProcessImageNameW(handle, 0, buffer, ref size))
+            {
+                var name = Path.GetFileName(new string(buffer, 0, (int)size));
+                Diag.Log($"[前台] Win32 成功: pid={pid}, name={name}");
+                return name;
+            }
+            else
+            {
+                var err = Marshal.GetLastWin32Error();
+                Diag.Win32Error($"QueryFullProcessImageNameW(pid={pid})", err);
+                return null;
+            }
+        }
+        finally
+        {
+            CloseHandle(handle);
+        }
+    }
+
+    /// <summary>方法2：托管 API 兜底（不走 P/Invoke，权限模型不同）。</summary>
+    private static string? TryGetImageNameViaManaged(uint pid)
+    {
+        try
+        {
+            using var proc = Process.GetProcessById((int)pid);
+            var name = proc.ProcessName;
+            // Process.ProcessName 不含 .exe 后缀，补上以对齐 Win32 版
+            if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                name += ".exe";
+            return name;
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"[前台] 托管 API 失败: pid={pid}, {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>目标进程是否在前台。TargetProcess 为空 → 恒 True（不检测）。</summary>

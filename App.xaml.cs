@@ -21,6 +21,9 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        Diag.ClearOldLog();
+        Diag.Log("=== 拾刻启动 ===");
+
         // 组装：注册表 → 注册抽屉 → 宿主 → 初始化
         var registry = new ToolRegistry();
         _craftTool = new CraftTool();
@@ -104,6 +107,7 @@ public partial class App : Application
         if (_host is null || _mainWindow is null) return;
 
         var matched = _host.Foreground.AutoDetectPoe();
+        Diag.Log($"[启动] AutoDetectPoe: {(matched is null ? "未检测到" : matched)}");
         if (matched is null) return;
 
         _host.Foreground.TargetProcess = matched;
@@ -163,6 +167,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        Diag.Log("=== 拾刻退出 ===");
         if (_host != null)
         {
             // 1. 保存设置（各抽屉 SaveSettings 写入 [Id] 节）

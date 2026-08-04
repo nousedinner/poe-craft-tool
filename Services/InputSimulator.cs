@@ -17,14 +17,16 @@ namespace ShiKe.Services;
 /// </summary>
 public sealed class InputSimulator
 {
-    private readonly CancellationTokenSource _emergencyCts;
+    private readonly Func<CancellationTokenSource> _emergencyCtsProvider;
+    private readonly ForegroundDetector _foreground;
 
-    public InputSimulator(CancellationTokenSource emergencyCts)
+    public InputSimulator(Func<CancellationTokenSource> emergencyCtsProvider, ForegroundDetector foreground)
     {
-        _emergencyCts = emergencyCts;
+        _emergencyCtsProvider = emergencyCtsProvider;
+        _foreground = foreground;
     }
 
-    // ── Win32 结构 ──
+    // ── Win32 常量 ──
     private const uint INPUT_MOUSE = 0;
     private const uint INPUT_KEYBOARD = 1;
     private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
@@ -32,27 +34,68 @@ public sealed class InputSimulator
     private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
     private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
     private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const uint KEYEVENTF_UNICODE = 0x0004;
+    private const uint KEYEVENTF_SCANCODE = 0x0008;
+
+    // ── Win32 结构体（Sequential 布局让 CLR 自动处理64位对齐）──
 
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int X; public int Y; }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public nint dwExtraInfo; }
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public nint dwExtraInfo;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public nint dwExtraInfo; }
+    private struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public nint dwExtraInfo;
+    }
 
-    [StructLayout(LayoutKind.Explicit)]
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HARDWAREINPUT
+    {
+        public uint uMsg;
+        public ushort wParamL;
+        public ushort wParamH;
+    }
+
+    /// <summary>
+    /// INPUT union — Sequential 布局让 CLR 自动处理64位对齐填充。
+    /// 旧版用 Explicit+FieldOffset(4) 在64位上结构体大小错误，导致 SendInput 读到垃圾数据。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
     {
-        [FieldOffset(0)] public uint type;
-        [FieldOffset(4)] public MOUSEINPUT mi;
-        [FieldOffset(4)] public KEYBDINPUT ki;
+        public uint type;
+        public INPUT_UNION union;
     }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct INPUT_UNION
+    {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public KEYBDINPUT ki;
+        [FieldOffset(0)] public HARDWAREINPUT hi;
+    }
+
+    // ── Win32 API ──
 
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT pt);
-    [DllImport("user32.dll")] private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+    [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+    [DllImport("user32.dll")] private static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
     // ── 紧急停止（对应 Python FAILSAFE：光标到屏幕角落 = 强制停止）──
 
@@ -60,29 +103,72 @@ public sealed class InputSimulator
     {
         if (GetCursorPos(out var pt) && pt.X <= 1 && pt.Y <= 1)
         {
-            _emergencyCts.Cancel();
-            throw new OperationCanceledException("紧急停止：光标已移到屏幕角落 (≤1,1)", _emergencyCts.Token);
+            Diag.Log($"[输入] 紧急停止触发: 光标位于 ({pt.X}, {pt.Y})");
+            _emergencyCtsProvider().Cancel();
+            throw new OperationCanceledException("紧急停止：光标已移到屏幕角落 (≤1,1)");
         }
     }
 
-    private static void SendMouse(uint flags)
+    /// <summary>
+    /// 等待目标进程回到前台（对齐 Python _interruptible_sleep 的前台检查）。
+    /// TargetProcess 为空时直接返回（不检测）。
+    /// </summary>
+    private async Task AwaitForegroundAsync(CancellationToken token)
+    {
+        if (string.IsNullOrEmpty(_foreground.TargetProcess)) return;
+        if (_foreground.IsTargetForeground()) return;
+
+        Diag.Log($"[输入] AwaitForeground: 等待前台切换至 {_foreground.TargetProcess}");
+        while (!_foreground.IsTargetForeground())
+            await Task.Delay(200, token);
+        Diag.Log("[输入] AwaitForeground: 前台已切换");
+    }
+
+    /// <summary>发送鼠标事件。返回 true=SendInput 报告成功。</summary>
+    private static bool SendMouse(uint flags)
     {
         var input = new INPUT
         {
             type = INPUT_MOUSE,
-            mi = new MOUSEINPUT { dwFlags = flags, dwExtraInfo = 0 }
+            union = new INPUT_UNION { mi = new MOUSEINPUT { dwFlags = flags, dwExtraInfo = 0 } }
         };
-        SendInput(1, [input], Marshal.SizeOf<INPUT>());
+        var sent = SendInput(1, [input], Marshal.SizeOf<INPUT>());
+        if (sent == 0)
+        {
+            Diag.Win32Error($"SendInput(mouse=0x{flags:X4})", Marshal.GetLastWin32Error());
+            return false;
+        }
+        return true;
     }
 
-    private static void SendKey(ushort vk, bool up)
+    /// <summary>
+    /// 发送键盘事件（虚拟键码 + 扫描码）。
+    /// 游戏用 DirectInput/Raw Input 只认硬件扫描码，必须同时设置 wVk 和 wScan。
+    /// </summary>
+    private static bool SendKey(ushort vk, bool up)
     {
+        var scan = (ushort)MapVirtualKey(vk, 0); // MAPVK_VK_TO_VSC
         var input = new INPUT
         {
             type = INPUT_KEYBOARD,
-            ki = new KEYBDINPUT { wVk = vk, dwFlags = up ? KEYEVENTF_KEYUP : 0, dwExtraInfo = 0 }
+            union = new INPUT_UNION
+            {
+                ki = new KEYBDINPUT
+                {
+                    wVk = vk,
+                    wScan = scan,
+                    dwFlags = up ? KEYEVENTF_KEYUP : 0,
+                    dwExtraInfo = 0,
+                }
+            }
         };
-        SendInput(1, [input], Marshal.SizeOf<INPUT>());
+        var sent = SendInput(1, [input], Marshal.SizeOf<INPUT>());
+        if (sent == 0)
+        {
+            Diag.Win32Error($"SendInput(key=0x{vk:X2},scan=0x{scan:X2},up={up})", Marshal.GetLastWin32Error());
+            return false;
+        }
+        return true;
     }
 
     // ── 基础操作 ──
@@ -96,25 +182,25 @@ public sealed class InputSimulator
     }
 
     /// <summary>右键：MoveTo → delay → 右键（down→0.02s→up）→ delay×3。
-    /// ⚠️ down/up 之间等待【不可取消】（Python _interruptible_sleep 停止时返回 False 继续执行完；
-    /// C# 若用可取消 Delay，停止时抛异常会卡在 down/up 之间 → 右键残留）。</summary>
+    /// down/up 间等待不可取消（防右键残留）。</summary>
     public async Task RightClickAsync(int x, int y, int delayMs, CancellationToken token)
     {
+        await AwaitForegroundAsync(token);
         await MoveToAsync(x, y, token);
         await Task.Delay(delayMs, token);
         CheckEmergencyStop();
         SendMouse(MOUSEEVENTF_RIGHTDOWN);
-        await Task.Delay(20, CancellationToken.None); // 原子：按下后必抬起
+        await Task.Delay(20, CancellationToken.None);
         SendMouse(MOUSEEVENTF_RIGHTUP);
         await Task.Delay(delayMs * 3, token);
     }
 
     /// <summary>
     /// Shift+点击（Shift 已由外层按住）：±10px 随机偏移 → MoveTo → delay → down → 0.02s → up → delay×2。
-    /// （Python _shift_click；偏移量含 [-10, 10] 两端）
     /// </summary>
     public async Task ShiftClickAsync(int x, int y, int delayMs, CancellationToken token)
     {
+        await AwaitForegroundAsync(token);
         int ox = x + Random.Shared.Next(-10, 11);
         int oy = y + Random.Shared.Next(-10, 11);
         CheckEmergencyStop();
@@ -122,14 +208,15 @@ public sealed class InputSimulator
         await Task.Delay(delayMs, token);
         CheckEmergencyStop();
         SendMouse(MOUSEEVENTF_LEFTDOWN);
-        await Task.Delay(20, CancellationToken.None); // 原子：按下后必抬起（防左键残留）
+        await Task.Delay(20, CancellationToken.None);
         SendMouse(MOUSEEVENTF_LEFTUP);
         await Task.Delay(delayMs * 2, token);
     }
 
-    /// <summary>普通左键点击（阶段4 连点器用，当前位置）。down/up 间不可取消（原子）。</summary>
+    /// <summary>普通左键点击（当前位置）。down/up 间不可取消（原子）。</summary>
     public async Task ClickAsync(int delayMs, CancellationToken token)
     {
+        await AwaitForegroundAsync(token);
         CheckEmergencyStop();
         SendMouse(MOUSEEVENTF_LEFTDOWN);
         await Task.Delay(20, CancellationToken.None);
@@ -137,12 +224,13 @@ public sealed class InputSimulator
         await Task.Delay(delayMs, token);
     }
 
-    /// <summary>右键点击（当前位置，阶段4 连点器右键模式用）。</summary>
+    /// <summary>右键点击（当前位置）。down/up 间不可取消（原子）。</summary>
     public async Task RightClickAsync(int delayMs, CancellationToken token)
     {
+        await AwaitForegroundAsync(token);
         CheckEmergencyStop();
         SendMouse(MOUSEEVENTF_RIGHTDOWN);
-        await Task.Delay(20, token);
+        await Task.Delay(20, CancellationToken.None);
         SendMouse(MOUSEEVENTF_RIGHTUP);
         await Task.Delay(delayMs, token);
     }
@@ -151,6 +239,7 @@ public sealed class InputSimulator
 
     public async Task HoldShiftAsync(CancellationToken token)
     {
+        await AwaitForegroundAsync(token);
         CheckEmergencyStop();
         SendKey(KeyCode.Shift, up: false);
         await Task.Delay(50, token);
@@ -162,15 +251,23 @@ public sealed class InputSimulator
         await Task.Delay(50, token);
     }
 
-    /// <summary>释放 shift/ctrl/alt + 鼠标左/右键（Python _release_all + 鼠标兜底：防停止时键位/按键残留）。</summary>
+    /// <summary>释放 shift/ctrl/alt（对齐 Python _release_all：只释放键盘修饰键，不释放鼠标按键）。</summary>
     public async Task ReleaseAllKeysAsync(CancellationToken token)
     {
         SendKey(KeyCode.Shift, up: true);
         SendKey(KeyCode.Control, up: true);
         SendKey(KeyCode.Alt, up: true);
+        await Task.Delay(50, token);
+    }
+
+    /// <summary>
+    /// 释放鼠标按键（仅在 Loop finally 安全兜底时调用）。
+    /// 分开管理：正常运行中不释放鼠标（避免干扰游戏状态），仅在引擎彻底停止后释放。
+    /// </summary>
+    public void ReleaseMouseButtons()
+    {
         SendMouse(MOUSEEVENTF_LEFTUP);
         SendMouse(MOUSEEVENTF_RIGHTUP);
-        await Task.Delay(50, token);
     }
 
     // ── 键盘 ──
@@ -178,6 +275,7 @@ public sealed class InputSimulator
     /// <summary>Ctrl+Alt+C（国服复制物品文本；Shift 应保持按住）。返回后已等 max(delay×5, 0.15)。</summary>
     public async Task CtrlAltCAsync(int delayMs, CancellationToken token)
     {
+        await AwaitForegroundAsync(token);
         await Task.Delay(50, token);
         CheckEmergencyStop();
         SendKey(KeyCode.Control, up: false);
@@ -190,13 +288,49 @@ public sealed class InputSimulator
     }
 
     public void KeyDown(string key) => SendKey(KeyCode.Parse(key), up: false);
-
     public void KeyUp(string key) => SendKey(KeyCode.Parse(key), up: true);
 
+    /// <summary>
+    /// 逐字符输入文本（KEYEVENTF_UNICODE，不依赖键盘布局；对齐 Python keyboard.write）。
+    /// 每字符 5ms 间隔，防游戏丢字符。
+    /// </summary>
+    public async Task TypeTextAsync(string text, CancellationToken token)
+    {
+        await AwaitForegroundAsync(token);
+        foreach (var ch in text)
+        {
+            token.ThrowIfCancellationRequested();
+            SendKeyUnicode(ch, down: true);
+            SendKeyUnicode(ch, down: false);
+            await Task.Delay(5, token);
+        }
+    }
+
+    private static void SendKeyUnicode(char ch, bool down)
+    {
+        var input = new INPUT
+        {
+            type = INPUT_KEYBOARD,
+            union = new INPUT_UNION
+            {
+                ki = new KEYBDINPUT
+                {
+                    wVk = 0,
+                    wScan = ch,
+                    dwFlags = down ? KEYEVENTF_UNICODE : KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                    dwExtraInfo = 0,
+                }
+            }
+        };
+        SendInput(1, [input], Marshal.SizeOf<INPUT>());
+    }
+
+    /// <summary>按下并释放一个键（对齐 Python keyboard.press_and_release）。</summary>
     public void PressAndRelease(string key)
     {
         var vk = KeyCode.Parse(key);
         SendKey(vk, up: false);
+        Thread.Sleep(10); // 小延迟确保游戏能收到按下事件
         SendKey(vk, up: true);
     }
 }
@@ -221,7 +355,7 @@ public static class KeyCode
         [";"] = 0xBA, ["'"] = 0xDE, [","] = 0xBC, ["."] = 0xBE, ["/"] = 0xBF,
     };
 
-    /// <summary>解析键名（"f5"/"a"/"enter"/"ctrl" 等）。未知键返回 0。</summary>
+    /// <summary>解析键名。未知键返回 0。</summary>
     public static ushort Parse(string key)
     {
         if (string.IsNullOrWhiteSpace(key)) return 0;

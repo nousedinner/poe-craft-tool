@@ -20,3 +20,4 @@ platforms/
 bin/
 obj/
 *.user
+kill_shike.*

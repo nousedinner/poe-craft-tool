@@ -33,4 +33,9 @@
     <Resource Include="poe.ico" />
   </ItemGroup>
 
+  <!-- sounds/ 目录复制到输出目录（SoundService 从 AppContext.BaseDirectory/sounds/ 查找音效文件） -->
+  <ItemGroup>
+    <None Include="sounds\**" CopyToOutputDirectory="PreserveNewest" Link="sounds\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>
