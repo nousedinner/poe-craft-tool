@@ -9,12 +9,12 @@ namespace ShiKe.Host;
 public sealed class ToolHost
 {
     private readonly ToolRegistry _registry;
+    private CancellationTokenSource _emergencyCts = new();
 
     public ToolHost(ToolRegistry registry)
     {
         _registry = registry;
-        EmergencyCts = new CancellationTokenSource();
-        Input = new InputSimulator(EmergencyCts);
+        Input = new InputSimulator(_emergencyCts);
         Hotkeys = new HotkeyManager();
         Foreground = new ForegroundDetector();
         Storage = new StorageService();
@@ -24,8 +24,15 @@ public sealed class ToolHost
         Network = new NetworkService();
     }
 
-    /// <summary>全局紧急停止令牌源（InputSimulator 光标 ≤(1,1) 时 Cancel）。</summary>
-    public CancellationTokenSource EmergencyCts { get; }
+    public CancellationTokenSource EmergencyCts => _emergencyCts;
+
+    /// <summary>
+    /// 重置紧急停止令牌。CTS 一旦 Cancel 不可恢复（Python Event.clear() 可重置），
+    /// 每次运行前检查并重置，避免"误触一次紧急停止 → 之后所有启动立即失效"。
+    /// 注：InputSimulator 持有旧引用，其 CheckEmergencyStop 的 Cancel 仅对旧令牌生效（无害），
+    /// 但抛出的 OperationCanceledException 仍会取消当前运行——紧急停止功能不受影响。
+    /// </summary>
+    public void ResetEmergencyStop() => _emergencyCts = new();
 
     public InputSimulator Input { get; }
     public HotkeyManager Hotkeys { get; }

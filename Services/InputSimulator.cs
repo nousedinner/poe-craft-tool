@@ -95,13 +95,16 @@ public sealed class InputSimulator
         await Task.Delay(30, token);
     }
 
-    /// <summary>右键：MoveTo → delay → 右键 → delay×3（Python _right_click）。</summary>
+    /// <summary>右键：MoveTo → delay → 右键（down→0.02s→up）→ delay×3。
+    /// ⚠️ down/up 之间等待【不可取消】（Python _interruptible_sleep 停止时返回 False 继续执行完；
+    /// C# 若用可取消 Delay，停止时抛异常会卡在 down/up 之间 → 右键残留）。</summary>
     public async Task RightClickAsync(int x, int y, int delayMs, CancellationToken token)
     {
         await MoveToAsync(x, y, token);
         await Task.Delay(delayMs, token);
         CheckEmergencyStop();
         SendMouse(MOUSEEVENTF_RIGHTDOWN);
+        await Task.Delay(20, CancellationToken.None); // 原子：按下后必抬起
         SendMouse(MOUSEEVENTF_RIGHTUP);
         await Task.Delay(delayMs * 3, token);
     }
@@ -119,17 +122,17 @@ public sealed class InputSimulator
         await Task.Delay(delayMs, token);
         CheckEmergencyStop();
         SendMouse(MOUSEEVENTF_LEFTDOWN);
-        await Task.Delay(20, token);
+        await Task.Delay(20, CancellationToken.None); // 原子：按下后必抬起（防左键残留）
         SendMouse(MOUSEEVENTF_LEFTUP);
         await Task.Delay(delayMs * 2, token);
     }
 
-    /// <summary>普通左键点击（阶段4 连点器用，当前位置）。</summary>
+    /// <summary>普通左键点击（阶段4 连点器用，当前位置）。down/up 间不可取消（原子）。</summary>
     public async Task ClickAsync(int delayMs, CancellationToken token)
     {
         CheckEmergencyStop();
         SendMouse(MOUSEEVENTF_LEFTDOWN);
-        await Task.Delay(20, token);
+        await Task.Delay(20, CancellationToken.None);
         SendMouse(MOUSEEVENTF_LEFTUP);
         await Task.Delay(delayMs, token);
     }
@@ -159,12 +162,14 @@ public sealed class InputSimulator
         await Task.Delay(50, token);
     }
 
-    /// <summary>释放 shift/ctrl/alt（Python _release_all，卡键兜底）。</summary>
+    /// <summary>释放 shift/ctrl/alt + 鼠标左/右键（Python _release_all + 鼠标兜底：防停止时键位/按键残留）。</summary>
     public async Task ReleaseAllKeysAsync(CancellationToken token)
     {
         SendKey(KeyCode.Shift, up: true);
         SendKey(KeyCode.Control, up: true);
         SendKey(KeyCode.Alt, up: true);
+        SendMouse(MOUSEEVENTF_LEFTUP);
+        SendMouse(MOUSEEVENTF_RIGHTUP);
         await Task.Delay(50, token);
     }
 

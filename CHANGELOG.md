@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.0.7 — 2026-08-04
+
+### C# 重构 阶段3：洗装抽屉（实现完成；⚠️ 实机验证发现 2 个未解决问题，待第三方审查）
+- Models：CraftMode / Currency（10 种+每模式显示子集）/ AffixRule / CraftRules(validate) / AffixCheckResult(终检)
+- AffixEngine：**用户拍板行为 B**——分段 + 中英文 skip patterns 完整（铁律#3）+ **装备名字参与匹配**（铁律#1，宽松匹配）；排除优先 → 主 → 次，每条规则最多匹配一行
+- CraftEngine：Mode1 单通货 / Mode2 改造+增幅（含重铸+点金子模式）/ Mode3 改+增+富（可选崇高）；单常驻 Task + 唤醒/取消分离（坑#5）；250ms 节流；耗尽检测（默认10次）；紧急停止（光标≤(1,1)）；时序逐行对齐 auto_operator.py（右键后 Mode2/3 额外 0.15s、ShiftClick 拆分、CtrlAltC 后 max(delay×5,0.15)）
+- CraftTool：ITool + ICoordinateProvider；F5 启动 / F6 停止热键；craft 节设置；rules.json/coordinates.json 兼容旧版（mode int、affix str|dict）
+- CraftPage：模式选择 / Mode2 子模式 / Mode3 崇高开关 / 延迟滑块(10-200ms) / 4 列通货网格（按模式显示子集）/ 三态坐标录制（F7，信号分离坑#10）/ 词缀池（主次排除 + 命中数实时验证 Mode2≤2 Mode3≤3）/ 预设管理（保存覆盖确认 + 加载 dirty 确认）/ 启停按钮 + 状态
+- ClipboardHelper：Win32 剪贴板读取（后台 MTA 线程，WPF Clipboard 需 STA）
+- App：注册 CraftTool、F7 坐标录制宿主级热键、IsCraftRunning 关闭窗口拦截
+- 修复：Mode2 坐标检查按子模式（C# 修复 Python 固定查改造/增幅的错位 bug）
+
+### ⚠️ 实机验证反馈（2026-08-04，未解决，已推送供第三方审查）
+- 问题1：Mode1 改造洗 F5 启动后鼠标只移动到改造石坐标即停，无后续操作、无错误提示（游戏始终前台）
+- 问题2：F6 停止后右键未释放（推断）：任务栏无法唤起窗口、桌面空白处点击自动弹右键菜单，手动点一下右键才恢复
+- 已尝试修复（均未解决）：① EmergencyCts 永久取消（CTS 不可重置 vs Python Event.clear()）→ Start 前重置；② Loop finally 兜底释放不可取消（ReleaseAllKeys 含鼠标左右键）；③ 点击原子化（DOWN/UP 间 Task.Delay 改 CancellationToken.None）；④ 等待前台加节流状态提示；⑤ 空剪贴板停止分支（对齐 Python）；⑥ 全局错误订阅（页面未开也弹）
+- 怀疑焦点：Python `_interruptible_sleep` 停止时返回 False 不抛异常（操作链完整执行完）vs C# `Task.Delay(ms, token)` 取消时抛 OCE（可能中断在任意 await 处）——取消语义差异
+- 环境注意：游戏以管理员运行时拾刻须同权限（UIPI：热键收不到、SendInput 无效），用户已确认管理员运行后 F5 可收到
+
 ## v1.0.6 — 2026-08-04
 
 ### C# 重构 阶段2：9 个公共设施（编译通过 + 冒烟验证，行为级验收待阶段3/4 抽屉接入）

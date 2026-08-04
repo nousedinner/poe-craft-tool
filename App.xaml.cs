@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using System.Windows;
 using ShiKe.Host;
 using ShiKe.Services;
+using ShiKe.Tools.Craft;
 using ShiKe.Tools.Hideout;
 
 namespace ShiKe;
@@ -14,6 +15,7 @@ public partial class App : Application
     private ToolHost? _host;
     private TrayService? _tray;
     private MainWindow? _mainWindow;
+    private CraftTool? _craftTool;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -21,9 +23,12 @@ public partial class App : Application
 
         // 组装：注册表 → 注册抽屉 → 宿主 → 初始化
         var registry = new ToolRegistry();
+        _craftTool = new CraftTool();
+        registry.Register(_craftTool);
         registry.Register(new HideoutTool());
 
         _host = new ToolHost(registry);
+        _host.IsCraftRunning = () => _craftTool!.IsRunning; // 关闭窗口拦截判断
 
         foreach (var tool in registry.Tools)
             tool.Initialize(_host);
@@ -61,6 +66,28 @@ public partial class App : Application
     {
         if (_host is null) return;
         var requests = _host.RegisteredTools.SelectMany(t => t.GetHotkeyRequests()).ToList();
+
+        // 坐标录制热键（宿主级，仅当存在 ICoordinateProvider 抽屉时注册；默认 F7，host 节可配）
+        if (_host.RegisteredTools.Any(t => t is ICoordinateProvider))
+        {
+            var coordHotkey = "F7";
+            try
+            {
+                var settings = _host.Storage.LoadSettings();
+                if (settings["host"] is JsonObject h && h["hotkeys"] is JsonObject hk && hk["coordinate"] is JsonValue v)
+                    coordHotkey = v.GetValue<string>() ?? "F7";
+            }
+            catch (Exception) { }
+            requests.Add(new HotkeyRequest
+            {
+                Key = coordHotkey,
+                DisplayName = "坐标录制",
+                CheckForeground = false, // 用户可能已切到游戏（Python 版不检查前台）
+                Mode = HotkeyMode.Toggle,
+                Handler = () => _host.Coordinates.OnRecordHotkey(),
+            });
+        }
+
         var conflicts = _host.Hotkeys.RegisterAll(requests);
         if (conflicts.Count > 0)
         {
