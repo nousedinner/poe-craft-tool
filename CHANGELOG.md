@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.0.5 — 2026-08-04
+
+### C# 重构 阶段1：骨架（编译通过，待运行验证）
+- 新建 .NET 10 WPF 项目 拾刻.csproj（WinExe / net10.0-windows / WinForms 互操作预留 / poe.ico 嵌入 / 版本单一来源 v1.0.5）
+- 抽屉架构：ITool / ICoordinateProvider / HotkeyRequest / CoordinateSlot / ToolRegistry / ToolHost（EmergencyCts 全局紧急停止）
+- MainWindow 导航：左侧 ListBox（绑定注册表）+ 右侧 ContentPresenter 懒加载 + 底部状态栏占位
+- Tools/Hideout/ 空抽屉验证架构（阶段4 完善）
+- Themes/DefaultTheme.xaml：方案D 基础色板
+- .gitignore 补 bin/ obj/ *.user
+
 ## v1.0.4 — 2026-08-04
 
 ### 架构文档审查修正（本地AI审查反馈）

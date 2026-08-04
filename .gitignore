@@ -14,3 +14,9 @@ dist/
 *.spec
 platforms/
 *.md
+# CHANGELOG 是项目一部分，随每次提交更新，需进仓库
+!CHANGELOG.md
+# .NET 构建产物
+bin/
+obj/
+*.user

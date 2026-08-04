@@ -1,0 +1,14 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- 方案D 色板（DEV_GUIDE §813-830）初始主题：阶段1只取基础色，美化阶段细化 -->
+    <SolidColorBrush x:Key="WindowBackground" Color="#DAE8F5"/>
+    <SolidColorBrush x:Key="CardBackground" Color="#8CFFFFFF"/>
+    <SolidColorBrush x:Key="CardBorder" Color="#1A0050A0"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="#1A6FB5"/>
+    <SolidColorBrush x:Key="TextPrimary" Color="#1E2A3A"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#5A7A90"/>
+    <SolidColorBrush x:Key="SuccessGreen" Color="#1B8A3E"/>
+    <SolidColorBrush x:Key="DangerRed" Color="#D04555"/>
+
+</ResourceDictionary>

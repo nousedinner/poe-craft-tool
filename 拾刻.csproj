@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- WinForms 互操作：阶段2 托盘 NotifyIcon 用 -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ShiKe</RootNamespace>
+    <AssemblyName>拾刻</AssemblyName>
+    <ApplicationIcon>poe.ico</ApplicationIcon>
+    <!-- 版本单一来源：续用 1.x 系列，C# 版从 v1.0.5 起（方案 §10） -->
+    <Version>1.0.5</Version>
+    <AssemblyTitle>拾刻</AssemblyTitle>
+    <Product>拾刻</Product>
+    <Description>PoE 洗词缀自动化 + 连点器 + 按键循环 + 一键回城聚合工具（C# 重构版）</Description>
+  </PropertyGroup>
+
+  <!-- 移除 WinForms/System.Drawing 隐式 using，避免与 WPF 的 Application/Point 撞名；
+       TrayService 等需要时在文件内显式 using System.Windows.Forms -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+</Project>
