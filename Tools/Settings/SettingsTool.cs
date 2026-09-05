@@ -35,7 +35,11 @@ public sealed class SettingsTool : ITool
     public string Name => "设置";
     public string IconKey => "settings";
 
-    public void Initialize(ToolHost host) => _host = host;
+    public void Initialize(ToolHost host)
+    {
+        _host = host;
+        host.Sound.PlaybackStatusChanged += status => _page?.ShowSoundStatus(status);
+    }
 
     public FrameworkElement CreatePage() => _page ??= new SettingsPage(this);
 
@@ -137,8 +141,10 @@ public sealed class SettingsTool : ITool
         var normalized = soundFileName.Trim();
         if (!GetSounds().Contains(normalized, StringComparer.OrdinalIgnoreCase))
             return SettingsApplyResult.Fail("所选音效不在 sounds 目录中，请先刷新列表");
-        _host.Sound.Play(normalized);
-        return SettingsApplyResult.Ok("已发送试听请求；若没有声音，请检查文件格式或系统音量");
+        var request = _host.Sound.TryPlay(normalized);
+        return request.Accepted
+            ? SettingsApplyResult.Ok(request.Message)
+            : SettingsApplyResult.Fail(request.Message);
     }
 
     /// <summary>启动自动检测成功后同步运行状态、Settings 页面和 host 分节。</summary>

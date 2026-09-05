@@ -8,6 +8,7 @@ using ShiKe.Host;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
+using System.Xml.Linq;
 
 var tests = new (string Name, Action Run)[]
 {
@@ -52,6 +53,10 @@ var tests = new (string Name, Action Run)[]
     ("热键重注册失败恢复旧配置", HotkeyTransactionRollsBackOnFailure),
     ("SettingsTool 使用 host 分节完整往返", SettingsToolHostSectionRoundTrip),
     ("宿主汇总七个统一热键请求", ToolHostBuildsCompleteHotkeySet),
+    ("音效扫描和路径解析限制在 sounds 目录", SoundFilesStayInsideSoundDirectory),
+    ("网络版本比较使用 Version 语义", NetworkVersionComparisonIsNumeric),
+    ("匿名统计载荷不包含本机数据", PingPayloadContainsOnlyFixedFields),
+    ("单文件发布配置保留 WPF 和资源安全选项", PublishProfileKeepsSafeWpfOptions),
     ("空目标进程采用 fail-closed", EmptyTargetProcessIsNotForeground),
     ("程序集版本与本次修复版本一致", AssemblyVersionIsCurrent),
     ("Craft 常驻任务可以正式关闭", CraftEngineCanShutdownWhileIdle),
@@ -876,12 +881,75 @@ static void ToolHostBuildsCompleteHotkeySet()
     });
 }
 
+static void SoundFilesStayInsideSoundDirectory()
+{
+    WithTempDirectory(directory =>
+    {
+        File.WriteAllBytes(Path.Combine(directory, "default_ding.mp3"), [1, 2, 3]);
+        File.WriteAllBytes(Path.Combine(directory, "custom.ogg"), [1, 2, 3]);
+        File.WriteAllText(Path.Combine(directory, "ignore.txt"), "not audio");
+        var sound = new SoundService(directory);
+
+        var files = sound.ScanSounds();
+        Equal(2, files.Count, "只应扫描声明的音频扩展名");
+        True(files.Contains("default_ding.mp3"), "默认 mp3 未被扫描");
+        True(files.Contains("custom.ogg"), "自定义 ogg 未被扫描");
+
+        True(sound.TryResolveSoundFile("default_ding.wav", out var resolved, out _),
+            "旧默认 wav 名称应按 stem 回退到随包 mp3");
+        Equal("default_ding.mp3", Path.GetFileName(resolved), "默认音效回退文件错误");
+        False(sound.TryResolveSoundFile("..\\outside.mp3", out _, out _),
+            "音效路径穿越必须被拒绝");
+        False(sound.TryResolveSoundFile("unsupported.aac", out _, out _),
+            "未声明扩展名必须被拒绝");
+    });
+}
+
+static void NetworkVersionComparisonIsNumeric()
+{
+    True(NetworkService.NeedsUpdate("1.0.10", new Version(1, 0, 9)),
+        "1.0.10 必须大于 1.0.9");
+    False(NetworkService.NeedsUpdate("1.0.9", new Version(1, 0, 10)),
+        "旧版本不得触发更新");
+    False(NetworkService.NeedsUpdate("invalid", new Version(1, 0, 10)),
+        "非法版本文本不得触发强制更新");
+}
+
+static void PingPayloadContainsOnlyFixedFields()
+{
+    var root = NetworkService.CreatePingPayload();
+    Equal("event", root["type"]!.GetValue<string>(), "统计载荷类型错误");
+    var payload = root["payload"]!.AsObject();
+    var expected = new[] { "website", "url", "hostname", "language", "screen", "title", "event" };
+    Equal(expected.Length, payload.Count, "匿名载荷字段数量发生变化，必须重新审查隐私文案");
+    True(expected.All(payload.ContainsKey), "匿名载荷缺少既定固定字段");
+    False(payload.ContainsKey("machine"), "不得上传机器名");
+    False(payload.ContainsKey("clipboard"), "不得上传剪贴板");
+    False(payload.ContainsKey("rules"), "不得上传词缀规则");
+}
+
+static void PublishProfileKeepsSafeWpfOptions()
+{
+    var root = FindProjectRoot();
+    var profile = XDocument.Load(Path.Combine(root, "Properties", "PublishProfiles", "FrameworkDependent.pubxml"));
+    var properties = profile.Descendants("PropertyGroup").Elements()
+        .ToDictionary(element => element.Name.LocalName, element => element.Value, StringComparer.OrdinalIgnoreCase);
+    Equal("win-x64", properties["RuntimeIdentifier"], "发布目标必须固定为 win-x64");
+    Equal("false", properties["SelfContained"].ToLowerInvariant(), "本配置必须保持依赖框架发布");
+    Equal("true", properties["PublishSingleFile"].ToLowerInvariant(), "必须启用单文件主程序");
+    Equal("false", properties["PublishTrimmed"].ToLowerInvariant(), "WPF 发布不得启用裁剪");
+
+    var projectText = File.ReadAllText(Path.Combine(root, "拾刻.csproj"));
+    True(projectText.Contains("sounds\\**", StringComparison.Ordinal), "发布项目必须保留 sounds 资源规则");
+    True(projectText.Contains("data\\presets\\**", StringComparison.Ordinal), "发布项目必须保留内置预设资源规则");
+}
+
 static void AssemblyVersionIsCurrent()
 {
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(22, version.Build, "程序集 Build 必须为本次 1.0.22");
+    Equal(23, version.Build, "程序集 Build 必须为本次 1.0.23");
 }
 
 static void CraftEngineCanShutdownWhileIdle()
@@ -1128,4 +1196,16 @@ static void RunInSta(Action action)
     thread.Start();
     True(thread.Join(TimeSpan.FromSeconds(5)), "STA 测试线程未在限定时间退出");
     if (failure is not null) throw failure;
+}
+
+static string FindProjectRoot()
+{
+    DirectoryInfo? directory = new(AppContext.BaseDirectory);
+    while (directory is not null)
+    {
+        if (File.Exists(Path.Combine(directory.FullName, "拾刻.csproj")))
+            return directory.FullName;
+        directory = directory.Parent;
+    }
+    throw new InvalidOperationException("无法定位拾刻.csproj");
 }

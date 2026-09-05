@@ -107,6 +107,8 @@
                     <CheckBox x:Name="CraftPopupCheck" Content="Craft 启动、停止和结果弹窗" Margin="0,3"/>
                     <CheckBox x:Name="ClickerNotificationCheck" Content="连点器启停弹窗" Margin="0,3"/>
                     <CheckBox x:Name="KeyLoopNotificationCheck" Content="按键循环启停弹窗" Margin="0,3"/>
+                    <TextBlock Text="WAV/MP3 通常由 Windows 直接支持；OGG/FLAC 是否可播放取决于系统已安装的解码器，可先点“试听”确认。"
+                               Foreground="#7B8C9D" FontSize="11" Margin="0,7,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
 
@@ -127,7 +129,7 @@
                     CornerRadius="8" Padding="14" Margin="0,0,0,10">
                 <StackPanel>
                     <TextBlock Text="隐私声明" FontWeight="Bold" Foreground="#7B6334"/>
-                    <TextBlock Text="本工具仅在启动时发送应用名称与当日日期，用于匿名使用人数统计；不上传个人身份、设备信息、游戏数据、规则、坐标或剪贴板内容。"
+                    <TextBlock Text="本工具启动时会尝试发送一条匿名 pageview，内容为固定应用/页面标识、语言标记及兼容字段；不会读取或上传个人身份、真实设备参数、游戏数据、规则、坐标或剪贴板内容。"
                                Foreground="#665A44" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,5"/>
                     <Button Content="查看统计" Width="82" HorizontalAlignment="Left" Padding="5,2"
                             Background="Transparent" BorderThickness="0" Foreground="{StaticResource AccentBrush}"

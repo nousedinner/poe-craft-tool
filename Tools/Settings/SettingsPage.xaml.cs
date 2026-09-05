@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using ShiKe.Services;
 
 namespace ShiKe.Tools.Settings;
 
@@ -68,6 +69,16 @@ public partial class SettingsPage : UserControl
         HideoutEnableCheck.IsChecked = draft.HideoutEnabled;
         HideoutCommandText.Text = draft.HideoutCommand;
         CancelCapture();
+    }
+
+    internal void ShowSoundStatus(SoundPlaybackStatus status)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(() => ShowSoundStatus(status));
+            return;
+        }
+        ShowResult(status.Message, status.Success);
     }
 
     private void SetHotkey(string id, string value)

@@ -56,7 +56,7 @@ public sealed class NetworkService
             if (string.IsNullOrWhiteSpace(latest))
                 return null;
             // System.Version 比较（Python 字符串比较在 "1.0.10" 场景会误判强制更新，C# 修复）
-            if (Version.TryParse(latest, out var latestV) && latestV > CurrentVersion)
+            if (NeedsUpdate(latest, CurrentVersion))
                 return new VersionCheckResult(latest, url);
             return null;
         }
@@ -71,20 +71,7 @@ public sealed class NetworkService
     {
         try
         {
-            var payload = new JsonObject
-            {
-                ["type"] = "event",
-                ["payload"] = new JsonObject
-                {
-                    ["website"] = "0c4520ad-ae66-4453-a901-7bdfef3c4b44",
-                    ["url"] = "/app/poe-craft-tool",
-                    ["hostname"] = "拾刻",
-                    ["language"] = "zh-CN",
-                    ["screen"] = "1920x1080",
-                    ["title"] = "拾刻启动",
-                    ["event"] = "pageview",
-                },
-            };
+            var payload = CreatePingPayload();
             var content = new StringContent(payload.ToJsonString(), Encoding.UTF8, "application/json");
             var resp = await _http.PostAsync(new Uri(BaseUri, "/api/send"), content);
             resp.EnsureSuccessStatusCode();
@@ -94,6 +81,25 @@ public sealed class NetworkService
             // 静默失败
         }
     }
+
+    internal static bool NeedsUpdate(string? latest, Version current)
+        => Version.TryParse(latest, out var latestVersion) && latestVersion > current;
+
+    /// <summary>固定匿名 pageview 载荷；不得加入机器名、账号、真实屏幕、游戏或剪贴板数据。</summary>
+    internal static JsonObject CreatePingPayload() => new()
+    {
+        ["type"] = "event",
+        ["payload"] = new JsonObject
+        {
+            ["website"] = "0c4520ad-ae66-4453-a901-7bdfef3c4b44",
+            ["url"] = "/app/poe-craft-tool",
+            ["hostname"] = "拾刻",
+            ["language"] = "zh-CN",
+            ["screen"] = "1920x1080",
+            ["title"] = "拾刻启动",
+            ["event"] = "pageview",
+        },
+    };
 
     /// <summary>拉取广告。失败返回空列表（UI 显示"广告位招租"占位）。</summary>
     public async Task<List<AdItem>> FetchAdsAsync()
