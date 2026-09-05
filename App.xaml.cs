@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using System.Windows;
 using ShiKe.Host;
 using ShiKe.Services;
+using ShiKe.Tools.Clicker;
 using ShiKe.Tools.Craft;
 using ShiKe.Tools.Hideout;
 
@@ -18,6 +19,7 @@ public partial class App : Application
     private TrayService? _tray;
     private MainWindow? _mainWindow;
     private CraftTool? _craftTool;
+    private ClickerTool? _clickerTool;
     private Mutex? _singleInstanceMutex;
     private bool _ownsSingleInstanceMutex;
     private bool _isShuttingDown;
@@ -43,7 +45,9 @@ public partial class App : Application
         // 组装：注册表 → 注册抽屉 → 宿主 → 初始化
         var registry = new ToolRegistry();
         _craftTool = new CraftTool();
+        _clickerTool = new ClickerTool();
         registry.Register(_craftTool);
+        registry.Register(_clickerTool);
         registry.Register(new HideoutTool());
 
         _host = new ToolHost(registry);
@@ -62,6 +66,7 @@ public partial class App : Application
         _mainWindow = new MainWindow(registry, _host);
         MainWindow = _mainWindow;
         WireCraftStatus();
+        WireClickerStatus();
 
         // 托盘（依赖窗口，App 直接管理）
         _tray = new TrayService(_mainWindow);
@@ -129,6 +134,16 @@ public partial class App : Application
             if (_mainWindow is null) return;
             _mainWindow.SetStatus(reason);
             _mainWindow.SetUseCount(engine.UseCount);
+        });
+    }
+
+    private void WireClickerStatus()
+    {
+        if (_clickerTool is null) return;
+        _clickerTool.StatusUpdated += status => Dispatcher.BeginInvoke(() =>
+        {
+            if (_mainWindow is null) return;
+            _mainWindow.SetStatus(status.Text, status.Running);
         });
     }
 

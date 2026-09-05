@@ -1,4 +1,5 @@
 using ShiKe.Tools.Craft;
+using ShiKe.Tools.Clicker;
 using ShiKe.Services;
 using ShiKe.Tools.Hideout;
 using ShiKe.Host;
@@ -25,6 +26,8 @@ var tests = new (string Name, Action Run)[]
     ("坐标读取失败不保存零坐标", CursorReadFailureDoesNotSaveZeroCoordinate),
     ("Craft 和 Hideout 设置可由统一生命周期加载", ToolSettingsAreLoaded),
     ("Craft 设置保存后可完整往返加载", CraftSettingsRoundTrip),
+    ("Clicker 设置保存后可完整往返加载", ClickerSettingsRoundTrip),
+    ("Clicker 声明独立 Toggle 和 Hold 热键", ClickerDeclaresBothHotkeys),
     ("Mode3 改造阶段判定矩阵", Mode3AlterationDecisionMatrix),
     ("Mode3 增幅达标后必须进入富豪", Mode3AugmentationAlwaysProceedsToRegal),
     ("Mode3 启动稀有度判定矩阵", Mode3StartDecisionMatrix),
@@ -42,6 +45,7 @@ var tests = new (string Name, Action Run)[]
     ("空目标进程采用 fail-closed", EmptyTargetProcessIsNotForeground),
     ("程序集版本与本次修复版本一致", AssemblyVersionIsCurrent),
     ("Craft 常驻任务可以正式关闭", CraftEngineCanShutdownWhileIdle),
+    ("Clicker 常驻任务可暂停停止并关闭", ClickerEngineLifecycleIsSafe),
     ("Craft 运行配置使用深拷贝快照", CraftRulesSnapshotIsIndependent),
 };
 
@@ -255,6 +259,10 @@ static void LegacySettingsMigrationKeepsOriginalBackup()
             {
               "hotkey_start": "F3",
               "delay_ms": 77,
+              "clicker_hotkey": "F10",
+              "clicker_hold_hotkey": "F12",
+              "clicker_interval_ms": 44,
+              "clicker_button": "right",
               "hideout_enabled": true,
               "target_process": "PathOfExile_x64.exe"
             }
@@ -269,6 +277,10 @@ static void LegacySettingsMigrationKeepsOriginalBackup()
         Equal(original, File.ReadAllText(settingsPath + ".bak"), "备份必须保留迁移前原始字节");
         Equal("F3", migrated["host"]?["hotkeys"]?["start"]?.GetValue<string>() ?? "", "启动热键迁移错误");
         Equal(77, migrated["craft"]?["delay_ms"]?.GetValue<int>() ?? 0, "Craft 延迟迁移错误");
+        Equal("F10", migrated["clicker"]?["hotkey"]?.GetValue<string>() ?? "", "Clicker 切换热键迁移错误");
+        Equal("F12", migrated["clicker"]?["hold_hotkey"]?.GetValue<string>() ?? "", "Clicker Hold 热键迁移错误");
+        Equal(44, migrated["clicker"]?["interval_ms"]?.GetValue<int>() ?? 0, "Clicker 间隔迁移错误");
+        Equal("right", migrated["clicker"]?["button"]?.GetValue<string>() ?? "", "Clicker 鼠标键迁移错误");
         Equal(true, migrated["hideout"]?["enabled"]?.GetValue<bool>() ?? false, "Hideout 开关迁移错误");
 
         var secondLoad = storage.LoadSettings();
@@ -409,6 +421,50 @@ static void CraftSettingsRoundTrip()
     Equal("roundtrip.wav", restored.SelectedSound, "音效文件往返失败");
     Equal(true, restored.Mode2ScourAlch, "Mode2 子模式往返失败");
     Equal(true, restored.UseExalt, "崇高开关往返失败");
+}
+
+static void ClickerSettingsRoundTrip()
+{
+    var source = new ClickerTool
+    {
+        Hotkey = "Ctrl+F8",
+        HoldHotkey = "Shift+F11",
+        IntervalMs = 47,
+        MouseButton = ClickerMouseButton.Right,
+        NotificationsEnabled = true,
+    };
+
+    using var stream = new MemoryStream();
+    using (var writer = new Utf8JsonWriter(stream))
+        source.SaveSettings(writer);
+
+    var restored = new ClickerTool();
+    using var document = JsonDocument.Parse(stream.ToArray());
+    restored.LoadSettings(document.RootElement);
+
+    Equal("Ctrl+F8", restored.Hotkey, "Clicker 切换热键往返失败");
+    Equal("Shift+F11", restored.HoldHotkey, "Clicker 按住热键往返失败");
+    Equal(47, restored.IntervalMs, "Clicker 间隔往返失败");
+    Equal(ClickerMouseButton.Right, restored.MouseButton, "Clicker 鼠标键往返失败");
+    Equal(true, restored.NotificationsEnabled, "Clicker 通知开关往返失败");
+
+    restored.LoadSettings(JsonSerializer.SerializeToElement(new { interval_ms = -5, button = "unknown" }));
+    Equal(10, restored.IntervalMs, "Clicker 非法低间隔必须收敛到 10ms");
+    Equal(ClickerMouseButton.Left, restored.MouseButton, "Clicker 未知按键必须回退左键");
+}
+
+static void ClickerDeclaresBothHotkeys()
+{
+    var tool = new ClickerTool { Hotkey = "Ctrl+F8", HoldHotkey = "Shift+F11" };
+    var requests = tool.GetHotkeyRequests();
+    Equal(2, requests.Count, "Clicker 必须始终声明两个独立热键");
+    Equal("Ctrl+F8", requests[0].Key, "Clicker Toggle 热键错误");
+    Equal(HotkeyMode.Toggle, requests[0].Mode, "Clicker 第一个热键必须是 Toggle");
+    Equal(true, requests[0].CheckForeground, "Clicker Toggle 必须检查游戏前台");
+    Equal("Shift+F11", requests[1].Key, "Clicker Hold 热键错误");
+    Equal(HotkeyMode.Hold, requests[1].Mode, "Clicker 第二个热键必须是 Hold");
+    Equal(true, requests[1].CheckForeground, "Clicker Hold 必须检查游戏前台");
+    True(requests[1].ReleaseHandler is not null, "Clicker Hold 必须提供松开停止回调");
 }
 
 static void Mode3AlterationDecisionMatrix()
@@ -604,7 +660,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(18, version.Build, "程序集 Build 必须为本次 1.0.18");
+    Equal(19, version.Build, "程序集 Build 必须为本次 1.0.19");
 }
 
 static void CraftEngineCanShutdownWhileIdle()
@@ -626,6 +682,57 @@ static void CraftEngineCanShutdownWhileIdle()
     thread.SetApartmentState(ApartmentState.STA);
     thread.Start();
     True(thread.Join(TimeSpan.FromSeconds(2)), "STA 测试线程未在限定时间退出");
+    if (failure is not null) throw failure;
+}
+
+static void ClickerEngineLifecycleIsSafe()
+{
+    Exception? failure = null;
+    var thread = new Thread(() =>
+    {
+        try
+        {
+            var host = new ToolHost(new ToolRegistry());
+            var foreground = false;
+            var simulatedClicks = 0;
+            var engine = new ClickerEngine(
+                host,
+                () => foreground,
+                (_, _) =>
+                {
+                    Interlocked.Increment(ref simulatedClicks);
+                    return Task.CompletedTask;
+                });
+
+            True(engine.Start(ClickerMouseButton.Left, 10), "Clicker 首次启动应成功");
+            Thread.Sleep(60);
+            Equal(0, simulatedClicks, "非目标前台时不得调用模拟点击动作");
+
+            foreground = true;
+            True(SpinWait.SpinUntil(() => engine.ClickCount >= 3, TimeSpan.FromSeconds(1)),
+                "回到目标前台后 Clicker 应恢复运行");
+            True(engine.Stop(), "运行中的 Clicker 应可停止");
+            Thread.Sleep(80);
+            var stoppedCount = engine.ClickCount;
+            Thread.Sleep(60);
+            Equal(stoppedCount, engine.ClickCount, "停止后点击计数不得继续增长");
+            Equal(stoppedCount, simulatedClicks, "引擎计数必须与成功模拟点击次数一致");
+
+            True(engine.Start(ClickerMouseButton.Right, 15), "同一常驻任务停止后应能再次启动");
+            True(SpinWait.SpinUntil(() => engine.ClickCount >= 2, TimeSpan.FromSeconds(1)),
+                "Clicker 第二次运行应正常计数");
+            True(engine.Stop(), "Clicker 第二次运行应可停止");
+            Thread.Sleep(60);
+            True(engine.Shutdown(TimeSpan.FromSeconds(1)), "Clicker 常驻任务必须在限定时间内关闭");
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    True(thread.Join(TimeSpan.FromSeconds(3)), "Clicker STA 测试线程未在限定时间退出");
     if (failure is not null) throw failure;
 }
 

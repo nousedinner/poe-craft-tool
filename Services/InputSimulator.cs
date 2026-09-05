@@ -284,7 +284,7 @@ public sealed class InputSimulator
         SendMouseOrThrow(MOUSEEVENTF_LEFTDOWN, "鼠标左键按下");
         await Task.Delay(20, CancellationToken.None);
         SendMouseOrThrow(MOUSEEVENTF_LEFTUP, "鼠标左键抬起");
-        await Task.Delay(delayMs, token);
+        if (delayMs > 0) await Task.Delay(delayMs, token);
     }
 
     /// <summary>右键点击（当前位置）。down/up 间不可取消（原子）。</summary>
@@ -295,7 +295,7 @@ public sealed class InputSimulator
         SendMouseOrThrow(MOUSEEVENTF_RIGHTDOWN, "鼠标右键按下");
         await Task.Delay(20, CancellationToken.None);
         SendMouseOrThrow(MOUSEEVENTF_RIGHTUP, "鼠标右键抬起");
-        await Task.Delay(delayMs, token);
+        if (delayMs > 0) await Task.Delay(delayMs, token);
     }
 
     // ── Shift 管理 ──
