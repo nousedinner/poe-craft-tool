@@ -17,7 +17,7 @@ public static class SettingsDefaults
     public const string HideoutHotkey = "F2";      // 一键回城
 
     // 洗装
-    public const int DelayMs = 33;                            // 操作延迟（配置页 10-200ms）
+    public const int DelayMs = 33;                            // 通货点击后首次服务器同步等待（10-200ms）
     public const bool SoundEnabled = true;
     public const bool PopupEnabled = true;
     public const int ClipboardUnchangedThreshold = 10;        // 连续 N 次剪贴板相同 = 通货耗尽

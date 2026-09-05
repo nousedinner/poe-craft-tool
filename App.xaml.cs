@@ -12,14 +12,30 @@ namespace ShiKe;
 
 public partial class App : Application
 {
+    private const string SingleInstanceMutexName = @"Local\ShiKe.PoeCraftTool.SingleInstance";
+
     private ToolHost? _host;
     private TrayService? _tray;
     private MainWindow? _mainWindow;
     private CraftTool? _craftTool;
+    private Mutex? _singleInstanceMutex;
+    private bool _ownsSingleInstanceMutex;
+    private bool _isShuttingDown;
+    private string _coordinateHotkey = SettingsDefaults.HotkeySetCoord;
+    private bool _autoDetectPoe = SettingsDefaults.AutoDetectPoe;
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        if (!TryAcquireSingleInstance())
+        {
+            MessageBox.Show(
+                "拾刻已经在运行。\n\n请从系统托盘打开现有窗口；本次启动将退出。",
+                "拾刻已在运行", MessageBoxButton.OK, MessageBoxImage.Information);
+            Shutdown();
+            return;
+        }
 
         Diag.ClearOldLog();
         Diag.Log("=== 拾刻启动 ===");
@@ -33,21 +49,28 @@ public partial class App : Application
         _host = new ToolHost(registry);
         _host.IsCraftRunning = () => _craftTool!.IsRunning; // 关闭窗口拦截判断
 
+        // settings 只读取一次：先应用宿主设置，再按 Id 把对应分节交给每个抽屉。
+        var settings = _host.Storage.LoadSettings();
+        LoadHostSettings(settings);
         foreach (var tool in registry.Tools)
+        {
             tool.Initialize(_host);
+            var section = settings[tool.Id] as JsonObject ?? new JsonObject();
+            tool.LoadSettings(JsonSerializer.SerializeToElement(section));
+        }
 
         _mainWindow = new MainWindow(registry, _host);
         MainWindow = _mainWindow;
 
         // 托盘（依赖窗口，App 直接管理）
         _tray = new TrayService(_mainWindow);
-        _tray.ExitRequested += () => Shutdown();
+        _tray.ExitRequested += RequestShutdown;
 
-        // 关闭拦截：洗装运行中 → 最小化到托盘（Python closeEvent）
+        // 用户关闭主窗口始终隐藏到托盘；真正退出只走 RequestShutdown。
         _mainWindow.Closing += (_, e) =>
         {
-            if (_host is not null)
-                _tray.OnWindowClosing(e, _host.IsCraftRunning());
+            if (!_isShuttingDown)
+                _tray.OnWindowClosing(e);
         };
 
         _mainWindow.Show();
@@ -63,6 +86,32 @@ public partial class App : Application
         _ = RunNetworkTasksAsync();
     }
 
+    private bool TryAcquireSingleInstance()
+    {
+        _singleInstanceMutex = new Mutex(initiallyOwned: false, SingleInstanceMutexName);
+        try
+        {
+            _ownsSingleInstanceMutex = _singleInstanceMutex.WaitOne(0, exitContext: false);
+        }
+        catch (AbandonedMutexException)
+        {
+            // 上一次进程异常退出；当前进程已经取得该互斥锁，可以安全接管。
+            _ownsSingleInstanceMutex = true;
+        }
+
+        if (_ownsSingleInstanceMutex) return true;
+        _singleInstanceMutex.Dispose();
+        _singleInstanceMutex = null;
+        return false;
+    }
+
+    private void RequestShutdown()
+    {
+        if (_isShuttingDown) return;
+        _isShuttingDown = true;
+        Shutdown();
+    }
+
     // ── 热键 ──
 
     private void RegisterHotkeys()
@@ -73,17 +122,9 @@ public partial class App : Application
         // 坐标录制热键（宿主级，仅当存在 ICoordinateProvider 抽屉时注册；默认 F7，host 节可配）
         if (_host.RegisteredTools.Any(t => t is ICoordinateProvider))
         {
-            var coordHotkey = "F7";
-            try
-            {
-                var settings = _host.Storage.LoadSettings();
-                if (settings["host"] is JsonObject h && h["hotkeys"] is JsonObject hk && hk["coordinate"] is JsonValue v)
-                    coordHotkey = v.GetValue<string>() ?? "F7";
-            }
-            catch (Exception) { }
             requests.Add(new HotkeyRequest
             {
-                Key = coordHotkey,
+                Key = _coordinateHotkey,
                 DisplayName = "坐标录制",
                 CheckForeground = false, // 用户可能已切到游戏（Python 版不检查前台）
                 Mode = HotkeyMode.Toggle,
@@ -105,6 +146,17 @@ public partial class App : Application
     {
         await Task.Delay(500);
         if (_host is null || _mainWindow is null) return;
+
+        if (!string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess))
+        {
+            await Dispatcher.InvokeAsync(() => _mainWindow.SetStatus($"已锁定: {_host.Foreground.TargetProcess}"));
+            return; // 对齐 Python：已有保存目标时不自动覆盖
+        }
+        if (!_autoDetectPoe)
+        {
+            Diag.Log("[启动] AutoDetectPoe: 已由设置关闭");
+            return;
+        }
 
         var matched = _host.Foreground.AutoDetectPoe();
         Diag.Log($"[启动] AutoDetectPoe: {(matched is null ? "未检测到" : matched)}");
@@ -147,51 +199,94 @@ public partial class App : Application
             "发现新版本", MessageBoxButton.OK, MessageBoxImage.Warning);
         if (!string.IsNullOrEmpty(ver.DownloadUrl))
             Process.Start(new ProcessStartInfo(ver.DownloadUrl) { UseShellExecute = true });
-        Shutdown();
+        RequestShutdown();
     }
 
     private void SaveHostSetting(string key, string value)
     {
         if (_host is null) return;
-        var settings = _host.Storage.LoadSettings();
-        if (settings["host"] is not JsonObject host)
+        _host.Storage.UpdateSettings(settings =>
         {
-            host = new JsonObject();
-            settings["host"] = host;
-        }
-        host[key] = value;
-        _host.Storage.SaveSettings(settings);
+            if (settings["host"] is not JsonObject host)
+            {
+                host = new JsonObject();
+                settings["host"] = host;
+            }
+            host[key] = value;
+        });
+    }
+
+    private void LoadHostSettings(JsonObject settings)
+    {
+        if (_host is null || settings["host"] is not JsonObject host) return;
+
+        if (host["target_process"] is JsonValue processValue &&
+            processValue.TryGetValue<string>(out var targetProcess) &&
+            !string.IsNullOrWhiteSpace(targetProcess))
+            _host.Foreground.TargetProcess = targetProcess;
+
+        if (host["auto_detect_poe"] is JsonValue autoValue && autoValue.TryGetValue<bool>(out var autoDetect))
+            _autoDetectPoe = autoDetect;
+
+        if (host["hotkeys"] is not JsonObject hotkeys) return;
+        if (hotkeys["start"] is JsonValue start && start.TryGetValue<string>(out var startKey) && !string.IsNullOrWhiteSpace(startKey))
+            _craftTool!.HotkeyStart = startKey;
+        if (hotkeys["stop"] is JsonValue stop && stop.TryGetValue<string>(out var stopKey) && !string.IsNullOrWhiteSpace(stopKey))
+            _craftTool!.HotkeyStop = stopKey;
+        if (hotkeys["coordinate"] is JsonValue coordinate && coordinate.TryGetValue<string>(out var coordinateKey) && !string.IsNullOrWhiteSpace(coordinateKey))
+            _coordinateHotkey = coordinateKey;
     }
 
     // ── 退出 ──
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _isShuttingDown = true;
         Diag.Log("=== 拾刻退出 ===");
         if (_host != null)
         {
-            // 1. 保存设置（各抽屉 SaveSettings 写入 [Id] 节）
-            var settings = _host.Storage.LoadSettings();
-            foreach (var tool in _host.RegisteredTools)
-            {
-                using var ms = new MemoryStream();
-                using (var writer = new Utf8JsonWriter(ms))
-                {
-                    tool.SaveSettings(writer);
-                }
-                if (JsonNode.Parse(ms.ToArray()) is JsonObject section)
-                    settings[tool.Id] = section;
-            }
-            _host.Storage.SaveSettings(settings);
-
-            // 2. 抽屉清理（停线程 → 注销热键）
+            // 1. 先停止并等待后台任务释放输入；CraftTool 同时收集页面最新配置。
             foreach (var tool in _host.RegisteredTools)
                 tool.OnShutdown();
+
+            // 2. 保存设置（各抽屉 SaveSettings 写入 [Id] 节）
+            _host.Storage.UpdateSettings(settings =>
+            {
+                foreach (var tool in _host.RegisteredTools)
+                {
+                    using var ms = new MemoryStream();
+                    using (var writer = new Utf8JsonWriter(ms))
+                    {
+                        tool.SaveSettings(writer);
+                    }
+                    if (JsonNode.Parse(ms.ToArray()) is JsonObject section)
+                        settings[tool.Id] = section;
+                }
+            });
+
+            // 3. 注销宿主资源
             _host.Hotkeys.UnregisterAll();
             _host.EmergencyCts.Cancel();
         }
 
         _tray?.Dispose();
+
+        if (_ownsSingleInstanceMutex)
+        {
+            try { _singleInstanceMutex?.ReleaseMutex(); }
+            catch (ApplicationException) { }
+            _ownsSingleInstanceMutex = false;
+        }
+        _singleInstanceMutex?.Dispose();
+        _singleInstanceMutex = null;
+
         base.OnExit(e);
+    }
+
+    protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
+    {
+        // Windows 注销/关机必须放行真实关闭，不能被“隐藏到托盘”逻辑拦截。
+        _isShuttingDown = true;
+        base.OnSessionEnding(e);
     }
 }

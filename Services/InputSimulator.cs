@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 
@@ -9,16 +10,15 @@ namespace ShiKe.Services;
 /// - 紧急停止：每次输入前检查光标 ≤(1,1) → EmergencyCts.Cancel()（对应 Python FAILSAFE）
 /// - Shift 的管理（HoldShift/ReleaseShift/ReleaseAllKeys）由引擎层控制（铁律：Shift 全程按住，
 ///   改造循环内不释放；ShiftClick 只是带 ±10px 偏移的拆分点击，自身不按/放 Shift）
-/// - 时序细节（源码为准，非 ARCHITECTURE 简化版）：
-///   MoveTo: SetCursorPos → 0.03s
-///   RightClick: MoveTo → delay → 右键 → delay×3
-///   ShiftClick: ±10px → MoveTo → delay → down → 0.02s → up → delay×2
-///   CtrlAltC: 0.05s → 组合键 → max(delay×5, 0.15) 后返回
+/// - 用户配置的 delay 表示相邻两次“对装备左键点击”的目标最小间隔；
+///   通货右键和剪贴板复制使用各自固定的必要等待，不再叠加 delay 倍数。
 /// </summary>
 public sealed class InputSimulator
 {
     private readonly Func<CancellationTokenSource> _emergencyCtsProvider;
     private readonly ForegroundDetector _foreground;
+    private readonly object _craftTimingGate = new();
+    private long _lastCraftClickTimestamp;
 
     public InputSimulator(Func<CancellationTokenSource> emergencyCtsProvider, ForegroundDetector foreground)
     {
@@ -92,7 +92,7 @@ public sealed class InputSimulator
 
     // ── Win32 API ──
 
-    [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT pt);
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
     [DllImport("user32.dll")] private static extern uint MapVirtualKey(uint uCode, uint uMapType);
@@ -111,17 +111,54 @@ public sealed class InputSimulator
 
     /// <summary>
     /// 等待目标进程回到前台（对齐 Python _interruptible_sleep 的前台检查）。
-    /// TargetProcess 为空时直接返回（不检测）。
+    /// TargetProcess 为空时 fail-closed，禁止向未知窗口发送输入。
     /// </summary>
-    private async Task AwaitForegroundAsync(CancellationToken token)
+    private readonly object _modifierGate = new();
+    private bool _shiftHeld;
+
+    private bool IsShiftHeld
     {
-        if (string.IsNullOrEmpty(_foreground.TargetProcess)) return;
-        if (_foreground.IsTargetForeground()) return;
+        get { lock (_modifierGate) return _shiftHeld; }
+    }
+
+    private void SetShiftHeld(bool value)
+    {
+        lock (_modifierGate) _shiftHeld = value;
+    }
+
+    /// <summary>
+    /// 等待目标进程回到前台。若等待开始时由本服务保持着 Shift，则先释放，
+    /// 防止用户切到桌面后触发 Shift+任务栏点击等系统级副作用。
+    /// Shift 不在这里盲目恢复：CraftEngine 必须先重新右键选择当前通货，再恢复 Shift。
+    /// </summary>
+    public async Task<ForegroundWaitResult> WaitForTargetForegroundAsync(CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(_foreground.TargetProcess))
+            throw new InputSimulationException("未设置目标游戏进程，已阻止模拟输入");
+        if (_foreground.IsTargetForeground()) return default;
+
+        var restoreShift = IsShiftHeld;
+        if (restoreShift)
+        {
+            Diag.Log("[输入] 前台离开游戏，临时释放 Shift");
+            ReleaseKeyOrThrow(KeyCode.Shift, "前台暂停时释放 Shift");
+            SetShiftHeld(false);
+            await Task.Delay(50, CancellationToken.None);
+        }
 
         Diag.Log($"[输入] AwaitForeground: 等待前台切换至 {_foreground.TargetProcess}");
         while (!_foreground.IsTargetForeground())
             await Task.Delay(200, token);
         Diag.Log("[输入] AwaitForeground: 前台已切换");
+
+        return new ForegroundWaitResult(Waited: true, ShiftWasHeld: restoreShift);
+    }
+
+    private async Task EnsureForegroundForInputAsync(CancellationToken token)
+    {
+        var result = await WaitForTargetForegroundAsync(token);
+        if (result.ShiftWasHeld)
+            throw new InputSimulationException("前台切换期间已释放 Shift；为避免空点，已停止本次输入，请重新启动任务");
     }
 
     /// <summary>发送鼠标事件。返回 true=SendInput 报告成功。</summary>
@@ -141,9 +178,14 @@ public sealed class InputSimulator
         return true;
     }
 
+    private static void SendMouseOrThrow(uint flags, string action)
+    {
+        if (!SendMouse(flags))
+            throw new InputSimulationException($"{action}失败，Windows 未接受鼠标输入");
+    }
+
     /// <summary>
-    /// 发送键盘事件（虚拟键码 + 扫描码）。
-    /// 游戏用 DirectInput/Raw Input 只认硬件扫描码，必须同时设置 wVk 和 wScan。
+    /// 发送键盘扫描码事件。游戏用 DirectInput/Raw Input 时扫描码兼容性更好。
     /// </summary>
     private static bool SendKey(ushort vk, bool up)
     {
@@ -155,9 +197,9 @@ public sealed class InputSimulator
             {
                 ki = new KEYBDINPUT
                 {
-                    wVk = vk,
+                    wVk = 0,
                     wScan = scan,
-                    dwFlags = up ? KEYEVENTF_KEYUP : 0,
+                    dwFlags = KEYEVENTF_SCANCODE | (up ? KEYEVENTF_KEYUP : 0),
                     dwExtraInfo = 0,
                 }
             }
@@ -171,67 +213,88 @@ public sealed class InputSimulator
         return true;
     }
 
+    private static void PressKeyOrThrow(ushort vk, string action)
+    {
+        if (!SendKey(vk, up: false))
+            throw new InputSimulationException($"{action}失败，Windows 未接受按键按下输入");
+    }
+
+    private static void ReleaseKeyOrThrow(ushort vk, string action)
+    {
+        if (!SendKey(vk, up: true))
+            throw new InputSimulationException($"{action}失败，Windows 未接受按键释放输入");
+    }
+
     // ── 基础操作 ──
 
     /// <summary>移动到坐标并等 0.03s（Python _move_to）。</summary>
     public async Task MoveToAsync(int x, int y, CancellationToken token)
     {
         CheckEmergencyStop();
-        SetCursorPos(x, y);
+        if (!SetCursorPos(x, y))
+        {
+            var error = Marshal.GetLastWin32Error();
+            Diag.Win32Error($"SetCursorPos({x},{y})", error);
+            throw new InputSimulationException($"移动鼠标到 ({x}, {y}) 失败，Win32 错误码 {error}");
+        }
         await Task.Delay(30, token);
     }
 
-    /// <summary>右键：MoveTo → delay → 右键（down→0.02s→up）→ delay×3。
+    /// <summary>右键：MoveTo → 右键（down→0.02s→up）。
     /// down/up 间等待不可取消（防右键残留）。</summary>
-    public async Task RightClickAsync(int x, int y, int delayMs, CancellationToken token)
+    public async Task RightClickAsync(int x, int y, int _, CancellationToken token)
     {
-        await AwaitForegroundAsync(token);
+        await EnsureForegroundForInputAsync(token);
         await MoveToAsync(x, y, token);
-        await Task.Delay(delayMs, token);
         CheckEmergencyStop();
-        SendMouse(MOUSEEVENTF_RIGHTDOWN);
+        SendMouseOrThrow(MOUSEEVENTF_RIGHTDOWN, "鼠标右键按下");
         await Task.Delay(20, CancellationToken.None);
-        SendMouse(MOUSEEVENTF_RIGHTUP);
-        await Task.Delay(delayMs * 3, token);
+        SendMouseOrThrow(MOUSEEVENTF_RIGHTUP, "鼠标右键抬起");
     }
 
     /// <summary>
-    /// Shift+点击（Shift 已由外层按住）：±10px 随机偏移 → MoveTo → delay → down → 0.02s → up → delay×2。
+    /// Shift+点击（Shift 已由外层按住）：±10px 随机偏移 → 等待点击间隔 → down → 0.02s → up。
     /// </summary>
     public async Task ShiftClickAsync(int x, int y, int delayMs, CancellationToken token)
     {
-        await AwaitForegroundAsync(token);
+        await EnsureForegroundForInputAsync(token);
         int ox = x + Random.Shared.Next(-10, 11);
         int oy = y + Random.Shared.Next(-10, 11);
         CheckEmergencyStop();
-        SetCursorPos(ox, oy);
-        await Task.Delay(delayMs, token);
+        if (!SetCursorPos(ox, oy))
+        {
+            var error = Marshal.GetLastWin32Error();
+            Diag.Win32Error($"SetCursorPos({ox},{oy})", error);
+            throw new InputSimulationException($"移动鼠标到装备位置失败，Win32 错误码 {error}");
+        }
+        await Task.Delay(30, token);
+        await WaitForCraftClickIntervalAsync(delayMs, token);
         CheckEmergencyStop();
-        SendMouse(MOUSEEVENTF_LEFTDOWN);
+        MarkCraftClick();
+        SendMouseOrThrow(MOUSEEVENTF_LEFTDOWN, "鼠标左键按下");
         await Task.Delay(20, CancellationToken.None);
-        SendMouse(MOUSEEVENTF_LEFTUP);
-        await Task.Delay(delayMs * 2, token);
+        SendMouseOrThrow(MOUSEEVENTF_LEFTUP, "鼠标左键抬起");
     }
 
     /// <summary>普通左键点击（当前位置）。down/up 间不可取消（原子）。</summary>
     public async Task ClickAsync(int delayMs, CancellationToken token)
     {
-        await AwaitForegroundAsync(token);
+        await EnsureForegroundForInputAsync(token);
         CheckEmergencyStop();
-        SendMouse(MOUSEEVENTF_LEFTDOWN);
+        SendMouseOrThrow(MOUSEEVENTF_LEFTDOWN, "鼠标左键按下");
         await Task.Delay(20, CancellationToken.None);
-        SendMouse(MOUSEEVENTF_LEFTUP);
+        SendMouseOrThrow(MOUSEEVENTF_LEFTUP, "鼠标左键抬起");
         await Task.Delay(delayMs, token);
     }
 
     /// <summary>右键点击（当前位置）。down/up 间不可取消（原子）。</summary>
     public async Task RightClickAsync(int delayMs, CancellationToken token)
     {
-        await AwaitForegroundAsync(token);
+        await EnsureForegroundForInputAsync(token);
         CheckEmergencyStop();
-        SendMouse(MOUSEEVENTF_RIGHTDOWN);
+        SendMouseOrThrow(MOUSEEVENTF_RIGHTDOWN, "鼠标右键按下");
         await Task.Delay(20, CancellationToken.None);
-        SendMouse(MOUSEEVENTF_RIGHTUP);
+        SendMouseOrThrow(MOUSEEVENTF_RIGHTUP, "鼠标右键抬起");
         await Task.Delay(delayMs, token);
     }
 
@@ -239,24 +302,35 @@ public sealed class InputSimulator
 
     public async Task HoldShiftAsync(CancellationToken token)
     {
-        await AwaitForegroundAsync(token);
+        await EnsureForegroundForInputAsync(token);
         CheckEmergencyStop();
-        SendKey(KeyCode.Shift, up: false);
+        PressKeyOrThrow(KeyCode.Shift, "按住 Shift");
+        SetShiftHeld(true);
         await Task.Delay(50, token);
     }
 
     public async Task ReleaseShiftAsync(CancellationToken token)
     {
-        SendKey(KeyCode.Shift, up: true);
+        try
+        {
+            ReleaseKeyOrThrow(KeyCode.Shift, "释放 Shift");
+        }
+        finally
+        {
+            SetShiftHeld(false);
+        }
         await Task.Delay(50, token);
     }
 
     /// <summary>释放 shift/ctrl/alt（对齐 Python _release_all：只释放键盘修饰键，不释放鼠标按键）。</summary>
     public async Task ReleaseAllKeysAsync(CancellationToken token)
     {
-        SendKey(KeyCode.Shift, up: true);
-        SendKey(KeyCode.Control, up: true);
-        SendKey(KeyCode.Alt, up: true);
+        var shiftOk = SendKey(KeyCode.Shift, up: true);
+        SetShiftHeld(false);
+        var controlOk = SendKey(KeyCode.Control, up: true);
+        var altOk = SendKey(KeyCode.Alt, up: true);
+        if (!shiftOk || !controlOk || !altOk)
+            throw new InputSimulationException("释放 Shift/Ctrl/Alt 失败，Windows 未接受全部按键释放输入");
         await Task.Delay(50, token);
     }
 
@@ -272,23 +346,34 @@ public sealed class InputSimulator
 
     // ── 键盘 ──
 
-    /// <summary>Ctrl+Alt+C（国服复制物品文本；Shift 应保持按住）。返回后已等 max(delay×5, 0.15)。</summary>
-    public async Task CtrlAltCAsync(int delayMs, CancellationToken token)
+    /// <summary>Ctrl+Alt+C（国服复制物品文本；Shift 应保持按住）。剪贴板到达等待由调用方轮询。</summary>
+    public async Task CtrlAltCAsync(int _, CancellationToken token)
     {
-        await AwaitForegroundAsync(token);
-        await Task.Delay(50, token);
+        await EnsureForegroundForInputAsync(token);
+        await Task.Delay(20, token);
         CheckEmergencyStop();
-        SendKey(KeyCode.Control, up: false);
-        SendKey(KeyCode.Alt, up: false);
-        SendKey(KeyCode.C, up: false);
-        SendKey(KeyCode.C, up: true);
-        SendKey(KeyCode.Alt, up: true);
-        SendKey(KeyCode.Control, up: true);
-        await Task.Delay(Math.Max(delayMs * 5, 150), token);
+        try
+        {
+            PressKeyOrThrow(KeyCode.Control, "Ctrl+Alt+C 的 Ctrl 按下");
+            PressKeyOrThrow(KeyCode.Alt, "Ctrl+Alt+C 的 Alt 按下");
+            PressKeyOrThrow(KeyCode.C, "Ctrl+Alt+C 的 C 按下");
+            ReleaseKeyOrThrow(KeyCode.C, "Ctrl+Alt+C 的 C 释放");
+            ReleaseKeyOrThrow(KeyCode.Alt, "Ctrl+Alt+C 的 Alt 释放");
+            ReleaseKeyOrThrow(KeyCode.Control, "Ctrl+Alt+C 的 Ctrl 释放");
+        }
+        catch
+        {
+            // 某一步失败也必须尽力释放，避免修饰键残留到桌面。
+            SendKey(KeyCode.C, up: true);
+            SendKey(KeyCode.Alt, up: true);
+            SendKey(KeyCode.Control, up: true);
+            throw;
+        }
+        await Task.Delay(20, token);
     }
 
-    public void KeyDown(string key) => SendKey(KeyCode.Parse(key), up: false);
-    public void KeyUp(string key) => SendKey(KeyCode.Parse(key), up: true);
+    public void KeyDown(string key) => PressKeyOrThrow(KeyCode.Parse(key), $"按下 {key}");
+    public void KeyUp(string key) => ReleaseKeyOrThrow(KeyCode.Parse(key), $"释放 {key}");
 
     /// <summary>
     /// 逐字符输入文本（KEYEVENTF_UNICODE，不依赖键盘布局；对齐 Python keyboard.write）。
@@ -296,17 +381,17 @@ public sealed class InputSimulator
     /// </summary>
     public async Task TypeTextAsync(string text, CancellationToken token)
     {
-        await AwaitForegroundAsync(token);
+        await EnsureForegroundForInputAsync(token);
         foreach (var ch in text)
         {
             token.ThrowIfCancellationRequested();
-            SendKeyUnicode(ch, down: true);
-            SendKeyUnicode(ch, down: false);
+            SendKeyUnicodeOrThrow(ch, down: true);
+            SendKeyUnicodeOrThrow(ch, down: false);
             await Task.Delay(5, token);
         }
     }
 
-    private static void SendKeyUnicode(char ch, bool down)
+    private static void SendKeyUnicodeOrThrow(char ch, bool down)
     {
         var input = new INPUT
         {
@@ -322,18 +407,54 @@ public sealed class InputSimulator
                 }
             }
         };
-        SendInput(1, [input], Marshal.SizeOf<INPUT>());
+        if (SendInput(1, [input], Marshal.SizeOf<INPUT>()) == 0)
+        {
+            var error = Marshal.GetLastWin32Error();
+            Diag.Win32Error($"SendInput(unicode=0x{(int)ch:X4},down={down})", error);
+            throw new InputSimulationException($"输入字符失败，Win32 错误码 {error}");
+        }
     }
 
     /// <summary>按下并释放一个键（对齐 Python keyboard.press_and_release）。</summary>
     public void PressAndRelease(string key)
     {
         var vk = KeyCode.Parse(key);
-        SendKey(vk, up: false);
+        PressKeyOrThrow(vk, $"按下 {key}");
         Thread.Sleep(10); // 小延迟确保游戏能收到按下事件
-        SendKey(vk, up: true);
+        ReleaseKeyOrThrow(vk, $"释放 {key}");
     }
+
+    /// <summary>每次 Craft 任务启动时清除上次运行的点击节拍。</summary>
+    public void ResetCraftClickInterval()
+    {
+        lock (_craftTimingGate) _lastCraftClickTimestamp = 0;
+    }
+
+    private async Task WaitForCraftClickIntervalAsync(int configuredMs, CancellationToken token)
+    {
+        long lastTimestamp;
+        lock (_craftTimingGate) lastTimestamp = _lastCraftClickTimestamp;
+        if (lastTimestamp == 0) return;
+
+        var elapsedMs = (long)Stopwatch.GetElapsedTime(lastTimestamp).TotalMilliseconds;
+        var remainingMs = CalculateRemainingClickDelay(configuredMs, elapsedMs);
+        if (remainingMs > 0)
+            await Task.Delay(remainingMs, token);
+    }
+
+    private void MarkCraftClick()
+    {
+        lock (_craftTimingGate) _lastCraftClickTimestamp = Stopwatch.GetTimestamp();
+    }
+
+    /// <summary>纯函数，供内部回归测试验证“delay=点击间隔”语义。</summary>
+    public static int CalculateRemainingClickDelay(int configuredMs, long elapsedMs)
+        => Math.Max(0, configuredMs - (int)Math.Max(0, elapsedMs));
 }
+
+public sealed class InputSimulationException(string message) : InvalidOperationException(message);
+
+public readonly record struct ForegroundWaitResult(bool Waited, bool ShiftWasHeld);
 
 /// <summary>键名 → 虚拟键码。</summary>
 public static class KeyCode

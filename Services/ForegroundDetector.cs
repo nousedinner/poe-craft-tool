@@ -88,7 +88,6 @@ public sealed class ForegroundDetector
             if (QueryFullProcessImageNameW(handle, 0, buffer, ref size))
             {
                 var name = Path.GetFileName(new string(buffer, 0, (int)size));
-                Diag.Log($"[前台] Win32 成功: pid={pid}, name={name}");
                 return name;
             }
             else
@@ -123,11 +122,11 @@ public sealed class ForegroundDetector
         }
     }
 
-    /// <summary>目标进程是否在前台。TargetProcess 为空 → 恒 True（不检测）。</summary>
+    /// <summary>目标进程是否在前台。TargetProcess 为空 → False（危险输入采用 fail-closed）。</summary>
     public bool IsTargetForeground()
     {
         if (string.IsNullOrWhiteSpace(TargetProcess))
-            return true;
+            return false;
         var current = GetForegroundProcessName();
         if (current is null)
             return false;

@@ -56,13 +56,142 @@ public static class Currency
     public static string Label(string key) => Labels.TryGetValue(key, out var l) ? l : key;
 }
 
-/// <summary>单条词缀规则——文本子串匹配（对齐 Python AffixRule.matches；DEV_GUIDE §45-52 的数值范围未实现）。</summary>
+/// <summary>
+/// 单条词缀规则——文本子串匹配（对齐 Python AffixRule.matches；DEV_GUIDE §45-52 的数值范围未实现）。
+/// 国服界面常把“闪电”简称为“电”，因此候选文本额外提供“基础闪电”→“基础电”的匹配别名。
+/// </summary>
 public sealed class AffixRule
 {
     public string Text { get; init; } = "";
 
     public bool Matches(string affixLine)
-        => Text.Length > 0 && affixLine.Contains(Text, StringComparison.Ordinal);
+    {
+        var text = Text.Trim();
+        if (text.Length == 0) return false;
+        if (affixLine.Contains(text, StringComparison.Ordinal)) return true;
+
+        var normalized = affixLine.Replace("基础闪电", "基础电", StringComparison.Ordinal);
+        return normalized.Contains(text, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>
+/// 一条由 Ctrl+Alt+C 高级描述标记出的真实显式词缀。
+/// Header/DescriptionLines 可用于诊断；词缀数量只按本集合元素数计算，
+/// 不把装备名、基础类型、元数据或说明行误算为词缀。
+/// </summary>
+public sealed class ParsedItemAffix
+{
+    public required string Header { get; init; }
+    public List<string> DescriptionLines { get; } = [];
+
+    public string SearchText => DescriptionLines.Count == 0
+        ? Header
+        : $"{Header} {string.Join(' ', DescriptionLines)}";
+}
+
+/// <summary>一个不可重复消费的逻辑匹配单元；显式词缀的属性头和描述属于同一个单元。</summary>
+public sealed class ItemMatchCandidate
+{
+    public required string DisplayText { get; init; }
+    public required string SearchText { get; init; }
+    /// <summary>
+    /// 是否来自高级描述中的真实前/后缀块。
+    /// 匹配时显式词缀优先；装备名等宽松语料只在规则没有显式对应时作为后备，
+    /// 避免魔法物品名称与其显式词缀正文把同一实际词缀重复计数。
+    /// </summary>
+    public bool IsExplicitAffix { get; init; }
+}
+
+/// <summary>从物品剪贴板头解析出的稀有度；用于 Mode 3 启动前安全归一化。</summary>
+public enum ItemRarity
+{
+    Unknown,
+    Normal,
+    Magic,
+    Rare,
+    Unique,
+}
+
+/// <summary>
+/// 物品文本的双视图解析结果：
+/// MatchLines 保留装备名/基础类型供宽松匹配；ExplicitAffixes 仅表示真实前后缀。
+/// </summary>
+public sealed class ItemParseResult
+{
+    public ItemRarity Rarity { get; set; }
+    public List<string> MatchLines { get; } = [];
+    public List<ItemMatchCandidate> MatchCandidates { get; } = [];
+    public List<ParsedItemAffix> ExplicitAffixes { get; } = [];
+    public int ExplicitAffixCount => ExplicitAffixes.Count;
+}
+
+/// <summary>Mode 3 魔法阶段下一步；纯判定便于在不发送键鼠输入时验证状态机。</summary>
+public enum Mode3MagicDecision
+{
+    ContinueAlteration,
+    UseAugmentation,
+    ProceedToRegal,
+}
+
+public enum Mode3StartDecision
+{
+    ContinueFromNormal,
+    ScourFirst,
+    StopUnsupported,
+}
+
+public static class CraftDecisions
+{
+    /// <summary>
+    /// Mode 3 改造得到两条显式词缀但未达到魔法阶段阈值时，记录完整样本用于排查漏识别。
+    /// 该策略只影响诊断文件，不改变下一步通货判定。
+    /// </summary>
+    public static bool ShouldCaptureMode3Miss(int explicitAffixCount, int hits, int threshold, bool hasExclude)
+        => !hasExclude && explicitAffixCount >= 2 && hits < threshold;
+
+    /// <summary>命中数按钮的模式上限；Single 模式没有总数限制。</summary>
+    public static bool IsHitCountSelectionValid(CraftMode mode, int primaryHitCount, int secondaryHitCount)
+    {
+        var total = primaryHitCount + secondaryHitCount;
+        return mode switch
+        {
+            CraftMode.AltAug => total <= 2,
+            CraftMode.AltAugRegal => total <= 3,
+            _ => true,
+        };
+    }
+
+    /// <summary>非法按钮选择恢复到上一次合法值，而不是意外归零。</summary>
+    public static int ResolveHitCountSelection(CraftMode mode, int previousValue, int proposedValue, int otherValue)
+        => IsHitCountSelectionValid(
+            mode,
+            primaryHitCount: proposedValue,
+            secondaryHitCount: otherValue)
+            ? proposedValue
+            : previousValue;
+
+    /// <summary>Mode 3 每次启动都先确认底材状态；蓝/黄装先重铸，其他未知状态拒绝盲点。</summary>
+    public static Mode3StartDecision BeforeMode3(ItemRarity rarity) => rarity switch
+    {
+        ItemRarity.Normal => Mode3StartDecision.ContinueFromNormal,
+        ItemRarity.Magic or ItemRarity.Rare => Mode3StartDecision.ScourFirst,
+        _ => Mode3StartDecision.StopUnsupported,
+    };
+
+    /// <summary>改造后：两词缀达到阈值去富豪；一词缀至少一命中才允许增幅。</summary>
+    public static Mode3MagicDecision AfterAlteration(int explicitAffixCount, int hits, int threshold)
+    {
+        if (explicitAffixCount >= 2)
+            return hits >= threshold ? Mode3MagicDecision.ProceedToRegal : Mode3MagicDecision.ContinueAlteration;
+        if (explicitAffixCount == 1 && hits >= 1)
+            return Mode3MagicDecision.UseAugmentation;
+        return Mode3MagicDecision.ContinueAlteration;
+    }
+
+    /// <summary>增幅后只判断魔法阶段阈值；即使已满足最终规则也必须先经过富豪。</summary>
+    public static Mode3MagicDecision AfterAugmentation(int hits, int threshold)
+        => hits >= threshold ? Mode3MagicDecision.ProceedToRegal : Mode3MagicDecision.ContinueAlteration;
 }
 
 /// <summary>完整洗装规则（对齐 Python CraftRules + validate）。</summary>
@@ -79,9 +208,43 @@ public sealed class CraftRules
 
     public List<AffixRule> ExcludeAffixes { get; } = [];
 
+    /// <summary>创建一次洗装运行使用的深拷贝，避免 UI 修改正在执行的规则。</summary>
+    public CraftRules CreateSnapshot()
+    {
+        var snapshot = new CraftRules
+        {
+            Mode = Mode,
+            SingleCurrency = SingleCurrency,
+            PrimaryHitCount = PrimaryHitCount,
+            SecondaryHitCount = SecondaryHitCount,
+        };
+        snapshot.PrimaryAffixes.AddRange(PrimaryAffixes.Select(rule => new AffixRule { Text = rule.Text }));
+        snapshot.SecondaryAffixes.AddRange(SecondaryAffixes.Select(rule => new AffixRule { Text = rule.Text }));
+        snapshot.ExcludeAffixes.AddRange(ExcludeAffixes.Select(rule => new AffixRule { Text = rule.Text }));
+        return snapshot;
+    }
+
     /// <summary>验证规则约束（对齐 Python validate；primary_hit_count=0 合法，方案 D5）。</summary>
     public (bool Ok, string Message) Validate()
     {
+        var seenRules = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (poolName, rules) in new[]
+                 {
+                     ("主词缀池", PrimaryAffixes),
+                     ("次级词缀池", SecondaryAffixes),
+                     ("排除词缀池", ExcludeAffixes),
+                 })
+        {
+            foreach (var rule in rules)
+            {
+                var text = rule.Text.Trim();
+                if (text.Length == 0) continue;
+                if (seenRules.TryGetValue(text, out var existingPool))
+                    return (false, $"词缀「{text}」同时存在于{existingPool}和{poolName}，请只保留一处");
+                seenRules[text] = poolName;
+            }
+        }
+
         if (PrimaryHitCount > 0 && PrimaryAffixes.Count == 0)
             return (false, $"主词缀命中数要求 {PrimaryHitCount}，但主词缀池为空");
         if (PrimaryHitCount > PrimaryAffixes.Count)
@@ -109,6 +272,9 @@ public sealed class AffixCheckResult
     public List<string> MatchedPrimary { get; } = [];
     public List<string> MatchedSecondary { get; } = [];
     public List<string> MatchedExclude { get; } = [];
+    public List<string> MatchedPrimaryRules { get; } = [];
+    public List<string> MatchedSecondaryRules { get; } = [];
+    public List<string> MatchedExcludeRules { get; } = [];
 
     public int TotalHits => PrimaryHits + SecondaryHits;
 

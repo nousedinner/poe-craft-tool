@@ -13,6 +13,8 @@ namespace ShiKe.Services;
 /// </summary>
 public sealed class StorageService
 {
+    private readonly object _settingsGate = new();
+
     public string DataDir { get; }
 
     private string SettingsPath => Path.Combine(DataDir, "settings.json");
@@ -22,9 +24,9 @@ public sealed class StorageService
 
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
-    public StorageService()
+    public StorageService(string? dataDir = null)
     {
-        DataDir = Path.Combine(AppContext.BaseDirectory, "data");
+        DataDir = dataDir ?? Path.Combine(AppContext.BaseDirectory, "data");
         Directory.CreateDirectory(DataDir);
     }
 
@@ -37,30 +39,71 @@ public sealed class StorageService
     /// </summary>
     public JsonObject LoadSettings()
     {
-        if (!File.Exists(SettingsPath))
-            return [];
+        lock (_settingsGate)
+            return LoadSettingsCore();
+    }
+
+    private JsonObject LoadSettingsCore()
+    {
+        if (!File.Exists(SettingsPath)) return [];
 
         try
         {
-            var root = JsonNode.Parse(File.ReadAllText(SettingsPath)) as JsonObject ?? [];
-            if (root.ContainsKey("craft") || root.ContainsKey("clicker") || root.ContainsKey("host"))
+            var originalText = File.ReadAllText(SettingsPath);
+            var root = JsonNode.Parse(originalText) as JsonObject ?? [];
+            if (IsSectionedSettings(root))
                 return root; // 已是分节格式
 
-            // 旧版平铺 → 迁移
+            // 旧版平铺 → 先备份原始文件，再原子写入迁移结果。
+            // 不可先覆盖再 Move，否则被移走的是新文件而不是旧文件。
             var migrated = MigrateLegacySettings(root);
-            SaveSettings(migrated);
-            File.Move(SettingsPath, SettingsPath + ".bak", overwrite: true);
+            File.Copy(SettingsPath, SettingsPath + ".bak", overwrite: true);
+            WriteJsonAtomic(SettingsPath, migrated);
             return migrated;
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
+            Diag.Log($"[存储] settings.json 加载/迁移失败: {ex.GetType().Name}: {ex.Message}");
             return []; // 损坏文件：不覆盖，返回空
         }
     }
 
     public void SaveSettings(JsonObject root)
     {
-        File.WriteAllText(SettingsPath, root.ToJsonString(Indented));
+        lock (_settingsGate)
+            WriteJsonAtomic(SettingsPath, root);
+    }
+
+    /// <summary>在同一锁内读取、修改并原子保存 settings，避免不同设置入口互相覆盖。</summary>
+    public void UpdateSettings(Action<JsonObject> update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        lock (_settingsGate)
+        {
+            var root = LoadSettingsCore();
+            update(root);
+            WriteJsonAtomic(SettingsPath, root);
+        }
+    }
+
+    private static bool IsSectionedSettings(JsonObject root)
+        => root.ContainsKey("craft") || root.ContainsKey("clicker") || root.ContainsKey("keyloop") ||
+           root.ContainsKey("hideout") || root.ContainsKey("host") || root.ContainsKey("schema_version");
+
+    private static void WriteJsonAtomic(string path, JsonObject root)
+    {
+        var directory = Path.GetDirectoryName(path) ?? throw new InvalidOperationException("无法确定存储目录");
+        Directory.CreateDirectory(directory);
+        var tempPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            File.WriteAllText(tempPath, root.ToJsonString(Indented));
+            File.Move(tempPath, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(tempPath)) File.Delete(tempPath);
+        }
     }
 
     /// <summary>旧版平铺 settings 迁移映射（ARCHITECTURE §3.5）。</summary>
@@ -83,6 +126,7 @@ public sealed class StorageService
         MoveTo(hostHotkeys, "hotkey_stop", "stop");
         MoveTo(hostHotkeys, "hotkey_set_coord", "coordinate");
         MoveTo(host, "target_process", "target_process");
+        MoveTo(host, "auto_detect_poe", "auto_detect_poe");
         host["hotkeys"] = hostHotkeys;
 
         MoveTo(craft, "delay_ms", "delay_ms");
@@ -145,7 +189,7 @@ public sealed class StorageService
         var obj = new JsonObject();
         foreach (var (key, pt) in coords)
             obj[key] = new JsonArray((int)pt.X, (int)pt.Y);
-        File.WriteAllText(CoordinatesPath, obj.ToJsonString(Indented));
+        WriteJsonAtomic(CoordinatesPath, obj);
     }
 
     // ── rules.json（兼容旧版，阶段3 使用）──
@@ -162,7 +206,7 @@ public sealed class StorageService
 
     public void SaveRules(JsonObject rules)
     {
-        File.WriteAllText(RulesPath, rules.ToJsonString(Indented));
+        WriteJsonAtomic(RulesPath, rules);
     }
 
     // ── presets ──
@@ -189,7 +233,7 @@ public sealed class StorageService
     public void SavePreset(string name, JsonObject preset)
     {
         Directory.CreateDirectory(PresetsDir);
-        File.WriteAllText(Path.Combine(PresetsDir, name + ".json"), preset.ToJsonString(Indented));
+        WriteJsonAtomic(Path.Combine(PresetsDir, name + ".json"), preset);
     }
 
     public void DeletePreset(string name)

@@ -12,7 +12,7 @@
     <AssemblyName>拾刻</AssemblyName>
     <ApplicationIcon>poe.ico</ApplicationIcon>
     <!-- 版本单一来源：续用 1.x 系列，C# 版从 v1.0.5 起（方案 §10） -->
-    <Version>1.0.5</Version>
+    <Version>1.0.16</Version>
     <AssemblyTitle>拾刻</AssemblyTitle>
     <Product>拾刻</Product>
     <Description>PoE 洗词缀自动化 + 连点器 + 按键循环 + 一键回城聚合工具（C# 重构版）</Description>
@@ -36,6 +36,12 @@
   <!-- sounds/ 目录复制到输出目录（SoundService 从 AppContext.BaseDirectory/sounds/ 查找音效文件） -->
   <ItemGroup>
     <None Include="sounds\**" CopyToOutputDirectory="PreserveNewest" Link="sounds\%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="data\presets\**" CopyToOutputDirectory="PreserveNewest" Link="data\presets\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- 内部测试是独立控制台项目，不能参与 WPF 主程序编译。 -->
+  <ItemGroup>
+    <Compile Remove="Tests\**\*.cs" />
   </ItemGroup>
 
 </Project>

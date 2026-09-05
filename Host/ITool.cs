@@ -15,7 +15,7 @@ public interface ITool
     string IconKey { get; }     // 资源字典图标 key（先占位）
 
     // ── 生命周期 ──
-    /// <summary>启动注册：保存 host 引用、读取设置。</summary>
+    /// <summary>启动注册：保存 host 引用、创建运行时服务；设置随后由宿主统一调用 LoadSettings。</summary>
     void Initialize(ToolHost host);
 
     /// <summary>创建并返回工具页面（宿主缓存，首次选中时懒加载）。</summary>

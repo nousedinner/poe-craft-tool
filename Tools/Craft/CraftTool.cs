@@ -53,21 +53,11 @@ public sealed class CraftTool : ITool, ICoordinateProvider
         // 全局错误兜底：洗词缀页未打开时也能看到启动错误（坐标缺失/验证失败等）
         _engine.ErrorOccurred += msg => host.Notification.ShowError(msg);
 
-        // 任何停止路径（F6热键/PollStopKey/匹配成功/耗尽/异常）都弹悬浮窗
-        _engine.Stopped += reason => host.Notification.Show($"⏹ {reason}");
-
-        // 从 settings.json 读 host 节热键（默认值以 storage.py 为准）
-        try
+        // 成功/耗尽/错误由引擎各自通知；只有普通用户停止在这里补一次提示，避免覆盖最终结果。
+        _engine.Stopped += reason =>
         {
-            var settings = host.Storage.LoadSettings();
-            if (settings["host"] is JsonObject hostSection &&
-                hostSection["hotkeys"] is JsonObject hotkeys)
-            {
-                if (hotkeys["start"] is JsonValue s) HotkeyStart = s.GetValue<string>();
-                if (hotkeys["stop"] is JsonValue st) HotkeyStop = st.GetValue<string>();
-            }
-        }
-        catch (Exception) { }
+            if (PopupEnabled && reason == "已停止") host.Notification.Show("⏹ 已停止");
+        };
 
         LoadRules();
         LoadCoordinates();
@@ -187,6 +177,11 @@ public sealed class CraftTool : ITool, ICoordinateProvider
     public void Start()
     {
         if (_host is null || _engine is null) return;
+        if (string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess))
+        {
+            _host.Notification.ShowError("尚未锁定游戏进程，请先启动游戏或在设置中选择目标进程");
+            return;
+        }
 
         var (ok, msg) = Rules.Validate();
         if (!ok)
@@ -198,16 +193,22 @@ public sealed class CraftTool : ITool, ICoordinateProvider
         _engine.SetStopKey(HotkeyStop); // 设置停止键 VK（GetAsyncKeyState 轮询用）
         _engine.Start(Rules, Coordinates, DelayMs, SoundEnabled, PopupEnabled,
             SelectedSound, ExhaustionThreshold, Mode2ScourAlch, UseExalt);
-        if (_engine.IsRunning)
+        if (_engine.IsRunning && PopupEnabled)
             _host.Notification.Show("▶ 洗词缀 启动");
     }
 
     private void StartFromHotkey()
     {
+        if (string.IsNullOrWhiteSpace(_host?.Foreground.TargetProcess))
+        {
+            Diag.Log("[洗装] StartFromHotkey: 未配置目标进程，拒绝启动");
+            _host?.Notification.ShowError("尚未锁定游戏进程，请先启动游戏或在设置中选择目标进程");
+            return;
+        }
+
         // 前台检查（对齐 Python _on_start：目标进程不在前台 → 提示不启动）。
         // 注：HotkeyRequest.CheckForeground 标志由抽屉自查——HotkeyManager.WndProc 不执行该检查（审查 A）。
-        if (!string.IsNullOrEmpty(_host?.Foreground.TargetProcess) &&
-            !_host.Foreground.IsTargetForeground())
+        if (!_host.Foreground.IsTargetForeground())
         {
             var current = ForegroundDetector.GetForegroundProcessName();
             Diag.Log($"[洗装] StartFromHotkey: 前台检查失败, TargetProcess={_host!.Foreground.TargetProcess}, 当前前台={current ?? "(null)"}");
@@ -240,11 +241,18 @@ public sealed class CraftTool : ITool, ICoordinateProvider
 
     public void OnActivate() { }
 
-    public void OnDeactivate() { }
+    public void OnDeactivate()
+    {
+        // 切换到其他抽屉时也保存当前页面，不能只依赖 F5 或最终退出。
+        _page?.CollectRulesFromUi();
+    }
 
     public void OnShutdown()
     {
-        _engine?.Stop();
+        // 退出前收集页面最新值；CollectRulesFromUi 只更新/保存配置，不会启动输入。
+        _page?.CollectRulesFromUi();
+        if (_engine is not null && !_engine.Shutdown(TimeSpan.FromSeconds(2)))
+            Diag.Log("[引擎] Shutdown: 2 秒内未完成关闭");
     }
 
     // ── 存储（craft 节）──
@@ -258,20 +266,36 @@ public sealed class CraftTool : ITool, ICoordinateProvider
         SelectedSound = GetString(section, "selected_sound", SettingsDefaults.SelectedSound);
         Mode2ScourAlch = GetBool(section, "mode2_scour_alch", false);
         UseExalt = GetBool(section, "use_exalt", false);
+        Diag.Log($"[设置] Craft 已加载: delay={DelayMs}, sound={SoundEnabled}, popup={PopupEnabled}, " +
+                 $"mode2ScourAlch={Mode2ScourAlch}, useExalt={UseExalt}");
     }
 
     public void SaveSettings(Utf8JsonWriter writer)
     {
-        writer.WriteStartObject();
-        writer.WriteNumber("delay_ms", DelayMs);
-        writer.WriteBoolean("sound_enabled", SoundEnabled);
-        writer.WriteBoolean("popup_enabled", PopupEnabled);
-        writer.WriteNumber("clipboard_unchanged_threshold", ExhaustionThreshold);
-        writer.WriteString("selected_sound", SelectedSound);
-        writer.WriteBoolean("mode2_scour_alch", Mode2ScourAlch);
-        writer.WriteBoolean("use_exalt", UseExalt);
-        writer.WriteEndObject();
+        CreateSettingsSection().WriteTo(writer);
     }
+
+    /// <summary>立即持久化当前 Craft 设置；规则仍写入兼容旧版的 rules.json。</summary>
+    public void SaveSettingsToStorage()
+    {
+        if (_host is null) return;
+        _host.Storage.UpdateSettings(root => root[Id] = CreateSettingsSection());
+        Diag.Log($"[设置] Craft 已保存: mode={Rules.Mode}, currency={Rules.SingleCurrency}, " +
+                 $"primary={Rules.PrimaryAffixes.Count}/{Rules.PrimaryHitCount}, " +
+                 $"secondary={Rules.SecondaryAffixes.Count}/{Rules.SecondaryHitCount}, " +
+                 $"exclude={Rules.ExcludeAffixes.Count}");
+    }
+
+    private JsonObject CreateSettingsSection() => new()
+    {
+        ["delay_ms"] = DelayMs,
+        ["sound_enabled"] = SoundEnabled,
+        ["popup_enabled"] = PopupEnabled,
+        ["clipboard_unchanged_threshold"] = ExhaustionThreshold,
+        ["selected_sound"] = SelectedSound,
+        ["mode2_scour_alch"] = Mode2ScourAlch,
+        ["use_exalt"] = UseExalt,
+    };
 
     private static int GetInt(JsonElement section, string key, int fallback)
         => section.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i) ? i : fallback;

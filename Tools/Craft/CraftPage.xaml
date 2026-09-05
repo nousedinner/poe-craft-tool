@@ -55,25 +55,28 @@
             <StackPanel x:Name="Mode2Frame" Orientation="Horizontal" Visibility="Collapsed" Margin="0,0,0,6">
                 <TextBlock Text="Mode 2 子模式:" Foreground="#334455" FontSize="12" VerticalAlignment="Center"/>
                 <RadioButton x:Name="Mode2AltAug" Content="改造+增幅" GroupName="M2Sub" IsChecked="True"
-                             Foreground="#334455" FontSize="12" Margin="8,0,0,0" Cursor="Hand"/>
+                             Foreground="#334455" FontSize="12" Margin="8,0,0,0" Cursor="Hand"
+                             Checked="Mode2Option_Changed"/>
                 <RadioButton x:Name="Mode2ScourAlch" Content="重铸+点金" GroupName="M2Sub"
-                             Foreground="#334455" FontSize="12" Margin="8,0,0,0" Cursor="Hand"/>
+                             Foreground="#334455" FontSize="12" Margin="8,0,0,0" Cursor="Hand"
+                             Checked="Mode2Option_Changed"/>
             </StackPanel>
 
             <!-- Mode 3 崇高 -->
             <StackPanel x:Name="Mode3Frame" Orientation="Horizontal" Visibility="Collapsed" Margin="0,0,0,6">
                 <CheckBox x:Name="ExaltCheck" Content="富豪后使用崇高石" Foreground="#B45F06" FontSize="13"
-                          FontWeight="Bold" Cursor="Hand"/>
+                          FontWeight="Bold" Cursor="Hand"
+                          Checked="ExaltCheck_Changed" Unchecked="ExaltCheck_Changed"/>
             </StackPanel>
 
-            <!-- 操作延迟 -->
+            <!-- 洗装同步/点击间隔 -->
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                 <TextBlock Text="操作延迟:" Foreground="#334455" FontSize="12" VerticalAlignment="Center"/>
                 <Slider x:Name="DelaySlider" Minimum="10" Maximum="200" Value="33" Width="140"
                         VerticalAlignment="Center" Margin="8,0"/>
                 <TextBlock x:Name="DelayValue" Text="33 ms" Foreground="#334455" FontSize="12"
                            VerticalAlignment="Center" Margin="4,0"/>
-                <TextBlock Text="影响洗词缀操作速度" Foreground="#8A9AAA" FontSize="10"
+                <TextBlock Text="通货点击后的服务器同步等待" Foreground="#8A9AAA" FontSize="10"
                            VerticalAlignment="Center" Margin="8,0,0,0"/>
             </StackPanel>
 

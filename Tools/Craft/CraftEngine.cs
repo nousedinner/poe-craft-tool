@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
 using ShiKe.Host;
@@ -12,7 +13,7 @@ public sealed record CraftStatus(string Text, int UseCount, int MatchCount, bool
 /// 洗装引擎（对齐 Python auto_operator.py CraftOperator v8）：
 /// - 单 Task 常驻（启动即建永不销毁，Python 坑 #3 最终方案），ManualResetEventSlim 唤醒 + CTS 取消（唤醒/取消分离，坑 #5）
 /// - 三模式 + Mode 2 子模式（改造+增幅 / 重铸+点金）+ Mode 3 可选崇高
-/// - 时序细节逐行对齐源码：右键后 Mode1 不额外等待 / Mode2/3 额外 0.15s；ShiftClick 拆分点击；CtrlAltC 后 max(delay×5,0.15)
+/// - 通货切换统一释放修饰键并等待至少 0.2s；delay 表示通货点击后的首次服务器同步等待
 /// - 紧急停止：光标 ≤(1,1) → InputSimulator 触发 EmergencyCts.Cancel（对齐 Python FAILSAFE）
 /// - 状态推送 250ms 节流；错误先停线程再上报（坑 #17）
 /// </summary>
@@ -22,7 +23,7 @@ public sealed class CraftEngine
     private readonly ManualResetEventSlim _wakeSignal = new(false);
     private CancellationTokenSource? _workCts;
     private bool _running;
-    private Task? _thread;
+    private readonly Task _thread;
     private int _runId;
     private DateTime _lastStatusTime = DateTime.MinValue;
 
@@ -36,7 +37,12 @@ public sealed class CraftEngine
     private int _exhaustionThreshold = SettingsDefaults.ClipboardUnchangedThreshold;
     private bool _mode2ScourAlch;
     private bool _useExalt;
+    private bool _shutdownRequested;
+    private string? _completionReason;
     private ushort _stopKeyVk; // F6 停止键的虚拟键码（轮询兜底用）
+    private uint _stopKeyModifiers;
+    private string? _activeCurrency;
+    private Point _activeCurrencyCoordinate;
 
     // GetAsyncKeyState：轮询物理按键状态（兜底 RegisterHotKey 可能被游戏吞掉）
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
@@ -73,6 +79,11 @@ public sealed class CraftEngine
         lock (this)
         {
             if (_running) return;
+            if (_shutdownRequested)
+            {
+                ErrorOccurred?.Invoke("洗装引擎正在关闭，无法启动");
+                return;
+            }
 
             // 上次紧急停止（光标到角落误触发）残留的取消状态会令本次启动立即失效，
             // CTS 不可重置（Python Event.clear() 差异），故每次启动前重置（修复：启动后只动鼠标就停）
@@ -89,8 +100,8 @@ public sealed class CraftEngine
                 return;
             }
 
-            _rules = rules;
-            _coordinates = coordinates;
+            _rules = rules.CreateSnapshot();
+            _coordinates = coordinates.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
             _delayMs = delayMs;
             _soundEnabled = soundEnabled;
             _popupEnabled = popupEnabled;
@@ -98,6 +109,10 @@ public sealed class CraftEngine
             _exhaustionThreshold = exhaustionThreshold;
             _mode2ScourAlch = mode2ScourAlch;
             _useExalt = useExalt;
+            _completionReason = null;
+            _activeCurrency = null;
+            _activeCurrencyCoordinate = default;
+            _host.Input.ResetCraftClickInterval();
             UseCount = 0;
             MatchCount = 0;
             _runId++;
@@ -119,8 +134,27 @@ public sealed class CraftEngine
         }
     }
 
+    /// <summary>永久关闭常驻循环，并在限定时间内等待 finally 完成按键释放。</summary>
+    public bool Shutdown(TimeSpan timeout)
+    {
+        lock (this)
+        {
+            _shutdownRequested = true;
+            _running = false;
+            _workCts?.Cancel();
+            _wakeSignal.Set();
+        }
+        try { return _thread.Wait(timeout); }
+        catch (AggregateException) { return _thread.IsCompleted; }
+    }
+
     /// <summary>设置停止键 VK 码（CraftTool 启动前调用，用于 GetAsyncKeyState 轮询兜底）。</summary>
-    public void SetStopKey(string key) => _stopKeyVk = KeyCode.Parse(key);
+    public void SetStopKey(string key)
+    {
+        var parsed = HotkeyParser.Parse(key);
+        _stopKeyVk = parsed?.Vk ?? 0;
+        _stopKeyModifiers = parsed?.Modifiers ?? 0;
+    }
 
     /// <summary>
     /// 轮询停止键物理状态（对齐 Python _check_stop_key）。
@@ -129,7 +163,9 @@ public sealed class CraftEngine
     private bool IsStopKeyPhysicallyPressed()
     {
         if (_stopKeyVk == 0) return false;
-        return (GetAsyncKeyState(_stopKeyVk) & 0x8000) != 0;
+        if ((GetAsyncKeyState(_stopKeyVk) & 0x8000) == 0) return false;
+        return HotkeyParser.AreModifiersPressed(_stopKeyModifiers,
+            vk => (GetAsyncKeyState(vk) & 0x8000) != 0);
     }
 
     /// <summary>坐标检查（对齐 Python _check_coordinates；Mode2 按子模式正确检查——修复 Python 错位 bug，方案 §6）。</summary>
@@ -185,6 +221,7 @@ public sealed class CraftEngine
         {
             _wakeSignal.Wait();
             _wakeSignal.Reset();
+            if (_shutdownRequested) break;
             if (!_running) continue;
 
             var myRunId = _runId;
@@ -232,6 +269,7 @@ public sealed class CraftEngine
                 {
                     if (_runId == myRunId) { _running = false; _wakeSignal.Set(); }
                 }
+                _completionReason = $"运行出错: {ex.Message}";
                 ErrorOccurred?.Invoke($"异常: {ex.Message}");
             }
             finally
@@ -255,8 +293,9 @@ public sealed class CraftEngine
                 }
                 if (_runId == myRunId)
                 {
-                    Diag.Log($"[引擎] Loop: Stopped 事件触发, runId={myRunId}");
-                    Stopped?.Invoke("已停止");
+                    var reason = _completionReason ?? "已停止";
+                    Diag.Log($"[引擎] Loop: Stopped 事件触发, runId={myRunId}, reason={reason}");
+                    Stopped?.Invoke(reason);
                 }
             }
         }
@@ -306,27 +345,243 @@ public sealed class CraftEngine
 
     private async Task AwaitForegroundAsync(CancellationToken token)
     {
-        // Python _interruptible_sleep：非目标进程时 0.2s 轮询等待
-        if (string.IsNullOrEmpty(_host.Foreground.TargetProcess)) return;
-        while (!_host.Foreground.IsTargetForeground())
-        {
-            // 节流提示：让用户知道引擎在等什么（修复"启动后无响应"困惑）
-            ReportStatus($"⏳ 等待切换至游戏窗口（{_host.Foreground.TargetProcess}）...");
-            await Task.Delay(200, token);
-        }
+        if (_host.Foreground.IsTargetForeground()) return;
+        ReportStatus($"⏳ 等待切换至游戏窗口（{_host.Foreground.TargetProcess}）...");
+        var wait = await _host.Input.WaitForTargetForegroundAsync(token);
+        if (!wait.ShiftWasHeld) return;
+
+        if (_activeCurrency is null)
+            throw new InputSimulationException("返回游戏后无法确定当前通货，已停止以避免空点");
+
+        ReportStatus($"已返回游戏，重新选择{Currency.Label(_activeCurrency)}...");
+        Diag.Log($"[引擎] 前台恢复: 重新选择 {_activeCurrency} " +
+                 $"({_activeCurrencyCoordinate.X},{_activeCurrencyCoordinate.Y}) 并恢复 Shift");
+        await _host.Input.ReleaseAllKeysAsync(token);
+        await _host.Input.RightClickAsync((int)_activeCurrencyCoordinate.X,
+            (int)_activeCurrencyCoordinate.Y, 0, token);
+        await Task.Delay(200, token);
+        await _host.Input.HoldShiftAsync(token);
     }
 
-    private async Task<string> CopyClipboardAsync(int delayMs, CancellationToken token)
+    /// <summary>
+    /// 选择一类通货。所有模式共用同一条安全路径，避免 Ctrl/Alt/Shift 残留令右键失效。
+    /// 固定附加 0.2s 等待来自旧版实机经验，确保通货已附着到光标。
+    /// </summary>
+    private async Task SelectCurrencyAsync(string currency, Point coordinate, CancellationToken token)
     {
         await AwaitForegroundAsync(token);
-        await _host.Input.CtrlAltCAsync(delayMs, token);
-        return ClipboardHelper.GetText();
+        await _host.Input.ReleaseAllKeysAsync(token);
+        Diag.Log($"[引擎] 选择通货开始: {currency} ({coordinate.X},{coordinate.Y})");
+        await _host.Input.RightClickAsync((int)coordinate.X, (int)coordinate.Y, 0, token);
+        await Task.Delay(200, token);
+        _activeCurrency = currency;
+        _activeCurrencyCoordinate = coordinate;
+        Diag.Log($"[引擎] 选择通货完成: {currency}");
+    }
+
+    private async Task<string?> TryCopyClipboardOnceAsync(int timeoutMs, bool throwOnClearFailure,
+        CancellationToken token)
+    {
+        await AwaitForegroundAsync(token);
+        var item = _coordinates["item"];
+        await _host.Input.MoveToAsync((int)item.X, (int)item.Y, token);
+        if (!ClipboardHelper.TryClear())
+        {
+            if (throwOnClearFailure)
+                throw new InvalidOperationException("无法清空剪贴板，已停止以避免使用旧物品信息");
+            return null;
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        await _host.Input.CtrlAltCAsync(0, token);
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            token.ThrowIfCancellationRequested();
+            var text = ClipboardHelper.GetText();
+            if (ClipboardHelper.IsItemText(text))
+            {
+                Diag.Log($"[剪贴板] 获取新物品文本成功: {stopwatch.ElapsedMilliseconds}ms, {text.Length} chars");
+                return text;
+            }
+            await Task.Delay(20, token);
+        }
+
+        Diag.Log($"[剪贴板] 本次复制未收到物品文本: {stopwatch.ElapsedMilliseconds}ms");
+        return null;
+    }
+
+    private async Task<string> CopyClipboardAsync(int _, CancellationToken token)
+    {
+        const int clipboardTimeoutMs = 800;
+        var text = await TryCopyClipboardOnceAsync(clipboardTimeoutMs, throwOnClearFailure: true, token);
+        if (text is not null) return text;
+
+        Diag.Log($"[剪贴板] 获取新物品文本超时: {clipboardTimeoutMs}ms");
+        throw new InvalidOperationException("复制物品信息超时；请确认鼠标位于装备上且游戏支持 Ctrl+Alt+C");
+    }
+
+    /// <summary>启动基线允许重试复制，避免一次丢失的 Ctrl+Alt+C 直接终止任务。</summary>
+    private async Task<string> CopyBaselineWithRetryAsync(string context, CancellationToken token)
+    {
+        var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
+        var stopwatch = Stopwatch.StartNew();
+        var attempts = 0;
+
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            token.ThrowIfCancellationRequested();
+            attempts++;
+            var text = await TryCopyClipboardOnceAsync(
+                CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token);
+            if (text is not null)
+            {
+                Diag.Log($"[同步] {context} 启动基线已建立: total={stopwatch.ElapsedMilliseconds}ms, " +
+                         $"attempts={attempts}, {text.Length} chars");
+                return text;
+            }
+
+            if (stopwatch.ElapsedMilliseconds >= timeoutMs) break;
+            await Task.Delay(CraftStateSync.RetryBackoffMs, token);
+        }
+
+        Diag.Log($"[同步] {context} 启动基线复制超时: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}");
+        throw new InvalidOperationException(
+            $"启动时连续复制物品信息失败（{timeoutMs}ms）；已安全停止，请确认鼠标位于装备上");
+    }
+
+    /// <summary>
+    /// Mode 1 点击后的状态门禁：只有复制到与点击前不同的完整物品文本才允许进入词缀判定。
+    /// 剪贴板未写入或仍为旧状态时只重发 Ctrl+Alt+C，绝不再次点击通货。
+    /// </summary>
+    private async Task<string> WaitForChangedMode1ItemAsync(string baseline, CancellationToken token)
+    {
+        var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
+        var stopwatch = Stopwatch.StartNew();
+        var attempts = 0;
+        var unchangedCopies = 0;
+        var emptyCopies = 0;
+
+        // delay 表示通货点击后留给游戏/服务器刷新物品的首次同步窗口。
+        if (_delayMs > 0)
+            await Task.Delay(_delayMs, token);
+
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            token.ThrowIfCancellationRequested();
+            attempts++;
+
+            var candidate = await TryCopyClipboardOnceAsync(
+                CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token);
+            if (candidate is not null)
+            {
+                if (CraftStateSync.HasItemStateChanged(baseline, candidate))
+                {
+                    Diag.Log($"[同步] Mode1 物品状态已变化: total={stopwatch.ElapsedMilliseconds}ms, " +
+                             $"attempts={attempts}, unchanged={unchangedCopies}, empty={emptyCopies}");
+                    return candidate;
+                }
+
+                unchangedCopies++;
+                Diag.Log($"[同步] Mode1 仍为点击前状态: total={stopwatch.ElapsedMilliseconds}ms, attempt={attempts}");
+                if (unchangedCopies >= Math.Max(1, _exhaustionThreshold))
+                {
+                    Diag.Log($"[同步] Mode1 达到未变确认阈值: {unchangedCopies}");
+                    break;
+                }
+            }
+            else
+            {
+                emptyCopies++;
+            }
+
+            if (stopwatch.ElapsedMilliseconds >= timeoutMs) break;
+            await Task.Delay(CraftStateSync.RetryBackoffMs, token);
+        }
+
+        Diag.Log($"[同步] Mode1 等待状态变化超时: total={stopwatch.ElapsedMilliseconds}ms, " +
+                 $"attempts={attempts}, unchanged={unchangedCopies}, empty={emptyCopies}");
+        if (unchangedCopies > 0)
+            throw new InvalidOperationException(
+                $"通货点击后物品信息在 {timeoutMs}ms 内未变化；可能通货已耗尽或游戏尚未响应，已安全停止");
+
+        throw new InvalidOperationException(
+            $"通货点击后连续复制物品信息失败（{timeoutMs}ms）；已安全停止，请确认鼠标位于装备上");
+    }
+
+    /// <summary>
+    /// Mode 2/3 操作后门禁：重试复制直到观察到该通货应有的稀有度/词缀数转换。
+    /// 未观察到预期转换时绝不发送下一次鼠标点击。
+    /// </summary>
+    private async Task<string> WaitForExpectedTransitionAsync(string baseline,
+        CraftCurrencyOperation operation, string operationLabel, CancellationToken token)
+    {
+        var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
+        var stopwatch = Stopwatch.StartNew();
+        var attempts = 0;
+        var rejectedCopies = 0;
+        var emptyCopies = 0;
+        var beforeParsed = AffixEngine.ParseItem(baseline);
+        var before = new CraftItemState(beforeParsed.Rarity, beforeParsed.ExplicitAffixCount);
+        var lastReason = "未收到有效物品文本";
+
+        if (_delayMs > 0)
+            await Task.Delay(_delayMs, token);
+
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            token.ThrowIfCancellationRequested();
+            attempts++;
+            var candidate = await TryCopyClipboardOnceAsync(
+                CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token);
+
+            if (candidate is null)
+            {
+                emptyCopies++;
+            }
+            else
+            {
+                var afterParsed = AffixEngine.ParseItem(candidate);
+                var after = new CraftItemState(afterParsed.Rarity, afterParsed.ExplicitAffixCount);
+                var changed = CraftStateSync.HasItemStateChanged(baseline, candidate);
+                var check = CraftStateSync.CheckTransition(operation, before, after, changed);
+                if (check.Accepted)
+                {
+                    Diag.Log($"[同步] {operationLabel} 状态转换已确认: " +
+                             $"{before.Rarity}/{before.ExplicitAffixCount}→{after.Rarity}/{after.ExplicitAffixCount}, " +
+                             $"total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}, " +
+                             $"rejected={rejectedCopies}, empty={emptyCopies}");
+                    return candidate;
+                }
+
+                rejectedCopies++;
+                lastReason = check.Reason;
+                Diag.Log($"[同步] {operationLabel} 尚未观察到预期转换: " +
+                         $"total={stopwatch.ElapsedMilliseconds}ms, attempt={attempts}, reason={lastReason}");
+                if (rejectedCopies >= Math.Max(1, _exhaustionThreshold)) break;
+            }
+
+            if (stopwatch.ElapsedMilliseconds >= timeoutMs) break;
+            await Task.Delay(CraftStateSync.RetryBackoffMs, token);
+        }
+
+        Diag.Log($"[同步] {operationLabel} 状态转换确认失败: total={stopwatch.ElapsedMilliseconds}ms, " +
+                 $"attempts={attempts}, rejected={rejectedCopies}, empty={emptyCopies}, reason={lastReason}");
+        throw new InvalidOperationException(
+            $"{operationLabel}后未观察到预期物品变化（{lastReason}）；已安全停止，未继续使用其他通货");
     }
 
     private (AffixCheckResult Result, int AffixCount) CheckItem(string text)
     {
-        var lines = AffixEngine.ParseItemText(text);
-        return (AffixEngine.CheckAffixes(lines, _rules), lines.Count);
+        var parsed = AffixEngine.ParseItem(text);
+        var result = AffixEngine.CheckAffixes(parsed, _rules);
+        if (result.HasAnyHit || result.HasExclude)
+        {
+            Diag.Log($"[词缀] rarity={parsed.Rarity}, affixes={parsed.ExplicitAffixCount}, " +
+                     $"primary={result.PrimaryHits}[{string.Join(',', result.MatchedPrimaryRules)}], " +
+                     $"secondary={result.SecondaryHits}[{string.Join(',', result.MatchedSecondaryRules)}], " +
+                     $"exclude={result.HasExclude}[{string.Join(',', result.MatchedExcludeRules)}]");
+        }
+        return (result, parsed.ExplicitAffixCount);
     }
 
     private void ReportStatus(string text, bool force = false)
@@ -339,6 +594,7 @@ public sealed class CraftEngine
 
     private void OnSuccess()
     {
+        _completionReason = $"匹配成功! 共{UseCount}次";
         Diag.Log($"[引擎] OnSuccess: 匹配成功! 共{UseCount}次, soundEnabled={_soundEnabled}, selectedSound={_selectedSound}");
         ReportStatus($"匹配成功! 共{UseCount}次", force: true);
         MatchFound?.Invoke();
@@ -356,52 +612,24 @@ public sealed class CraftEngine
         ReportStatus("启动单通货模式...", force: true);
         Diag.Log($"[引擎] Mode1: 开始, 通货={_rules.SingleCurrency} ({currCoord.X},{currCoord.Y}), 物品 ({itemCoord.X},{itemCoord.Y})");
 
-        await _host.Input.RightClickAsync((int)currCoord.X, (int)currCoord.Y, _delayMs, token);
-        Diag.Log("[引擎] Mode1: 通货右键完成");
+        await SelectCurrencyAsync(_rules.SingleCurrency, currCoord, token);
         await _host.Input.HoldShiftAsync(token);
-        Diag.Log("[引擎] Mode1: HoldShift 完成，进入循环");
+        Diag.Log("[引擎] Mode1: HoldShift 完成，复制启动基线（不判定命中）");
 
-        var lastClip = "";
-        var clipSameCount = 0;
+        // 启动时的装备可能已命中，但 Mode 1 的产品语义是 F5 后仍先使用一次通货。
+        // 因此此处只建立点击前基线，不调用 CheckItem。
+        var baseline = await CopyBaselineWithRetryAsync("Mode1", token);
         try
         {
             while (true)
             {
                 token.ThrowIfCancellationRequested();
                 await AwaitForegroundAsync(token);
-                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, _delayMs, token);
+                // Mode 1 的 delay 已用于点击后的服务器同步窗口，此处不再叠加点击前等待。
+                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
                 UseCount++;
 
-                var text = await CopyClipboardAsync(_delayMs, token);
-
-                // 对齐 Python _mode1：剪贴板为空 → 停止（物品不在光标处/剪贴板被占用）
-                if (text.Length == 0)
-                {
-                    Diag.Log("[引擎] Mode1: 剪贴板为空，停止");
-                    ReportStatus("剪贴板为空，停止", force: true);
-                    if (_soundEnabled) _host.Sound.Play(_selectedSound);
-                    if (_popupEnabled) _host.Notification.Show("剪贴板为空，已停止");
-                    return;
-                }
-
-                // 耗尽检测：连续 N 次剪贴板相同（Python 逻辑）
-                if (text.Length > 0 && text == lastClip)
-                {
-                    clipSameCount++;
-                    if (clipSameCount >= _exhaustionThreshold)
-                    {
-                        Diag.Log($"[引擎] Mode1: 通货耗尽 (连续{clipSameCount}次未变), soundEnabled={_soundEnabled}");
-                        ReportStatus($"通货可能已耗尽 (连续{clipSameCount}次未变)", force: true);
-                        if (_soundEnabled) _host.Sound.Play(_selectedSound);
-                        if (_popupEnabled) _host.Notification.Show($"通货可能已耗尽\n连续{clipSameCount}次未变");
-                        return;
-                    }
-                }
-                else
-                {
-                    clipSameCount = 0;
-                    lastClip = text;
-                }
+                var text = await WaitForChangedMode1ItemAsync(baseline, token);
 
                 var (result, _) = CheckItem(text);
                 MatchCount = result.TotalHits;
@@ -414,6 +642,8 @@ public sealed class CraftEngine
                     OnSuccess();
                     return;
                 }
+
+                baseline = text;
             }
         }
         finally
@@ -432,26 +662,36 @@ public sealed class CraftEngine
 
         ReportStatus("启动改造+增幅模式...", force: true);
 
+        // 启动状态只作为第一次改造的基线，不判定命中。
+        var text = await CopyBaselineWithRetryAsync("Mode2", token);
+        if (text.Contains("已污染", StringComparison.Ordinal) ||
+            text.Contains("Corrupted", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Mode 2 不支持已污染物品，未执行通货操作");
+
+        var initialItem = AffixEngine.ParseItem(text);
+        if (initialItem.Rarity != ItemRarity.Magic)
+            throw new InvalidOperationException(
+                $"Mode 2 改造+增幅要求启动物品为魔法稀有度，当前为 {initialItem.Rarity}，未执行通货操作");
+
         while (true)
         {
             token.ThrowIfCancellationRequested();
             await AwaitForegroundAsync(token);
 
             // Phase 1: 改造（右键一次，shift+click 循环）
-            await _host.Input.RightClickAsync((int)altCoord.X, (int)altCoord.Y, _delayMs, token);
-            await Task.Delay(150, token);
+            await SelectCurrencyAsync(Currency.Alteration, altCoord, token);
             await _host.Input.HoldShiftAsync(token);
-            string text;
             try
             {
                 while (true)
                 {
                     token.ThrowIfCancellationRequested();
                     await AwaitForegroundAsync(token);
-                    await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, _delayMs, token);
+                    await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
                     UseCount++;
 
-                    text = await CopyClipboardAsync(_delayMs, token);
+                    text = await WaitForExpectedTransitionAsync(text,
+                        CraftCurrencyOperation.Alteration, "改造石", token);
                     var (result, _) = CheckItem(text);
                     MatchCount = result.TotalHits;
 
@@ -485,16 +725,16 @@ public sealed class CraftEngine
             }
 
             // Phase 2: 增幅（仅在恰好 1 词缀时使用，铁律 #4）
-            await _host.Input.RightClickAsync((int)augCoord.X, (int)augCoord.Y, _delayMs, token);
-            await Task.Delay(150, token);
+            await SelectCurrencyAsync(Currency.Augmentation, augCoord, token);
             await _host.Input.HoldShiftAsync(token);
             try
             {
                 await AwaitForegroundAsync(token);
-                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, _delayMs, token);
+                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
                 UseCount++;
 
-                text = await CopyClipboardAsync(_delayMs, token);
+                text = await WaitForExpectedTransitionAsync(text,
+                    CraftCurrencyOperation.Augmentation, "增幅石", token);
                 var (result, _) = CheckItem(text);
                 MatchCount = result.TotalHits;
 
@@ -523,22 +763,54 @@ public sealed class CraftEngine
 
         ReportStatus("启动重铸+点金模式...", force: true);
 
+        var text = await CopyBaselineWithRetryAsync("Mode2重铸点金", token);
+        if (text.Contains("已污染", StringComparison.Ordinal) ||
+            text.Contains("Corrupted", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("重铸+点金不支持已污染物品，未执行通货操作");
+
+        var currentItem = AffixEngine.ParseItem(text);
+        if (currentItem.Rarity is not (ItemRarity.Normal or ItemRarity.Magic or ItemRarity.Rare))
+            throw new InvalidOperationException(
+                $"重铸+点金无法处理当前物品稀有度（{currentItem.Rarity}），未执行通货操作");
+
         while (true)
         {
             token.ThrowIfCancellationRequested();
             await AwaitForegroundAsync(token);
 
-            // 点金（白→黄）
-            await _host.Input.RightClickAsync((int)alchCoord.X, (int)alchCoord.Y, _delayMs, token);
-            await Task.Delay(150, token);
+            // 非普通物品先重铸；已是普通物品时跳过无效重铸，直接点金。
+            if (currentItem.Rarity != ItemRarity.Normal)
+            {
+                ReportStatus($"#{UseCount} 重铸后重新点金...");
+                await SelectCurrencyAsync(Currency.Scouring, scourCoord, token);
+                await _host.Input.HoldShiftAsync(token);
+                try
+                {
+                    await AwaitForegroundAsync(token);
+                    await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
+                    UseCount++;
+                    text = await WaitForExpectedTransitionAsync(text,
+                        CraftCurrencyOperation.Scouring, "重铸石", token);
+                    currentItem = AffixEngine.ParseItem(text);
+                }
+                finally
+                {
+                    try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
+                }
+            }
+
+            // 点金（白→黄）并检查新结果
+            await SelectCurrencyAsync(Currency.Alchemy, alchCoord, token);
             await _host.Input.HoldShiftAsync(token);
             try
             {
                 await AwaitForegroundAsync(token);
-                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, _delayMs, token);
+                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
                 UseCount++;
 
-                var text = await CopyClipboardAsync(_delayMs, token);
+                text = await WaitForExpectedTransitionAsync(text,
+                    CraftCurrencyOperation.Alchemy, "点金石", token);
+                currentItem = AffixEngine.ParseItem(text);
                 var (result, _) = CheckItem(text);
                 MatchCount = result.TotalHits;
 
@@ -553,21 +825,7 @@ public sealed class CraftEngine
                 try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
             }
 
-            // 不满足 → 重铸（黄→白）
-            ReportStatus($"#{UseCount} 点金后不满足，重铸重来...");
-            await _host.Input.RightClickAsync((int)scourCoord.X, (int)scourCoord.Y, _delayMs, token);
-            await Task.Delay(150, token);
-            await _host.Input.HoldShiftAsync(token);
-            try
-            {
-                await AwaitForegroundAsync(token);
-                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, _delayMs, token);
-                UseCount++;
-            }
-            finally
-            {
-                try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
-            }
+            ReportStatus($"#{UseCount} 点金后不满足，继续下一轮...");
         }
     }
 
@@ -587,20 +845,56 @@ public sealed class CraftEngine
         // 阈值 = 主+次命中数 - 1（富豪补 1，铁律 #6；方案 D4）
         var threshold = Math.Max(0, _rules.PrimaryHitCount + _rules.SecondaryHitCount - 1);
 
+        // 启动时先读取实际装备状态，避免对蓝/黄装直接使用蜕变后继续读取旧状态。
+        ReportStatus("检查 Mode 3 装备初始状态...", force: true);
+        var initialText = await CopyBaselineWithRetryAsync("Mode3", token);
+        if (initialText.Contains("已污染", StringComparison.Ordinal) ||
+            initialText.Contains("Corrupted", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Mode 3 不支持已污染物品，未执行任何通货操作");
+
+        var initialItem = AffixEngine.ParseItem(initialText);
+        var startDecision = CraftDecisions.BeforeMode3(initialItem.Rarity);
+        Diag.Log($"[引擎] Mode3 初始预检: rarity={initialItem.Rarity}, decision={startDecision}, " +
+                 $"affixes={initialItem.ExplicitAffixCount}");
+        if (startDecision == Mode3StartDecision.StopUnsupported)
+            throw new InvalidOperationException($"Mode 3 无法处理当前物品稀有度（{initialItem.Rarity}），未执行通货操作");
+
+        var currentText = initialText;
+
+        if (startDecision == Mode3StartDecision.ScourFirst)
+        {
+            ReportStatus("当前为魔法/稀有物品，先重铸为普通物品...", force: true);
+            await SelectCurrencyAsync(Currency.Scouring, scourCoord, token);
+            await _host.Input.HoldShiftAsync(token);
+            try
+            {
+                await AwaitForegroundAsync(token);
+                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
+                UseCount++;
+                currentText = await WaitForExpectedTransitionAsync(currentText,
+                    CraftCurrencyOperation.Scouring, "重铸石（启动预处理）", token);
+            }
+            finally
+            {
+                try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
+            }
+        }
+
         while (true)
         {
             token.ThrowIfCancellationRequested();
             await AwaitForegroundAsync(token);
 
             // Phase 1: 蜕变（白→蓝）
-            await _host.Input.RightClickAsync((int)transCoord.X, (int)transCoord.Y, _delayMs, token);
-            await Task.Delay(150, token);
+            await SelectCurrencyAsync(Currency.Transmutation, transCoord, token);
             await _host.Input.HoldShiftAsync(token);
             try
             {
                 await AwaitForegroundAsync(token);
-                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, _delayMs, token);
+                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
                 UseCount++;
+                currentText = await WaitForExpectedTransitionAsync(currentText,
+                    CraftCurrencyOperation.Transmutation, "蜕变石", token);
             }
             finally
             {
@@ -615,8 +909,7 @@ public sealed class CraftEngine
                 await AwaitForegroundAsync(token);
 
                 // Phase 2: 改造（右键一次，shift+click 循环）
-                await _host.Input.RightClickAsync((int)altCoord.X, (int)altCoord.Y, _delayMs, token);
-                await Task.Delay(150, token);
+                await SelectCurrencyAsync(Currency.Alteration, altCoord, token);
                 await _host.Input.HoldShiftAsync(token);
                 string text;
                 try
@@ -625,10 +918,12 @@ public sealed class CraftEngine
                     {
                         token.ThrowIfCancellationRequested();
                         await AwaitForegroundAsync(token);
-                        await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, _delayMs, token);
+                        await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
                         UseCount++;
 
-                        text = await CopyClipboardAsync(_delayMs, token);
+                        text = await WaitForExpectedTransitionAsync(currentText,
+                            CraftCurrencyOperation.Alteration, "改造石", token);
+                        currentText = text;
                         var (result, affixCount) = CheckItem(text);
                         MatchCount = result.TotalHits;
 
@@ -639,22 +934,34 @@ public sealed class CraftEngine
                         }
 
                         var hits = result.TotalHits;
-                        if (affixCount >= 2)
+                        var decision = CraftDecisions.AfterAlteration(affixCount, hits, threshold);
+                        if (CraftDecisions.ShouldCaptureMode3Miss(affixCount, hits, threshold, result.HasExclude))
                         {
-                            if (hits >= threshold)
-                            {
+                            Mode3DiagnosticRecorder.Capture(
+                                text,
+                                _rules,
+                                result,
+                                affixCount,
+                                threshold,
+                                _runId,
+                                UseCount);
+                        }
+
+                        switch (decision)
+                        {
+                            case Mode3MagicDecision.ProceedToRegal:
                                 goToRegal = true;
                                 break; // 2 词缀达标 → 去富豪
-                            }
-                            // 2 词缀未达标 → 继续 shift+click 重 roll（不释放 Shift，铁律 #5/方案 D4）
-                            ReportStatus($"#{UseCount} 2词缀命中{hits}不足{threshold}，继续改造...");
-                        }
-                        else // 1 词缀
-                        {
-                            if (hits >= 1)
+                            case Mode3MagicDecision.UseAugmentation:
                                 break; // 1 词缀命中 → 去增幅
-                            ReportStatus($"#{UseCount} 改造中...");
+                            default:
+                                // 2 词缀未达标 → 继续 shift+click 重 roll（不释放 Shift，铁律 #5/方案 D4）
+                                ReportStatus(affixCount >= 2
+                                    ? $"#{UseCount} 2词缀命中{hits}不足{threshold}，继续改造..."
+                                    : $"#{UseCount} 改造中...");
+                                continue;
                         }
+                        break;
                     }
                 }
                 finally
@@ -666,27 +973,22 @@ public sealed class CraftEngine
                     break; // 退出魔法阶段 → 富豪
 
                 // 只有 1 词缀且命中 ≥1 → 增幅
-                await _host.Input.RightClickAsync((int)augCoord.X, (int)augCoord.Y, _delayMs, token);
-                await Task.Delay(150, token);
+                await SelectCurrencyAsync(Currency.Augmentation, augCoord, token);
                 await _host.Input.HoldShiftAsync(token);
                 try
                 {
                     await AwaitForegroundAsync(token);
-                    await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, _delayMs, token);
+                    await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
                     UseCount++;
 
-                    text = await CopyClipboardAsync(_delayMs, token);
+                    text = await WaitForExpectedTransitionAsync(currentText,
+                        CraftCurrencyOperation.Augmentation, "增幅石", token);
+                    currentText = text;
                     var (result, _) = CheckItem(text);
                     MatchCount = result.TotalHits;
                     var hits = result.TotalHits;
 
-                    if (result.MeetsFinalRules(_rules))
-                    {
-                        OnSuccess();
-                        return;
-                    }
-
-                    if (hits >= threshold)
+                    if (CraftDecisions.AfterAugmentation(hits, threshold) == Mode3MagicDecision.ProceedToRegal)
                         break; // 增幅后达标 → 去富豪
                     ReportStatus($"#{UseCount} 增幅后命中{hits}不足{threshold}，继续改造...");
                     continue; // 继续改造（不重铸，方案 D4）
@@ -698,16 +1000,17 @@ public sealed class CraftEngine
             }
 
             // ===== Phase 4: 富豪（蓝→黄）=====
-            await _host.Input.RightClickAsync((int)regalCoord.X, (int)regalCoord.Y, _delayMs, token);
-            await Task.Delay(150, token);
+            await SelectCurrencyAsync(Currency.Regal, regalCoord, token);
             await _host.Input.HoldShiftAsync(token);
             try
             {
                 await AwaitForegroundAsync(token);
-                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, _delayMs, token);
+                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
                 UseCount++;
 
-                var text = await CopyClipboardAsync(_delayMs, token);
+                currentText = await WaitForExpectedTransitionAsync(currentText,
+                    CraftCurrencyOperation.Regal, "富豪石", token);
+                var text = currentText;
                 var (result, _) = CheckItem(text);
                 MatchCount = result.TotalHits;
 
@@ -725,16 +1028,17 @@ public sealed class CraftEngine
             // ===== Phase 4.5: 崇高（可选）=====
             if (_useExalt)
             {
-                await _host.Input.RightClickAsync((int)exaltCoord.X, (int)exaltCoord.Y, _delayMs, token);
-                await Task.Delay(150, token);
+                await SelectCurrencyAsync(Currency.Exalted, exaltCoord, token);
                 await _host.Input.HoldShiftAsync(token);
                 try
                 {
                     await AwaitForegroundAsync(token);
-                    await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, _delayMs, token);
+                    await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
                     UseCount++;
 
-                    var text = await CopyClipboardAsync(_delayMs, token);
+                    currentText = await WaitForExpectedTransitionAsync(currentText,
+                        CraftCurrencyOperation.Exalted, "崇高石", token);
+                    var text = currentText;
                     var (result, _) = CheckItem(text);
                     MatchCount = result.TotalHits;
 
@@ -752,14 +1056,15 @@ public sealed class CraftEngine
 
             // ===== Phase 5: 重铸（黄→白）→ 回外层循环（蜕变）=====
             ReportStatus($"#{UseCount} 富豪失败，重铸重来...");
-            await _host.Input.RightClickAsync((int)scourCoord.X, (int)scourCoord.Y, _delayMs, token);
-            await Task.Delay(150, token);
+            await SelectCurrencyAsync(Currency.Scouring, scourCoord, token);
             await _host.Input.HoldShiftAsync(token);
             try
             {
                 await AwaitForegroundAsync(token);
-                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, _delayMs, token);
+                await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
                 UseCount++;
+                currentText = await WaitForExpectedTransitionAsync(currentText,
+                    CraftCurrencyOperation.Scouring, "重铸石", token);
             }
             finally
             {

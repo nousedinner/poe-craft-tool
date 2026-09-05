@@ -10,7 +10,7 @@ namespace ShiKe.Tools.Craft;
 
 /// <summary>
 /// 洗装页面（对齐 Python config_tab.py 全部交互逻辑）。
-/// 模式选择 / Mode2 子模式 / Mode3 崇高 / 操作延迟 / 通货网格(4列,按模式显示子集) /
+/// 模式选择 / Mode2 子模式 / Mode3 崇高 / 洗装点击间隔 / 通货网格(4列,按模式显示子集) /
 /// 三态坐标录制（信号分离坑#10）/ 词缀池(主/次/排除+命中数实时验证) / 预设管理 / 启停。
 /// </summary>
 public partial class CraftPage : UserControl
@@ -39,6 +39,9 @@ public partial class CraftPage : UserControl
     private string _coordHotkey = "F7";
     private bool _dirty;
     private bool _initialized;   // Loaded 防重复（WPF Loaded 在每次进入可视树时触发，卡片会翻倍）
+    private bool _restoringHitCount;
+    private int _lastValidPrimaryHit;
+    private int _lastValidSecondaryHit;
 
     public CraftPage(ToolHost host, CraftTool tool)
     {
@@ -161,9 +164,6 @@ public partial class CraftPage : UserControl
         }
         Mode2Frame.Visibility = CurrentMode == CraftMode.AltAug ? Visibility.Visible : Visibility.Collapsed;
         Mode3Frame.Visibility = CurrentMode == CraftMode.AltAugRegal ? Visibility.Visible : Visibility.Collapsed;
-        Mode2AltAug.IsChecked = !_tool.Mode2ScourAlch;
-        Mode2ScourAlch.IsChecked = _tool.Mode2ScourAlch;
-        ExaltCheck.IsChecked = _tool.UseExalt;
     }
 
     private void SelectCurrency(string key)
@@ -294,9 +294,11 @@ public partial class CraftPage : UserControl
         };
         var text = box.Text.Trim();
         if (text.Length == 0) return;
-        AddAffixTag(type, text);
-        box.Clear();
-        _dirty = true;
+        if (TryAddAffixTag(type, text))
+        {
+            box.Clear();
+            _dirty = true;
+        }
     }
 
     private void AffixInput_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -305,9 +307,40 @@ public partial class CraftPage : UserControl
         var box = (TextBox)sender;
         var text = box.Text.Trim();
         if (text.Length == 0) return;
-        AddAffixTag((string)box.Tag, text);
-        box.Clear();
-        _dirty = true;
+        if (TryAddAffixTag((string)box.Tag, text))
+        {
+            box.Clear();
+            _dirty = true;
+        }
+    }
+
+    private bool TryAddAffixTag(string type, string text)
+    {
+        var existingPool = FindAffixPool(text);
+        if (existingPool is not null)
+        {
+            var owner = Window.GetWindow(this);
+            var message = $"词缀「{text}」已存在于{existingPool}，不能重复加入其他词缀池。";
+            if (owner is null)
+                MessageBox.Show(message, "配置提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+            else
+                MessageBox.Show(owner, message, "配置提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+
+        AddAffixTag(type, text);
+        return true;
+    }
+
+    private string? FindAffixPool(string text)
+    {
+        if (_primaryTags.Any(tag => string.Equals(tag.Text.Trim(), text, StringComparison.Ordinal)))
+            return "主词缀池";
+        if (_secondaryTags.Any(tag => string.Equals(tag.Text.Trim(), text, StringComparison.Ordinal)))
+            return "次级词缀池";
+        if (_excludeTags.Any(tag => string.Equals(tag.Text.Trim(), text, StringComparison.Ordinal)))
+            return "排除词缀池";
+        return null;
     }
 
     private void AddAffixTag(string type, string text)
@@ -378,22 +411,42 @@ public partial class CraftPage : UserControl
 
     private void HitCount_Checked(object sender, RoutedEventArgs e)
     {
-        if (!IsLoaded) return;
+        if (!IsLoaded || _restoringHitCount) return;
         var radio = (RadioButton)sender;
         var isPrimary = GroupNameOf(radio) == "PrimaryHit";
         var newVal = int.Parse((string)radio.Tag);
         var otherVal = isPrimary ? CurrentSecondaryHit : CurrentPrimaryHit;
-        var total = newVal + otherVal;
+        var previousVal = isPrimary ? _lastValidPrimaryHit : _lastValidSecondaryHit;
+        var resolvedVal = CraftDecisions.ResolveHitCountSelection(CurrentMode, previousVal, newVal, otherVal);
 
-        if (CurrentMode == CraftMode.AltAug && total > 2 ||
-            CurrentMode == CraftMode.AltAugRegal && total > 3)
+        if (resolvedVal != newVal)
         {
-            MessageBox.Show("Mode 2 总词缀命中数不能超过 2\nMode 3 总词缀命中数不能超过 3",
-                "配置提示", MessageBoxButton.OK, MessageBoxImage.Warning);
-            // 恢复之前值
-            (isPrimary ? PrimaryHit0 : SecondaryHit0).IsChecked = true;
+            var owner = Window.GetWindow(this);
+            const string message = "Mode 2 总词缀命中数不能超过 2\nMode 3 总词缀命中数不能超过 3";
+            if (owner is null)
+                MessageBox.Show(message, "配置提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+            else
+                MessageBox.Show(owner, message, "配置提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+
+            _restoringHitCount = true;
+            try
+            {
+                if (isPrimary)
+                    SetHitRadio(PrimaryHit0, PrimaryHit1, PrimaryHit2, PrimaryHit3, resolvedVal);
+                else
+                    SetHitRadio(SecondaryHit0, SecondaryHit1, SecondaryHit2, SecondaryHit3, resolvedVal);
+            }
+            finally
+            {
+                _restoringHitCount = false;
+            }
             return;
         }
+
+        if (isPrimary)
+            _lastValidPrimaryHit = newVal;
+        else
+            _lastValidSecondaryHit = newVal;
         _dirty = true;
     }
 
@@ -433,6 +486,20 @@ public partial class CraftPage : UserControl
             _selectedCurrency = Currency.Alteration;
             UpdateCurrencySelection();
         }
+    }
+
+    private void Mode2Option_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        _tool.Mode2ScourAlch = Mode2ScourAlch.IsChecked == true;
+        _dirty = true;
+    }
+
+    private void ExaltCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        _tool.UseExalt = ExaltCheck.IsChecked == true;
+        _dirty = true;
     }
 
     private CraftMode CurrentModeFromRadio()
@@ -489,9 +556,10 @@ public partial class CraftPage : UserControl
         ClearPool(_excludeTags, ExcludeTags);
 
         foreach (var text in ReadStringArray(data, "primary_affixes")) AddAffixTag("primary", text);
-        SetHitRadio(PrimaryHit0, PrimaryHit1, PrimaryHit2, PrimaryHit3, ReadInt(data, "primary_hit_count", 0));
         foreach (var text in ReadStringArray(data, "secondary_affixes")) AddAffixTag("secondary", text);
-        SetHitRadio(SecondaryHit0, SecondaryHit1, SecondaryHit2, SecondaryHit3, ReadInt(data, "secondary_hit_count", 0));
+        ApplyHitCounts(
+            ReadInt(data, "primary_hit_count", 0),
+            ReadInt(data, "secondary_hit_count", 0));
         foreach (var text in ReadStringArray(data, "exclude_affixes")) AddAffixTag("exclude", text);
     }
 
@@ -509,9 +577,28 @@ public partial class CraftPage : UserControl
     private static void SetHitRadio(RadioButton r0, RadioButton r1, RadioButton r2, RadioButton r3, int value)
         => (value switch { 0 => r0, 1 => r1, 2 => r2, _ => r3 }).IsChecked = true;
 
+    private void ApplyHitCounts(int primaryHitCount, int secondaryHitCount)
+    {
+        _restoringHitCount = true;
+        try
+        {
+            SetHitRadio(PrimaryHit0, PrimaryHit1, PrimaryHit2, PrimaryHit3, primaryHitCount);
+            SetHitRadio(SecondaryHit0, SecondaryHit1, SecondaryHit2, SecondaryHit3, secondaryHitCount);
+            _lastValidPrimaryHit = CurrentPrimaryHit;
+            _lastValidSecondaryHit = CurrentSecondaryHit;
+        }
+        finally
+        {
+            _restoringHitCount = false;
+        }
+    }
+
     private void SavePresetButton_Click(object sender, RoutedEventArgs e)
     {
-        var name = new InputDialog("保存预设", "请输入预设名称：").GetName();
+        var dialog = new InputDialog("保存预设", "请输入预设名称：");
+        var owner = Window.GetWindow(this);
+        if (owner is not null) dialog.Owner = owner;
+        var name = dialog.GetName();
         if (string.IsNullOrWhiteSpace(name)) return;
         name = name.Trim();
 
@@ -550,11 +637,15 @@ public partial class CraftPage : UserControl
 
     // ── 启停（快捷键 F5/F6 触发；无按钮，对齐用户反馈）──
 
-    /// <summary>收集 UI → Rules 并保存（F5 热键启动前调用，对齐 Python _start_crafting 先 update_rules）。</summary>
+    /// <summary>
+    /// 收集全部页面状态并保存。F5、切换抽屉和退出共用此入口，
+    /// 避免规则、模式与 Craft 设置分别处于不同版本。
+    /// </summary>
     public void CollectRulesFromUi()
     {
         UpdateRulesFromUi();
         _tool.SaveRulesToStorage();
+        _tool.SaveSettingsToStorage();
     }
 
     /// <summary>收集 UI → Rules（对齐 Python update_rules）。</summary>
@@ -597,6 +688,12 @@ public partial class CraftPage : UserControl
 
     private void LoadStateIntoUi()
     {
+        // 子模式选项只在首次加载时从持久状态恢复。切换大模式仅改变可见性，
+        // 不得用旧值覆盖用户刚刚作出的、尚未落盘的选择。
+        Mode2AltAug.IsChecked = !_tool.Mode2ScourAlch;
+        Mode2ScourAlch.IsChecked = _tool.Mode2ScourAlch;
+        ExaltCheck.IsChecked = _tool.UseExalt;
+
         // 模式
         switch (_tool.Rules.Mode)
         {
@@ -611,8 +708,7 @@ public partial class CraftPage : UserControl
         UpdateCurrencySelection();
 
         // 词缀
-        SetHitRadio(PrimaryHit0, PrimaryHit1, PrimaryHit2, PrimaryHit3, _tool.Rules.PrimaryHitCount);
-        SetHitRadio(SecondaryHit0, SecondaryHit1, SecondaryHit2, SecondaryHit3, _tool.Rules.SecondaryHitCount);
+        ApplyHitCounts(_tool.Rules.PrimaryHitCount, _tool.Rules.SecondaryHitCount);
         foreach (var r in _tool.Rules.PrimaryAffixes) AddAffixTag("primary", r.Text);
         foreach (var r in _tool.Rules.SecondaryAffixes) AddAffixTag("secondary", r.Text);
         foreach (var r in _tool.Rules.ExcludeAffixes) AddAffixTag("exclude", r.Text);

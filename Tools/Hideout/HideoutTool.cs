@@ -18,6 +18,9 @@ public sealed class HideoutTool : ITool
     private ToolHost? _host;
     private bool _enabled;
     private string _hotkey = "F2";
+    private readonly object _operationGate = new();
+    private CancellationTokenSource? _operationCts;
+    private Task? _operationTask;
 
     public string Id => "hideout";
     public string Name => "一键回城";
@@ -29,22 +32,6 @@ public sealed class HideoutTool : ITool
     public void Initialize(ToolHost host)
     {
         _host = host;
-        try
-        {
-            var settings = host.Storage.LoadSettings();
-            if (settings["hideout"] is JsonObject section)
-            {
-                if (section["enabled"] is JsonValue e && e.TryGetValue<bool>(out var en))
-                    _enabled = en;
-                if (section["hotkey"] is JsonValue h && h.TryGetValue<string>(out var hk) &&
-                    !string.IsNullOrWhiteSpace(hk))
-                    _hotkey = hk;
-            }
-        }
-        catch (Exception)
-        {
-            // 设置损坏按默认值
-        }
     }
 
     public FrameworkElement CreatePage() => new HideoutPage(this);
@@ -53,7 +40,22 @@ public sealed class HideoutTool : ITool
 
     public void OnDeactivate() { }
 
-    public void OnShutdown() { }
+    public void OnShutdown()
+    {
+        Task? task;
+        lock (_operationGate)
+        {
+            _operationCts?.Cancel();
+            task = _operationTask;
+        }
+        if (task is null) return;
+        try
+        {
+            if (!task.Wait(TimeSpan.FromSeconds(1)))
+                Diag.Log("[回城] OnShutdown: 1 秒内未完成关闭");
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException)) { }
+    }
 
     /// <summary>F2 一键回城（Toggle；CheckForeground 标志由抽屉自查）。</summary>
     public IReadOnlyList<HotkeyRequest> GetHotkeyRequests() => [new HotkeyRequest
@@ -74,8 +76,12 @@ public sealed class HideoutTool : ITool
         }
 
         // 前台检查（对齐 Python _check_foreground：目标进程不在前台 → 静默忽略，不弹窗）
-        if (!string.IsNullOrEmpty(_host.Foreground.TargetProcess) &&
-            !_host.Foreground.IsTargetForeground())
+        if (string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess))
+        {
+            Diag.Log("[回城] OnHotkey: 未配置目标进程，静默忽略");
+            return;
+        }
+        if (!_host.Foreground.IsTargetForeground())
         {
             var current = ForegroundDetector.GetForegroundProcessName();
             Diag.Log($"[回城] OnHotkey: 前台检查失败, TargetProcess={_host.Foreground.TargetProcess}, 当前前台={current ?? "(null)"}");
@@ -83,19 +89,35 @@ public sealed class HideoutTool : ITool
         }
 
         Diag.Log("[回城] OnHotkey: 执行回城");
-        _ = ExecuteHideoutAsync();
+        lock (_operationGate)
+        {
+            if (_operationTask is { IsCompleted: false })
+            {
+                Diag.Log("[回城] OnHotkey: 上一次操作仍在执行，忽略重复触发");
+                return;
+            }
+            _operationCts?.Dispose();
+            _operationCts = CancellationTokenSource.CreateLinkedTokenSource(_host.EmergencyCts.Token);
+            _operationTask = ExecuteHideoutAsync(_operationCts.Token);
+        }
     }
 
     /// <summary>执行一键回城：Enter → 0.1s → /hideout → Enter（对齐 Python _execute_hideout，静默失败）。</summary>
-    private async Task ExecuteHideoutAsync()
+    private async Task ExecuteHideoutAsync(CancellationToken token)
     {
         try
         {
             var input = _host!.Input;
+            token.ThrowIfCancellationRequested();
             input.PressAndRelease("enter"); // 打开聊天框
-            await Task.Delay(100);
-            await input.TypeTextAsync("/hideout", CancellationToken.None);
+            await Task.Delay(100, token);
+            await input.TypeTextAsync("/hideout", token);
+            token.ThrowIfCancellationRequested();
             input.PressAndRelease("enter"); // 发送
+        }
+        catch (OperationCanceledException)
+        {
+            Diag.Log("[回城] ExecuteHideout: 已取消");
         }
         catch (Exception)
         {
@@ -113,19 +135,18 @@ public sealed class HideoutTool : ITool
     private void SaveNow()
     {
         if (_host is null) return;
-        var settings = _host.Storage.LoadSettings();
-        settings["hideout"] = new JsonObject
+        _host.Storage.UpdateSettings(settings => settings["hideout"] = new JsonObject
         {
             ["enabled"] = _enabled,
             ["hotkey"] = _hotkey,
-        };
-        _host.Storage.SaveSettings(settings);
+        });
     }
 
     public void LoadSettings(JsonElement section)
     {
-        if (section.TryGetProperty("enabled", out var e) && e.ValueKind == JsonValueKind.True)
-            _enabled = true;
+        if (section.TryGetProperty("enabled", out var e) &&
+            (e.ValueKind == JsonValueKind.True || e.ValueKind == JsonValueKind.False))
+            _enabled = e.GetBoolean();
         if (section.TryGetProperty("hotkey", out var h) && h.ValueKind == JsonValueKind.String)
         {
             var hk = h.GetString();

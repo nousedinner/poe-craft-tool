@@ -9,12 +9,14 @@ namespace ShiKe.Services;
 /// 系统托盘（对齐 Python 版 main_window.py _setup_tray / closeEvent）：
 /// - NotifyIcon（WinForms 互操作）+ poe.ico
 /// - 右键菜单：显示 / 退出；双击：显示窗口
-/// - 关闭拦截：洗装运行中 → 忽略关闭 + 隐藏到托盘；否则放行（App 层做保存/OnShutdown）
+/// - 主窗口关闭按钮始终隐藏到托盘；只有 App 明确 Shutdown 时才真正关闭
 /// </summary>
 public sealed class TrayService : IDisposable
 {
     private readonly NotifyIcon _icon;
     private readonly Window _window;
+    private bool _disposed;
+    private bool _windowClosed;
 
     /// <summary>托盘"退出"菜单触发（App 层接管：停线程 → 保存 → 注销热键 → 退出）。</summary>
     public event Action? ExitRequested;
@@ -39,32 +41,48 @@ public sealed class TrayService : IDisposable
         _icon.ContextMenuStrip = menu;
         _icon.DoubleClick += (_, _) => ShowWindow();
         _icon.Visible = true;
+        _window.Closed += (_, _) => _windowClosed = true;
     }
 
     private void ShowWindow()
     {
-        _window.Show();
-        _window.WindowState = WindowState.Normal;
-        _window.Activate();
+        if (_disposed || _windowClosed || _window.Dispatcher.HasShutdownStarted || _window.Dispatcher.HasShutdownFinished)
+            return;
+
+        _window.Dispatcher.BeginInvoke(() =>
+        {
+            if (_disposed || _windowClosed || _window.Dispatcher.HasShutdownStarted || _window.Dispatcher.HasShutdownFinished)
+                return;
+
+            try
+            {
+                if (!_window.IsVisible)
+                    _window.Show();
+                _window.WindowState = WindowState.Normal;
+                _window.Activate();
+            }
+            catch (InvalidOperationException ex)
+            {
+                // 防御性兜底：窗口一旦进入 Closed 状态，绝不能让托盘回调导致进程崩溃。
+                Diag.Log($"[托盘] 恢复窗口失败，窗口已关闭或正在退出: {ex.Message}");
+            }
+        });
     }
 
     /// <summary>
-    /// 关闭窗口拦截（对齐 Python closeEvent）：洗装运行中 → 拦截并最小化到托盘。
-    /// 返回 true = 已拦截（关闭被取消）。App 层在返回 false 时执行保存退出。
+    /// 用户点击主窗口关闭按钮时隐藏到托盘。
+    /// App 明确退出时不会调用本方法，由 App 放行窗口关闭并执行统一清理。
     /// </summary>
-    public bool OnWindowClosing(CancelEventArgs e, bool isCraftRunning)
+    public void OnWindowClosing(CancelEventArgs e)
     {
-        if (isCraftRunning)
-        {
-            e.Cancel = true;
-            _window.Hide();
-            return true;
-        }
-        return false;
+        e.Cancel = true;
+        _window.Hide();
     }
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         _icon.Visible = false;
         _icon.Dispose();
     }
