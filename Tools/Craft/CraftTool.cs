@@ -135,6 +135,7 @@ public sealed class CraftTool : ITool, ICoordinateProvider
             CheckForeground = true,   // 启动类热键检查前台（Python _on_start）
             Mode = HotkeyMode.Toggle,
             Handler = () => StartFromHotkey(),
+            ForegroundRejectedHandler = NotifyStartForegroundRejected,
         },
         new HotkeyRequest
         {
@@ -199,38 +200,45 @@ public sealed class CraftTool : ITool, ICoordinateProvider
 
     private void StartFromHotkey()
     {
-        if (string.IsNullOrWhiteSpace(_host?.Foreground.TargetProcess))
+        if (_host is null) return;
+        if (string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess) ||
+            !_host.Foreground.IsTargetForeground())
         {
-            Diag.Log("[洗装] StartFromHotkey: 未配置目标进程，拒绝启动");
-            _host?.Notification.ShowError("尚未锁定游戏进程，请先启动游戏或在设置中选择目标进程");
-            return;
-        }
-
-        // 前台检查（对齐 Python _on_start：目标进程不在前台 → 提示不启动）。
-        // 注：HotkeyRequest.CheckForeground 标志由抽屉自查——HotkeyManager.WndProc 不执行该检查（审查 A）。
-        if (!_host.Foreground.IsTargetForeground())
-        {
-            var current = ForegroundDetector.GetForegroundProcessName();
-            Diag.Log($"[洗装] StartFromHotkey: 前台检查失败, TargetProcess={_host!.Foreground.TargetProcess}, 当前前台={current ?? "(null)"}");
-            if (string.IsNullOrEmpty(current))
-            {
-                // 前台进程获取失败：OpenProcess 被拒（游戏管理员 + 拾刻普通权限）
-                _host.Notification.ShowError(
-                    $"无法获取前台进程（目标: {_host.Foreground.TargetProcess}）\n\n" +
-                    "游戏可能以管理员身份运行，而拾刻不是。\n" +
-                    "请关闭拾刻后，右键「以管理员身份运行」再试。");
-            }
-            else
-            {
-                _host.Notification.ShowError(
-                    $"请切换到游戏窗口后重试\n\n当前前台: {current}\n目标: {_host.Foreground.TargetProcess}");
-            }
+            // 公共热键层已执行同一检查；这里保留二次防护，覆盖非热键调用和前台瞬时切换。
+            NotifyStartForegroundRejected();
             return;
         }
         Diag.Log("[洗装] StartFromHotkey: 前台检查通过");
         // 启动前从 UI 收集最新规则（用户在页面配置后切到游戏按 F5，规则必须是最新的）
         _page?.CollectRulesFromUi();
         Start();
+    }
+
+    private void NotifyStartForegroundRejected()
+    {
+        if (_host is null) return;
+        if (string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess))
+        {
+            Diag.Log("[洗装] 启动热键: 未配置目标进程，拒绝启动");
+            _host.Notification.ShowError("尚未锁定游戏进程，请先启动游戏或在设置中选择目标进程");
+            return;
+        }
+
+        var current = ForegroundDetector.GetForegroundProcessName();
+        Diag.Log($"[洗装] 启动热键: 前台检查失败, TargetProcess={_host.Foreground.TargetProcess}, 当前前台={current ?? "(null)"}");
+        if (string.IsNullOrEmpty(current))
+        {
+            // 前台进程获取失败：OpenProcess 被拒（游戏管理员 + 拾刻普通权限）
+            _host.Notification.ShowError(
+                $"无法获取前台进程（目标: {_host.Foreground.TargetProcess}）\n\n" +
+                "游戏可能以管理员身份运行，而拾刻不是。\n" +
+                "请关闭拾刻后，右键「以管理员身份运行」再试。");
+        }
+        else
+        {
+            _host.Notification.ShowError(
+                $"请切换到游戏窗口后重试\n\n当前前台: {current}\n目标: {_host.Foreground.TargetProcess}");
+        }
     }
 
     public void Stop()

@@ -76,6 +76,10 @@ public partial class CraftPage : UserControl
             _tool.Coordinates[slot.SlotId] = pt;
             UpdateCoordButton(slot.SlotId, pt);
         });
+        _host.Coordinates.RecordingFailed += (slot, message) => Dispatcher.BeginInvoke(() =>
+        {
+            _host.Notification.ShowError($"{slot.DisplayName}录制失败：{message}");
+        });
 
         SubscribeEngine();
         LoadStateIntoUi();
@@ -602,7 +606,16 @@ public partial class CraftPage : UserControl
         if (string.IsNullOrWhiteSpace(name)) return;
         name = name.Trim();
 
-        if (_host.Storage.ListPresets().Contains(name))
+        if (!StorageService.TryValidatePresetName(name, out var validationError))
+        {
+            if (owner is not null)
+                MessageBox.Show(owner, validationError, "预设名称无效", MessageBoxButton.OK, MessageBoxImage.Warning);
+            else
+                MessageBox.Show(validationError, "预设名称无效", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (_host.Storage.ListPresets().Contains(name, StringComparer.OrdinalIgnoreCase))
         {
             var reply = MessageBox.Show($"已存在同名预设「{name}」，是否覆盖？",
                 "覆盖确认", MessageBoxButton.YesNo, MessageBoxImage.Question);

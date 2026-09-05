@@ -31,6 +31,12 @@ public sealed class HotkeyRequest
     /// <summary>回调（宿主保证在 UI 线程调用）。</summary>
     public required Action Handler { get; init; }
 
+    /// <summary>
+    /// CheckForeground=true 且目标不在前台时的可选回调。用于需要提示的工具；
+    /// 未设置时公共热键层静默拦截。
+    /// </summary>
+    public Action? ForegroundRejectedHandler { get; init; }
+
     /// <summary>Hold 模式专用：松开按键时调用（对应 Python on_release_key）。Toggle 模式忽略。</summary>
     public Action? ReleaseHandler { get; init; }
 }

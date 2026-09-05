@@ -8,7 +8,7 @@ namespace ShiKe.Tools.Hideout;
 
 /// <summary>
 /// 一键回城抽屉（阶段4 实装）。
-/// - 热键声明：F2（Toggle, CheckForeground=true 由抽屉自查——对齐 CraftTool 模式）
+/// - 热键声明：F2（Toggle, CheckForeground=true，由公共热键层拦截并在抽屉内二次防护）
 /// - 行为：对齐 Python _execute_hideout（main.py:26-35）：
 ///   Enter → sleep(0.1s) → 输入 /hideout → Enter
 /// - 存储：hideout 节 {enabled, hotkey}，默认 false / F2（storage.py:123-124）
@@ -57,7 +57,7 @@ public sealed class HideoutTool : ITool
         catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException)) { }
     }
 
-    /// <summary>F2 一键回城（Toggle；CheckForeground 标志由抽屉自查）。</summary>
+    /// <summary>F2 一键回城（Toggle；公共热键层检查前台，抽屉保留二次防护）。</summary>
     public IReadOnlyList<HotkeyRequest> GetHotkeyRequests() => [new HotkeyRequest
     {
         Key = _hotkey,

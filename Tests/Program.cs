@@ -4,6 +4,7 @@ using ShiKe.Tools.Hideout;
 using ShiKe.Host;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Windows;
 
 var tests = new (string Name, Action Run)[]
 {
@@ -20,6 +21,8 @@ var tests = new (string Name, Action Run)[]
     ("旧设置迁移保留原始备份", LegacySettingsMigrationKeepsOriginalBackup),
     ("仅 Hideout 分节不会被误迁移", HideoutOnlySectionIsRecognized),
     ("分节更新不会丢失其他设置", SectionUpdatePreservesOtherSections),
+    ("预设名称限制在预设目录内", PresetNamesStayInsidePresetDirectory),
+    ("坐标读取失败不保存零坐标", CursorReadFailureDoesNotSaveZeroCoordinate),
     ("Craft 和 Hideout 设置可由统一生命周期加载", ToolSettingsAreLoaded),
     ("Craft 设置保存后可完整往返加载", CraftSettingsRoundTrip),
     ("Mode3 改造阶段判定矩阵", Mode3AlterationDecisionMatrix),
@@ -35,6 +38,7 @@ var tests = new (string Name, Action Run)[]
     ("Hold 组合热键保留修饰键", HoldHotkeyKeepsModifiers),
     ("Hold 支持独立修饰键", HoldSupportsStandaloneModifier),
     ("修饰键状态判定支持左右按键", ModifierStateSupportsLeftAndRightKeys),
+    ("公共热键层统一执行前台门禁", HotkeyManagerEnforcesForegroundPolicy),
     ("空目标进程采用 fail-closed", EmptyTargetProcessIsNotForeground),
     ("程序集版本与本次修复版本一致", AssemblyVersionIsCurrent),
     ("Craft 常驻任务可以正式关闭", CraftEngineCanShutdownWhileIdle),
@@ -307,6 +311,49 @@ static void SectionUpdatePreservesOtherSections()
     });
 }
 
+static void PresetNamesStayInsidePresetDirectory()
+{
+    WithTempDirectory(directory =>
+    {
+        var storage = new StorageService(directory);
+        True(StorageService.TryValidatePresetName("测试 词缀", out _), "合法中文预设名应通过");
+        storage.SavePreset("测试 词缀", new JsonObject { ["primary_hit_count"] = 1 });
+        True(storage.LoadPreset("测试 词缀") is not null, "合法预设应可保存并读取");
+
+        False(StorageService.TryValidatePresetName("../escape", out _), "目录穿越名称必须被拒绝");
+        False(StorageService.TryValidatePresetName("CON", out _), "Windows 保留设备名必须被拒绝");
+        False(StorageService.TryValidatePresetName("尾点.", out _), "尾点名称必须被拒绝");
+        Throws<ArgumentException>(() => storage.SavePreset("../escape", new JsonObject()),
+            "服务层必须独立阻止目录穿越");
+        False(File.Exists(Path.Combine(directory, "escape.json")), "预设目录外不得产生文件");
+    });
+}
+
+static void CursorReadFailureDoesNotSaveZeroCoordinate()
+{
+    WithTempDirectory(directory =>
+    {
+        Point? cursor = null;
+        var storage = new StorageService(directory);
+        var recorder = new CoordinateRecorder(storage, () => cursor);
+        var slot = new CoordinateSlot { SlotId = "item", DisplayName = "装备位置" };
+        var failures = 0;
+        recorder.RecordingFailed += (_, _) => failures++;
+
+        recorder.StartRecording(slot);
+        recorder.OnRecordHotkey();
+        True(recorder.IsRecording, "读取失败后应保留录制状态供重试");
+        Equal(1, failures, "读取失败应发出一次明确事件");
+        Equal(0, storage.LoadCoordinates().Count, "读取失败不得写入 (0,0) 或其他坐标");
+
+        cursor = new Point(123, 456);
+        recorder.OnRecordHotkey();
+        False(recorder.IsRecording, "成功重试后应退出录制状态");
+        var saved = storage.LoadCoordinates()["item"];
+        Equal(new Point(123, 456), saved, "成功重试应保存真实坐标");
+    });
+}
+
 static void ToolSettingsAreLoaded()
 {
     var craft = new CraftTool();
@@ -506,6 +553,46 @@ static void ModifierStateSupportsLeftAndRightKeys()
         "缺少 Shift 时组合修饰键不得满足");
 }
 
+static void HotkeyManagerEnforcesForegroundPolicy()
+{
+    var foreground = false;
+    var invoked = 0;
+    var rejected = 0;
+    var manager = new HotkeyManager(() => foreground);
+    var guarded = new HotkeyRequest
+    {
+        Key = "F5",
+        DisplayName = "受保护操作",
+        CheckForeground = true,
+        Mode = HotkeyMode.Toggle,
+        Handler = () => invoked++,
+        ForegroundRejectedHandler = () => rejected++,
+    };
+
+    False(manager.TryInvoke(guarded), "非目标前台必须拦截受保护热键");
+    Equal(0, invoked, "被拦截热键不得执行主回调");
+    Equal(1, rejected, "被拦截热键应执行可选拒绝回调");
+
+    foreground = true;
+    True(manager.TryInvoke(guarded), "目标前台应放行受保护热键");
+    Equal(1, invoked, "放行后应执行一次主回调");
+
+    foreground = false;
+    var unguarded = new HotkeyRequest
+    {
+        Key = "F6",
+        DisplayName = "停止操作",
+        CheckForeground = false,
+        Mode = HotkeyMode.Toggle,
+        Handler = () => invoked++,
+    };
+    True(manager.TryInvoke(unguarded), "停止类热键不得受前台限制");
+    Equal(2, invoked, "停止类热键应在非目标前台执行");
+
+    var failingDetector = new HotkeyManager(() => throw new InvalidOperationException("模拟检测失败"));
+    False(failingDetector.TryInvoke(guarded), "前台检测异常必须 fail-closed");
+}
+
 static void EmptyTargetProcessIsNotForeground()
 {
     var detector = new ForegroundDetector { TargetProcess = "" };
@@ -517,7 +604,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(16, version.Build, "程序集 Build 必须为本次 1.0.16");
+    Equal(17, version.Build, "程序集 Build 必须为本次 1.0.17");
 }
 
 static void CraftEngineCanShutdownWhileIdle()
@@ -605,6 +692,19 @@ static void False(bool value, string message)
 static void True(bool value, string message)
 {
     if (!value) throw new InvalidOperationException(message);
+}
+
+static void Throws<TException>(Action action, string message) where TException : Exception
+{
+    try
+    {
+        action();
+    }
+    catch (TException)
+    {
+        return;
+    }
+    throw new InvalidOperationException(message);
 }
 
 static void WithTempDirectory(Action<string> action)

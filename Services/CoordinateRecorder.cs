@@ -13,14 +13,19 @@ namespace ShiKe.Services;
 public sealed class CoordinateRecorder
 {
     private readonly StorageService _storage;
+    private readonly Func<Point?> _cursorPositionProvider;
     private CoordinateSlot? _activeSlot;
 
     /// <summary>录制完成事件（槽位 + 坐标）。UI 层监听更新按钮三态。与选中信号独立。</summary>
     public event Action<CoordinateSlot, Point>? RecordingCompleted;
 
-    public CoordinateRecorder(StorageService storage)
+    /// <summary>光标读取失败事件。失败时保持录制状态，不写入伪造的 (0,0)，用户可再次触发热键。</summary>
+    public event Action<CoordinateSlot, string>? RecordingFailed;
+
+    public CoordinateRecorder(StorageService storage, Func<Point?>? cursorPositionProvider = null)
     {
         _storage = storage;
+        _cursorPositionProvider = cursorPositionProvider ?? GetCursorPosition;
     }
 
     public bool IsRecording => _activeSlot is not null;
@@ -35,12 +40,20 @@ public sealed class CoordinateRecorder
         if (_activeSlot is null)
             return;
         var slot = _activeSlot;
-        _activeSlot = null; // 先清除再触发，避免重入
-        var pt = GetCursorPosition();
+        var pt = _cursorPositionProvider();
+        if (pt is null)
+        {
+            const string message = "无法读取鼠标位置；请移动鼠标后再次按录制热键";
+            Diag.Log($"[坐标] {message}, slot={slot.SlotId}");
+            RecordingFailed?.Invoke(slot, message);
+            return;
+        }
+
+        _activeSlot = null; // 成功取得位置后再清除；失败允许原槽位直接重试
         var coords = _storage.LoadCoordinates();
-        coords[slot.SlotId] = pt;
+        coords[slot.SlotId] = pt.Value;
         _storage.SaveCoordinates(coords);
-        RecordingCompleted?.Invoke(slot, pt);
+        RecordingCompleted?.Invoke(slot, pt.Value);
     }
 
     public void CancelRecording() => _activeSlot = null;
@@ -57,14 +70,18 @@ public sealed class CoordinateRecorder
     }
 
     // ── 光标位置 ──
-    [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT pt);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool GetCursorPos(out POINT pt);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT { public int X; public int Y; }
 
-    private static Point GetCursorPosition()
+    private static Point? GetCursorPosition()
     {
-        GetCursorPos(out var pt);
+        if (!GetCursorPos(out var pt))
+        {
+            Diag.Win32Error("GetCursorPos", Marshal.GetLastWin32Error());
+            return null;
+        }
         return new Point(pt.X, pt.Y);
     }
 }

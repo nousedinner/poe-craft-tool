@@ -11,6 +11,7 @@ namespace ShiKe.Services;
 /// - Toggle 模式：RegisterHotKey + WM_HOTKEY（无需管理员权限）
 /// - Hold 模式：WH_KEYBOARD_LL 低级钩子（按下 → Handler，抬起 → ReleaseHandler）
 /// - 冲突检测：注册前查重，收集全部冲突返回（宿主弹窗）
+/// - CheckForeground：启动类热键由公共层统一 fail-closed，停止/坐标类请求不检查
 /// - 回调统一在 UI 线程执行（WM_HOTKEY 天然 UI 线程；LL 钩子回调经 Dispatcher.BeginInvoke）
 /// - 两类 ID 分开清理（对应 Python 坑 #2）
 /// </summary>
@@ -34,14 +35,17 @@ public sealed class HotkeyManager
     private readonly HashSet<HoldBinding> _activeHoldBindings = [];
     private readonly HashSet<ushort> _keysDown = [];
     private readonly LowLevelKeyboardProc _hookProc;
+    private readonly Func<bool> _isTargetForeground;
 
     private HwndSource? _source;
     private nint _hwnd;
     private int _nextId = 0xC001;
     private nint _hookHandle;
 
-    public HotkeyManager()
+    public HotkeyManager(Func<bool> isTargetForeground)
     {
+        ArgumentNullException.ThrowIfNull(isTargetForeground);
+        _isTargetForeground = isTargetForeground;
         _hookProc = HookCallback; // 实例方法委托，防止回调被 GC
     }
 
@@ -185,10 +189,37 @@ public sealed class HotkeyManager
     {
         if (msg == WM_HOTKEY && _registered.TryGetValue(wParam.ToInt32(), out var req))
         {
-            req.Handler();
+            TryInvoke(req);
             handled = true;
         }
         return 0;
+    }
+
+    /// <summary>执行热键请求前统一应用前台契约；检测异常按危险输入 fail-closed 处理。</summary>
+    internal bool TryInvoke(HotkeyRequest request)
+    {
+        if (!CanDispatch(request))
+        {
+            request.ForegroundRejectedHandler?.Invoke();
+            return false;
+        }
+
+        request.Handler();
+        return true;
+    }
+
+    private bool CanDispatch(HotkeyRequest request)
+    {
+        if (!request.CheckForeground) return true;
+        try
+        {
+            return _isTargetForeground();
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"[热键] 前台检查异常，已拦截“{request.DisplayName}”: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
     }
 
     // ── WH_KEYBOARD_LL（钩子线程，经 Dispatcher 回 UI 线程）──
@@ -213,6 +244,14 @@ public sealed class HotkeyManager
                     if (_activeHoldBindings.Contains(binding) ||
                         !HotkeyParser.AreModifiersPressed(binding.Hotkey.Modifiers, key => _keysDown.Contains(key)))
                         continue;
+
+                    // Hold 只在按下阶段检查前台。已经启动的 Hold 无论当前前台如何，
+                    // 松开时都必须调用 ReleaseHandler，防止残留鼠标/按键状态。
+                    if (!CanDispatch(binding.Request))
+                    {
+                        dispatcher?.BeginInvoke(() => binding.Request.ForegroundRejectedHandler?.Invoke());
+                        continue;
+                    }
                     _activeHoldBindings.Add(binding);
                     dispatcher?.BeginInvoke(() => binding.Request.Handler());
                 }

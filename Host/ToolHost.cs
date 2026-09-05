@@ -14,8 +14,8 @@ public sealed class ToolHost
     public ToolHost(ToolRegistry registry)
     {
         _registry = registry;
-        Hotkeys = new HotkeyManager();
         Foreground = new ForegroundDetector();
+        Hotkeys = new HotkeyManager(Foreground.IsTargetForeground);
         // InputSimulator 动态取当前 EmergencyCts（审查 D：Reset 后不再持有旧 CTS）+ 前台检测（审查 B）
         Input = new InputSimulator(() => _emergencyCts, Foreground);
         Storage = new StorageService();

@@ -224,7 +224,7 @@ public sealed class StorageService
 
     public JsonObject? LoadPreset(string name)
     {
-        var path = Path.Combine(PresetsDir, name + ".json");
+        var path = GetPresetPath(name);
         if (!File.Exists(path)) return null;
         try { return JsonNode.Parse(File.ReadAllText(path)) as JsonObject; }
         catch (JsonException) { return null; }
@@ -232,13 +232,80 @@ public sealed class StorageService
 
     public void SavePreset(string name, JsonObject preset)
     {
+        ArgumentNullException.ThrowIfNull(preset);
         Directory.CreateDirectory(PresetsDir);
-        WriteJsonAtomic(Path.Combine(PresetsDir, name + ".json"), preset);
+        WriteJsonAtomic(GetPresetPath(name), preset);
     }
 
     public void DeletePreset(string name)
     {
-        var path = Path.Combine(PresetsDir, name + ".json");
+        var path = GetPresetPath(name);
         if (File.Exists(path)) File.Delete(path);
+    }
+
+    /// <summary>验证用户可见的预设名称；服务入口仍会再次验证，不能只依赖 UI。</summary>
+    public static bool TryValidatePresetName(string? name, out string error)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            error = "预设名称不能为空";
+            return false;
+        }
+        if (!string.Equals(name, name.Trim(), StringComparison.Ordinal))
+        {
+            error = "预设名称不能以空格开头或结尾";
+            return false;
+        }
+        if (name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+            name.Contains(Path.DirectorySeparatorChar) || name.Contains(Path.AltDirectorySeparatorChar))
+        {
+            error = "预设名称不能包含路径或文件名非法字符";
+            return false;
+        }
+        if (name.EndsWith('.') || name.EndsWith(' '))
+        {
+            error = "预设名称不能以点或空格结尾";
+            return false;
+        }
+
+        var deviceStem = name.Split('.', 2)[0];
+        if (IsReservedWindowsDeviceName(deviceStem))
+        {
+            error = $"“{name}”是 Windows 保留名称，请换一个名称";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private string GetPresetPath(string name)
+    {
+        if (!TryValidatePresetName(name, out var error))
+            throw new ArgumentException(error, nameof(name));
+
+        var root = Path.GetFullPath(PresetsDir);
+        var path = Path.GetFullPath(Path.Combine(root, name + ".json"));
+        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+        if (!path.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("预设路径超出预设目录", nameof(name));
+        return path;
+    }
+
+    private static bool IsReservedWindowsDeviceName(string stem)
+    {
+        if (stem.Equals("CON", StringComparison.OrdinalIgnoreCase) ||
+            stem.Equals("PRN", StringComparison.OrdinalIgnoreCase) ||
+            stem.Equals("AUX", StringComparison.OrdinalIgnoreCase) ||
+            stem.Equals("NUL", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (stem.Length != 4) return false;
+        var prefix = stem[..3];
+        return (prefix.Equals("COM", StringComparison.OrdinalIgnoreCase) ||
+                prefix.Equals("LPT", StringComparison.OrdinalIgnoreCase)) &&
+               stem[3] is >= '1' and <= '9';
     }
 }
