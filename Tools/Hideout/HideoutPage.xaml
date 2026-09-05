@@ -23,6 +23,11 @@
                 <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#889" FontSize="12">
                     <Run Text="提示：需在游戏设置中允许聊天输入；游戏为管理员运行时拾刻请同样以管理员运行。"/>
                 </TextBlock>
+                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                    <TextBlock Text="执行命令" Foreground="#445566" VerticalAlignment="Center"/>
+                    <TextBox x:Name="CommandText" Width="180" Margin="10,0,0,0" Padding="5,3"
+                             LostFocus="CommandText_Commit" KeyDown="CommandText_KeyDown"/>
+                </StackPanel>
             </StackPanel>
         </Border>
     </StackPanel>

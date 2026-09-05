@@ -33,6 +33,7 @@ public static class SettingsDefaults
 
     // 回城
     public const bool HideoutEnabled = false;
+    public const string HideoutCommand = "/hideout";
 
     // 宿主
     public const string TargetProcess = "";

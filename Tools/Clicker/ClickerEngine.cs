@@ -21,6 +21,7 @@ public sealed class ClickerEngine
     private readonly ToolHost _host;
     private readonly Func<bool> _isTargetForeground;
     private readonly Func<ClickerMouseButton, CancellationToken, Task> _clickAction;
+    private readonly Action _releaseMouseButtons;
     private readonly object _gate = new();
     private readonly SemaphoreSlim _wakeSignal = new(0);
     private readonly CancellationTokenSource _shutdownCts = new();
@@ -42,18 +43,21 @@ public sealed class ClickerEngine
         : this(host, host.Foreground.IsTargetForeground,
             (button, token) => button == ClickerMouseButton.Left
                 ? host.Input.ClickAsync(0, token)
-                : host.Input.RightClickAsync(0, token))
+                : host.Input.RightClickAsync(0, token),
+            host.Input.ReleaseMouseButtons)
     {
     }
 
     internal ClickerEngine(
         ToolHost host,
         Func<bool> isTargetForeground,
-        Func<ClickerMouseButton, CancellationToken, Task> clickAction)
+        Func<ClickerMouseButton, CancellationToken, Task> clickAction,
+        Action? releaseMouseButtons = null)
     {
         _host = host;
         _isTargetForeground = isTargetForeground;
         _clickAction = clickAction;
+        _releaseMouseButtons = releaseMouseButtons ?? (() => { });
         _worker = Task.Run(RunWorkerAsync);
     }
 
@@ -191,16 +195,25 @@ public sealed class ClickerEngine
             finally
             {
                 var reportStop = false;
+                var isCurrentRun = false;
                 lock (_gate)
                 {
                     if (_runId == runId)
                     {
+                        isCurrentRun = true;
                         reportStop = _running;
                         _running = false;
                         if (ReferenceEquals(_runCts, runCts)) _runCts = null;
                     }
                 }
                 runCts.Dispose();
+
+                // 只允许当前运行执行兜底；快速停止后已开始的新运行不能被旧 finally 干扰。
+                if (isCurrentRun)
+                {
+                    try { _releaseMouseButtons(); }
+                    catch (Exception ex) { Diag.Log($"[连点] 释放鼠标按键失败: {ex.Message}"); }
+                }
 
                 if (reportStop)
                 {

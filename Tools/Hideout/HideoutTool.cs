@@ -18,6 +18,7 @@ public sealed class HideoutTool : ITool
     private ToolHost? _host;
     private bool _enabled;
     private string _hotkey = "F2";
+    private string _command = SettingsDefaults.HideoutCommand;
     private readonly object _operationGate = new();
     private CancellationTokenSource? _operationCts;
     private Task? _operationTask;
@@ -28,6 +29,7 @@ public sealed class HideoutTool : ITool
 
     public bool IsEnabled => _enabled;
     public string Hotkey => _hotkey;
+    public string Command => _command;
 
     public void Initialize(ToolHost host)
     {
@@ -98,12 +100,12 @@ public sealed class HideoutTool : ITool
             }
             _operationCts?.Dispose();
             _operationCts = CancellationTokenSource.CreateLinkedTokenSource(_host.EmergencyCts.Token);
-            _operationTask = ExecuteHideoutAsync(_operationCts.Token);
+            _operationTask = ExecuteHideoutAsync(_command, _operationCts.Token);
         }
     }
 
     /// <summary>执行一键回城：Enter → 0.1s → /hideout → Enter（对齐 Python _execute_hideout，静默失败）。</summary>
-    private async Task ExecuteHideoutAsync(CancellationToken token)
+    private async Task ExecuteHideoutAsync(string command, CancellationToken token)
     {
         try
         {
@@ -111,7 +113,7 @@ public sealed class HideoutTool : ITool
             token.ThrowIfCancellationRequested();
             input.PressAndRelease("enter"); // 打开聊天框
             await Task.Delay(100, token);
-            await input.TypeTextAsync("/hideout", token);
+            await input.TypeTextAsync(command, token);
             token.ThrowIfCancellationRequested();
             input.PressAndRelease("enter"); // 发送
         }
@@ -132,6 +134,12 @@ public sealed class HideoutTool : ITool
         SaveNow();
     }
 
+    public void SetCommand(string command)
+    {
+        _command = string.IsNullOrWhiteSpace(command) ? SettingsDefaults.HideoutCommand : command.Trim();
+        SaveNow();
+    }
+
     private void SaveNow()
     {
         if (_host is null) return;
@@ -139,6 +147,7 @@ public sealed class HideoutTool : ITool
         {
             ["enabled"] = _enabled,
             ["hotkey"] = _hotkey,
+            ["command"] = _command,
         });
     }
 
@@ -153,6 +162,9 @@ public sealed class HideoutTool : ITool
             if (!string.IsNullOrWhiteSpace(hk))
                 _hotkey = hk;
         }
+        if (section.TryGetProperty("command", out var command) && command.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(command.GetString()))
+            _command = command.GetString()!.Trim();
     }
 
     public void SaveSettings(Utf8JsonWriter writer)
@@ -160,6 +172,7 @@ public sealed class HideoutTool : ITool
         writer.WriteStartObject();
         writer.WriteBoolean("enabled", _enabled);
         writer.WriteString("hotkey", _hotkey);
+        writer.WriteString("command", _command);
         writer.WriteEndObject();
     }
 }

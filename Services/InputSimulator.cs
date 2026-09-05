@@ -282,8 +282,14 @@ public sealed class InputSimulator
         await EnsureForegroundForInputAsync(token);
         CheckEmergencyStop();
         SendMouseOrThrow(MOUSEEVENTF_LEFTDOWN, "鼠标左键按下");
-        await Task.Delay(20, CancellationToken.None);
-        SendMouseOrThrow(MOUSEEVENTF_LEFTUP, "鼠标左键抬起");
+        try
+        {
+            await Task.Delay(20, CancellationToken.None);
+        }
+        finally
+        {
+            SendMouseOrThrow(MOUSEEVENTF_LEFTUP, "鼠标左键抬起");
+        }
         if (delayMs > 0) await Task.Delay(delayMs, token);
     }
 
@@ -293,8 +299,14 @@ public sealed class InputSimulator
         await EnsureForegroundForInputAsync(token);
         CheckEmergencyStop();
         SendMouseOrThrow(MOUSEEVENTF_RIGHTDOWN, "鼠标右键按下");
-        await Task.Delay(20, CancellationToken.None);
-        SendMouseOrThrow(MOUSEEVENTF_RIGHTUP, "鼠标右键抬起");
+        try
+        {
+            await Task.Delay(20, CancellationToken.None);
+        }
+        finally
+        {
+            SendMouseOrThrow(MOUSEEVENTF_RIGHTUP, "鼠标右键抬起");
+        }
         if (delayMs > 0) await Task.Delay(delayMs, token);
     }
 

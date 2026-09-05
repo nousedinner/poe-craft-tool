@@ -31,6 +31,7 @@ var tests = new (string Name, Action Run)[]
     ("Clicker 声明独立 Toggle 和 Hold 热键", ClickerDeclaresBothHotkeys),
     ("KeyLoop 设置兼容新旧延时字段", KeyLoopSettingsRoundTrip),
     ("KeyLoop 启动前校验槽位", KeyLoopValidatesEnabledSlots),
+    ("Hideout 命令设置可完整往返", HideoutCommandRoundTrip),
     ("Mode3 改造阶段判定矩阵", Mode3AlterationDecisionMatrix),
     ("Mode3 增幅达标后必须进入富豪", Mode3AugmentationAlwaysProceedsToRegal),
     ("Mode3 启动稀有度判定矩阵", Mode3StartDecisionMatrix),
@@ -392,9 +393,10 @@ static void ToolSettingsAreLoaded()
     Equal(true, craft.UseExalt, "Craft 崇高开关未加载");
 
     var hideout = new HideoutTool();
-    hideout.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = false, hotkey = "F4" }));
+    hideout.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = false, hotkey = "F4", command = "/menagerie" }));
     Equal(false, hideout.IsEnabled, "Hideout false 设置未加载");
     Equal("F4", hideout.Hotkey, "Hideout 热键未加载");
+    Equal("/menagerie", hideout.Command, "Hideout 命令未加载");
 }
 
 static void CraftSettingsRoundTrip()
@@ -525,6 +527,30 @@ static void KeyLoopValidatesEnabledSlots()
         "越界延时必须拒绝启动");
     tool.Slots[0].DelaySeconds = 0.1;
     True(tool.ValidateSlots() is null, "合法槽位配置应允许启动");
+}
+
+static void HideoutCommandRoundTrip()
+{
+    var source = new HideoutTool();
+    source.LoadSettings(JsonSerializer.SerializeToElement(new
+    {
+        enabled = true,
+        hotkey = "F4",
+        command = "/menagerie",
+    }));
+
+    using var stream = new MemoryStream();
+    using (var writer = new Utf8JsonWriter(stream))
+        source.SaveSettings(writer);
+    var restored = new HideoutTool();
+    using var document = JsonDocument.Parse(stream.ToArray());
+    restored.LoadSettings(document.RootElement);
+
+    Equal(true, restored.IsEnabled, "Hideout 启用状态往返失败");
+    Equal("F4", restored.Hotkey, "Hideout 热键往返失败");
+    Equal("/menagerie", restored.Command, "Hideout 自定义命令往返失败");
+    restored.SetCommand("   ");
+    Equal(SettingsDefaults.HideoutCommand, restored.Command, "空命令必须回退 /hideout");
 }
 
 static void Mode3AlterationDecisionMatrix()
@@ -720,7 +746,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(20, version.Build, "程序集 Build 必须为本次 1.0.20");
+    Equal(21, version.Build, "程序集 Build 必须为本次 1.0.21");
 }
 
 static void CraftEngineCanShutdownWhileIdle()
@@ -755,6 +781,7 @@ static void ClickerEngineLifecycleIsSafe()
             var host = new ToolHost(new ToolRegistry());
             var foreground = false;
             var simulatedClicks = 0;
+            var releaseCalls = 0;
             var engine = new ClickerEngine(
                 host,
                 () => foreground,
@@ -762,7 +789,8 @@ static void ClickerEngineLifecycleIsSafe()
                 {
                     Interlocked.Increment(ref simulatedClicks);
                     return Task.CompletedTask;
-                });
+                },
+                () => Interlocked.Increment(ref releaseCalls));
 
             True(engine.Start(ClickerMouseButton.Left, 10), "Clicker 首次启动应成功");
             Thread.Sleep(60);
@@ -774,6 +802,7 @@ static void ClickerEngineLifecycleIsSafe()
             True(engine.Stop(), "运行中的 Clicker 应可停止");
             Thread.Sleep(80);
             var stoppedCount = engine.ClickCount;
+            Equal(1, releaseCalls, "Clicker 停止后应执行一次鼠标释放兜底");
             Thread.Sleep(60);
             Equal(stoppedCount, engine.ClickCount, "停止后点击计数不得继续增长");
             Equal(stoppedCount, simulatedClicks, "引擎计数必须与成功模拟点击次数一致");
