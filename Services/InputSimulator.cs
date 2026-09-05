@@ -424,6 +424,28 @@ public sealed class InputSimulator
         ReleaseKeyOrThrow(vk, $"释放 {key}");
     }
 
+    /// <summary>
+    /// 异步按下并释放一个键。发送前检查游戏前台和左上角紧急停止；
+    /// down/up 之间不可取消，保证停止或退出发生在中途时仍会释放按键。
+    /// </summary>
+    public async Task PressAndReleaseAsync(string key, CancellationToken token)
+    {
+        var vk = KeyCode.Parse(key);
+        if (vk == 0) throw new InputSimulationException($"无法识别按键“{key}”");
+
+        await EnsureForegroundForInputAsync(token);
+        CheckEmergencyStop();
+        PressKeyOrThrow(vk, $"按下 {key}");
+        try
+        {
+            await Task.Delay(10, CancellationToken.None);
+        }
+        finally
+        {
+            ReleaseKeyOrThrow(vk, $"释放 {key}");
+        }
+    }
+
     /// <summary>每次 Craft 任务启动时清除上次运行的点击节拍。</summary>
     public void ResetCraftClickInterval()
     {

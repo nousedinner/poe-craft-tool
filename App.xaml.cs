@@ -8,6 +8,7 @@ using ShiKe.Services;
 using ShiKe.Tools.Clicker;
 using ShiKe.Tools.Craft;
 using ShiKe.Tools.Hideout;
+using ShiKe.Tools.KeyLoop;
 
 namespace ShiKe;
 
@@ -20,6 +21,7 @@ public partial class App : Application
     private MainWindow? _mainWindow;
     private CraftTool? _craftTool;
     private ClickerTool? _clickerTool;
+    private KeyLoopTool? _keyLoopTool;
     private Mutex? _singleInstanceMutex;
     private bool _ownsSingleInstanceMutex;
     private bool _isShuttingDown;
@@ -46,8 +48,10 @@ public partial class App : Application
         var registry = new ToolRegistry();
         _craftTool = new CraftTool();
         _clickerTool = new ClickerTool();
+        _keyLoopTool = new KeyLoopTool();
         registry.Register(_craftTool);
         registry.Register(_clickerTool);
+        registry.Register(_keyLoopTool);
         registry.Register(new HideoutTool());
 
         _host = new ToolHost(registry);
@@ -67,6 +71,7 @@ public partial class App : Application
         MainWindow = _mainWindow;
         WireCraftStatus();
         WireClickerStatus();
+        WireKeyLoopStatus();
 
         // 托盘（依赖窗口，App 直接管理）
         _tray = new TrayService(_mainWindow);
@@ -141,6 +146,16 @@ public partial class App : Application
     {
         if (_clickerTool is null) return;
         _clickerTool.StatusUpdated += status => Dispatcher.BeginInvoke(() =>
+        {
+            if (_mainWindow is null) return;
+            _mainWindow.SetStatus(status.Text, status.Running);
+        });
+    }
+
+    private void WireKeyLoopStatus()
+    {
+        if (_keyLoopTool is null) return;
+        _keyLoopTool.StatusUpdated += status => Dispatcher.BeginInvoke(() =>
         {
             if (_mainWindow is null) return;
             _mainWindow.SetStatus(status.Text, status.Running);

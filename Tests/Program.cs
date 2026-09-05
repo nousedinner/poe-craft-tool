@@ -1,5 +1,6 @@
 using ShiKe.Tools.Craft;
 using ShiKe.Tools.Clicker;
+using ShiKe.Tools.KeyLoop;
 using ShiKe.Services;
 using ShiKe.Tools.Hideout;
 using ShiKe.Host;
@@ -28,6 +29,8 @@ var tests = new (string Name, Action Run)[]
     ("Craft 设置保存后可完整往返加载", CraftSettingsRoundTrip),
     ("Clicker 设置保存后可完整往返加载", ClickerSettingsRoundTrip),
     ("Clicker 声明独立 Toggle 和 Hold 热键", ClickerDeclaresBothHotkeys),
+    ("KeyLoop 设置兼容新旧延时字段", KeyLoopSettingsRoundTrip),
+    ("KeyLoop 启动前校验槽位", KeyLoopValidatesEnabledSlots),
     ("Mode3 改造阶段判定矩阵", Mode3AlterationDecisionMatrix),
     ("Mode3 增幅达标后必须进入富豪", Mode3AugmentationAlwaysProceedsToRegal),
     ("Mode3 启动稀有度判定矩阵", Mode3StartDecisionMatrix),
@@ -46,6 +49,7 @@ var tests = new (string Name, Action Run)[]
     ("程序集版本与本次修复版本一致", AssemblyVersionIsCurrent),
     ("Craft 常驻任务可以正式关闭", CraftEngineCanShutdownWhileIdle),
     ("Clicker 常驻任务可暂停停止并关闭", ClickerEngineLifecycleIsSafe),
+    ("KeyLoop 独立槽位可暂停停止并关闭", KeyLoopEngineLifecycleIsSafe),
     ("Craft 运行配置使用深拷贝快照", CraftRulesSnapshotIsIndependent),
 };
 
@@ -467,6 +471,62 @@ static void ClickerDeclaresBothHotkeys()
     True(requests[1].ReleaseHandler is not null, "Clicker Hold 必须提供松开停止回调");
 }
 
+static void KeyLoopSettingsRoundTrip()
+{
+    var source = new KeyLoopTool { Hotkey = "Ctrl+F9", NotificationsEnabled = true };
+    source.Slots[0].Enabled = true;
+    source.Slots[0].Key = "q";
+    source.Slots[0].DelaySeconds = 0.4;
+    source.Slots[6].Enabled = true;
+    source.Slots[6].Key = "F3";
+    source.Slots[6].DelaySeconds = 2.5;
+
+    using var stream = new MemoryStream();
+    using (var writer = new Utf8JsonWriter(stream))
+        source.SaveSettings(writer);
+
+    var restored = new KeyLoopTool();
+    using var document = JsonDocument.Parse(stream.ToArray());
+    restored.LoadSettings(document.RootElement);
+    Equal("Ctrl+F9", restored.Hotkey, "KeyLoop 热键往返失败");
+    Equal(true, restored.NotificationsEnabled, "KeyLoop 通知设置往返失败");
+    Equal(true, restored.Slots[0].Enabled, "KeyLoop 槽位启用状态往返失败");
+    Equal("q", restored.Slots[0].Key, "KeyLoop 槽位按键往返失败");
+    Equal(0.4, restored.Slots[0].DelaySeconds, "KeyLoop 新 delay_s 字段往返失败");
+    Equal("F3", restored.Slots[6].Key, "KeyLoop 后五个槽位必须保存");
+
+    var legacy = new KeyLoopTool();
+    legacy.LoadSettings(JsonSerializer.SerializeToElement(new
+    {
+        hotkey = "F10",
+        slots = new[] { new { enabled = true, key = "w", delay = 1.7 } },
+    }));
+    Equal("w", legacy.Slots[0].Key, "KeyLoop 旧槽位按键读取失败");
+    Equal(1.7, legacy.Slots[0].DelaySeconds, "KeyLoop 旧 delay 字段读取失败");
+
+    var request = restored.GetHotkeyRequests().Single();
+    Equal(HotkeyMode.Toggle, request.Mode, "KeyLoop 热键必须是 Toggle");
+    Equal(true, request.CheckForeground, "KeyLoop 热键必须检查游戏前台");
+}
+
+static void KeyLoopValidatesEnabledSlots()
+{
+    var tool = new KeyLoopTool();
+    True(tool.ValidateSlots() is not null, "没有启用槽位时必须拒绝启动");
+    tool.Slots[0].Enabled = true;
+    True(tool.ValidateSlots()?.Contains("尚未设置", StringComparison.Ordinal) == true,
+        "启用但未设置按键时必须指出槽位错误");
+    tool.Slots[0].Key = "not-a-key";
+    True(tool.ValidateSlots()?.Contains("无法识别", StringComparison.Ordinal) == true,
+        "无法识别的按键必须拒绝启动");
+    tool.Slots[0].Key = "q";
+    tool.Slots[0].DelaySeconds = 0.05;
+    True(tool.ValidateSlots()?.Contains("延时", StringComparison.Ordinal) == true,
+        "越界延时必须拒绝启动");
+    tool.Slots[0].DelaySeconds = 0.1;
+    True(tool.ValidateSlots() is null, "合法槽位配置应允许启动");
+}
+
 static void Mode3AlterationDecisionMatrix()
 {
     Equal(Mode3MagicDecision.ProceedToRegal, CraftDecisions.AfterAlteration(2, 2, 2), "两词缀达阈值应去富豪");
@@ -660,7 +720,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(19, version.Build, "程序集 Build 必须为本次 1.0.19");
+    Equal(20, version.Build, "程序集 Build 必须为本次 1.0.20");
 }
 
 static void CraftEngineCanShutdownWhileIdle()
@@ -733,6 +793,65 @@ static void ClickerEngineLifecycleIsSafe()
     thread.SetApartmentState(ApartmentState.STA);
     thread.Start();
     True(thread.Join(TimeSpan.FromSeconds(3)), "Clicker STA 测试线程未在限定时间退出");
+    if (failure is not null) throw failure;
+}
+
+static void KeyLoopEngineLifecycleIsSafe()
+{
+    Exception? failure = null;
+    var thread = new Thread(() =>
+    {
+        try
+        {
+            var host = new ToolHost(new ToolRegistry());
+            var foreground = false;
+            var simulated = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var simulatedGate = new object();
+            var engine = new KeyLoopEngine(
+                host,
+                () => foreground,
+                (key, _) =>
+                {
+                    lock (simulatedGate)
+                        simulated[key] = simulated.GetValueOrDefault(key) + 1;
+                    return Task.CompletedTask;
+                });
+            var slots = new[]
+            {
+                new KeyLoopSlot { Enabled = true, Key = "q", DelaySeconds = 0.1 },
+                new KeyLoopSlot { Enabled = true, Key = "w", DelaySeconds = 0.2 },
+            };
+
+            True(engine.Start(slots), "KeyLoop 合法配置应启动");
+            Thread.Sleep(60);
+            Equal(0, engine.PressCounts.Sum(), "非目标前台时不得调用模拟按键动作");
+
+            foreground = true;
+            True(SpinWait.SpinUntil(() =>
+            {
+                var counts = engine.PressCounts;
+                return counts[0] >= 3 && counts[1] >= 2;
+            }, TimeSpan.FromSeconds(2)), "两个槽位应按独立间隔运行");
+            True(engine.Stop(), "运行中的 KeyLoop 应可停止");
+            Thread.Sleep(150);
+            var stoppedCounts = engine.PressCounts.ToArray();
+            Thread.Sleep(150);
+            True(stoppedCounts.SequenceEqual(engine.PressCounts), "停止后各槽位计数不得继续增长");
+            lock (simulatedGate)
+            {
+                Equal(stoppedCounts[0], simulated.GetValueOrDefault("q"), "q 槽位计数应对应模拟按键次数");
+                Equal(stoppedCounts[1], simulated.GetValueOrDefault("w"), "w 槽位计数应对应模拟按键次数");
+            }
+            True(engine.Shutdown(TimeSpan.FromSeconds(1)), "KeyLoop 的 10 个常驻任务必须在限定时间内关闭");
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    True(thread.Join(TimeSpan.FromSeconds(5)), "KeyLoop STA 测试线程未在限定时间退出");
     if (failure is not null) throw failure;
 }
 
