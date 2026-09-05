@@ -45,6 +45,8 @@ public sealed class ClickerTool : ITool
 
     public FrameworkElement CreatePage() => _page ??= new ClickerPage(this);
 
+    internal void RefreshSettingsPresentation() => _page?.RefreshSettingsPresentation();
+
     public void OnActivate() { }
 
     public void OnDeactivate()

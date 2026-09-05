@@ -16,6 +16,7 @@ namespace ShiKe.Tools.Hideout;
 public sealed class HideoutTool : ITool
 {
     private ToolHost? _host;
+    private HideoutPage? _page;
     private bool _enabled;
     private string _hotkey = "F2";
     private string _command = SettingsDefaults.HideoutCommand;
@@ -36,7 +37,7 @@ public sealed class HideoutTool : ITool
         _host = host;
     }
 
-    public FrameworkElement CreatePage() => new HideoutPage(this);
+    public FrameworkElement CreatePage() => _page ??= new HideoutPage(this);
 
     public void OnActivate() { }
 
@@ -138,6 +139,15 @@ public sealed class HideoutTool : ITool
     {
         _command = string.IsNullOrWhiteSpace(command) ? SettingsDefaults.HideoutCommand : command.Trim();
         SaveNow();
+    }
+
+    /// <summary>Settings 页批量应用时使用；持久化由 SettingsTool 统一原子完成。</summary>
+    internal void ApplySharedSettings(bool enabled, string hotkey, string command)
+    {
+        _enabled = enabled;
+        _hotkey = string.IsNullOrWhiteSpace(hotkey) ? SettingsDefaults.HideoutHotkey : hotkey.Trim();
+        _command = string.IsNullOrWhiteSpace(command) ? SettingsDefaults.HideoutCommand : command.Trim();
+        _page?.RefreshFromTool();
     }
 
     private void SaveNow()

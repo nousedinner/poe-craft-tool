@@ -35,6 +35,11 @@ public partial class ClickerPage : UserControl
         _tool.IntervalMs = Math.Clamp((int)IntervalSlider.Value, 10, 200);
     }
 
+    internal void RefreshSettingsPresentation()
+    {
+        HotkeyHint.Text = $"切换热键：{_tool.Hotkey}    按住热键：{_tool.HoldHotkey}";
+    }
+
     private void MouseButton_Checked(object sender, RoutedEventArgs e)
     {
         if (_loading) return;

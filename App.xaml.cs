@@ -9,6 +9,7 @@ using ShiKe.Tools.Clicker;
 using ShiKe.Tools.Craft;
 using ShiKe.Tools.Hideout;
 using ShiKe.Tools.KeyLoop;
+using ShiKe.Tools.Settings;
 
 namespace ShiKe;
 
@@ -22,11 +23,11 @@ public partial class App : Application
     private CraftTool? _craftTool;
     private ClickerTool? _clickerTool;
     private KeyLoopTool? _keyLoopTool;
+    private HideoutTool? _hideoutTool;
+    private SettingsTool? _settingsTool;
     private Mutex? _singleInstanceMutex;
     private bool _ownsSingleInstanceMutex;
     private bool _isShuttingDown;
-    private string _coordinateHotkey = SettingsDefaults.HotkeySetCoord;
-    private bool _autoDetectPoe = SettingsDefaults.AutoDetectPoe;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -49,17 +50,19 @@ public partial class App : Application
         _craftTool = new CraftTool();
         _clickerTool = new ClickerTool();
         _keyLoopTool = new KeyLoopTool();
+        _hideoutTool = new HideoutTool();
+        _settingsTool = new SettingsTool(_craftTool, _clickerTool, _keyLoopTool, _hideoutTool);
         registry.Register(_craftTool);
         registry.Register(_clickerTool);
         registry.Register(_keyLoopTool);
-        registry.Register(new HideoutTool());
+        registry.Register(_hideoutTool);
+        registry.Register(_settingsTool);
 
         _host = new ToolHost(registry);
         _host.IsCraftRunning = () => _craftTool!.IsRunning; // 关闭窗口拦截判断
 
         // settings 只读取一次：先应用宿主设置，再按 Id 把对应分节交给每个抽屉。
         var settings = _host.Storage.LoadSettings();
-        LoadHostSettings(settings);
         foreach (var tool in registry.Tools)
         {
             tool.Initialize(_host);
@@ -167,22 +170,7 @@ public partial class App : Application
     private void RegisterHotkeys()
     {
         if (_host is null) return;
-        var requests = _host.RegisteredTools.SelectMany(t => t.GetHotkeyRequests()).ToList();
-
-        // 坐标录制热键（宿主级，仅当存在 ICoordinateProvider 抽屉时注册；默认 F7，host 节可配）
-        if (_host.RegisteredTools.Any(t => t is ICoordinateProvider))
-        {
-            requests.Add(new HotkeyRequest
-            {
-                Key = _coordinateHotkey,
-                DisplayName = "坐标录制",
-                CheckForeground = false, // 用户可能已切到游戏（Python 版不检查前台）
-                Mode = HotkeyMode.Toggle,
-                Handler = () => _host.Coordinates.OnRecordHotkey(),
-            });
-        }
-
-        var conflicts = _host.Hotkeys.RegisterAll(requests);
+        var conflicts = _host.Hotkeys.RegisterAll(_host.BuildHotkeyRequests());
         if (conflicts.Count > 0)
         {
             MessageBox.Show("检测到热键冲突：\n\n" + string.Join("\n", conflicts),
@@ -202,7 +190,7 @@ public partial class App : Application
             await Dispatcher.InvokeAsync(() => _mainWindow.SetStatus($"已锁定: {_host.Foreground.TargetProcess}"));
             return; // 对齐 Python：已有保存目标时不自动覆盖
         }
-        if (!_autoDetectPoe)
+        if (!_host.AutoDetectPoe)
         {
             Diag.Log("[启动] AutoDetectPoe: 已由设置关闭");
             return;
@@ -212,13 +200,12 @@ public partial class App : Application
         Diag.Log($"[启动] AutoDetectPoe: {(matched is null ? "未检测到" : matched)}");
         if (matched is null) return;
 
-        _host.Foreground.TargetProcess = matched;
+        _settingsTool?.ApplyDetectedTarget(matched);
         await Dispatcher.InvokeAsync(() =>
         {
             _mainWindow.SetStatus($"已锁定: {matched}");
             _host!.Notification.Show($"已自动锁定游戏进程: {matched}");
         });
-        SaveHostSetting("target_process", matched);
     }
 
     // ── 网络（Python _send_daily_ping 顺序：版本 → 签到 → 广告）──
@@ -250,41 +237,6 @@ public partial class App : Application
         if (!string.IsNullOrEmpty(ver.DownloadUrl))
             Process.Start(new ProcessStartInfo(ver.DownloadUrl) { UseShellExecute = true });
         RequestShutdown();
-    }
-
-    private void SaveHostSetting(string key, string value)
-    {
-        if (_host is null) return;
-        _host.Storage.UpdateSettings(settings =>
-        {
-            if (settings["host"] is not JsonObject host)
-            {
-                host = new JsonObject();
-                settings["host"] = host;
-            }
-            host[key] = value;
-        });
-    }
-
-    private void LoadHostSettings(JsonObject settings)
-    {
-        if (_host is null || settings["host"] is not JsonObject host) return;
-
-        if (host["target_process"] is JsonValue processValue &&
-            processValue.TryGetValue<string>(out var targetProcess) &&
-            !string.IsNullOrWhiteSpace(targetProcess))
-            _host.Foreground.TargetProcess = targetProcess;
-
-        if (host["auto_detect_poe"] is JsonValue autoValue && autoValue.TryGetValue<bool>(out var autoDetect))
-            _autoDetectPoe = autoDetect;
-
-        if (host["hotkeys"] is not JsonObject hotkeys) return;
-        if (hotkeys["start"] is JsonValue start && start.TryGetValue<string>(out var startKey) && !string.IsNullOrWhiteSpace(startKey))
-            _craftTool!.HotkeyStart = startKey;
-        if (hotkeys["stop"] is JsonValue stop && stop.TryGetValue<string>(out var stopKey) && !string.IsNullOrWhiteSpace(stopKey))
-            _craftTool!.HotkeyStop = stopKey;
-        if (hotkeys["coordinate"] is JsonValue coordinate && coordinate.TryGetValue<string>(out var coordinateKey) && !string.IsNullOrWhiteSpace(coordinateKey))
-            _coordinateHotkey = coordinateKey;
     }
 
     // ── 退出 ──

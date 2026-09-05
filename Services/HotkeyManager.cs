@@ -93,41 +93,42 @@ public sealed class HotkeyManager
             return conflicts;
         }
 
-        // 1. 键重复检测
-        var dupKeys = requests
-            .Where(r => !string.IsNullOrWhiteSpace(r.Key))
-            .GroupBy(r => r.Key, StringComparer.OrdinalIgnoreCase)
-            .Where(g => g.Count() > 1)
-            .Select(g => g.Key)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var dup in dupKeys)
+        // 1. 语义级重复检测：Ctrl+Alt+F5 与 Alt+Ctrl+F5 也属于同一个热键。
+        var parsedRequests = requests.Select(request =>
         {
-            var names = requests.Where(r => string.Equals(r.Key, dup, StringComparison.OrdinalIgnoreCase))
-                                .Select(r => r.DisplayName);
-            conflicts.Add($"热键 '{dup}' 同时绑定到了「{string.Join("」和「", names)}」");
+            var parsed = request.Mode == HotkeyMode.Hold
+                ? HotkeyParser.ParseHold(request.Key)
+                : HotkeyParser.Parse(request.Key);
+            return (Request: request, Parsed: parsed);
+        }).ToList();
+
+        foreach (var item in parsedRequests.Where(item => item.Parsed is null))
+            conflicts.Add($"无法解析热键 '{item.Request.Key}'（{item.Request.DisplayName}）");
+
+        var duplicateTriggers = parsedRequests
+            .Where(item => item.Parsed is not null)
+            .GroupBy(item => item.Parsed!.Value)
+            .Where(group => group.Count() > 1)
+            .ToDictionary(group => group.Key, group => group.ToList());
+
+        foreach (var duplicate in duplicateTriggers.Values)
+        {
+            var names = duplicate.Select(item => item.Request.DisplayName);
+            conflicts.Add($"热键 '{duplicate[0].Request.Key}' 同时绑定到了「{string.Join("」和「", names)}」");
         }
 
         // 2. 逐个注册（重复键跳过）
-        foreach (var req in requests)
+        foreach (var item in parsedRequests)
         {
-            if (string.IsNullOrWhiteSpace(req.Key) || dupKeys.Contains(req.Key))
+            var req = item.Request;
+            if (item.Parsed is not ParsedHotkey parsed || duplicateTriggers.ContainsKey(parsed))
                 continue;
-
-            var parsed = req.Mode == HotkeyMode.Hold
-                ? HotkeyParser.ParseHold(req.Key)
-                : HotkeyParser.Parse(req.Key);
-            if (parsed is null)
-            {
-                conflicts.Add($"无法解析热键 '{req.Key}'（{req.DisplayName}）");
-                continue;
-            }
 
             if (req.Mode == HotkeyMode.Toggle)
             {
                 int id = _nextId++;
                 // MOD_NOREPEAT：按住不重复触发（对齐 Python add_hotkey 行为）
-                if (RegisterHotKey(_hwnd, id, parsed.Value.Modifiers | HotkeyParser.MOD_NOREPEAT, parsed.Value.Vk))
+                if (RegisterHotKey(_hwnd, id, parsed.Modifiers | HotkeyParser.MOD_NOREPEAT, parsed.Vk))
                 {
                     _registered[id] = req;
                 }
@@ -138,11 +139,11 @@ public sealed class HotkeyManager
             }
             else // Hold
             {
-                var binding = new HoldBinding { Request = req, Hotkey = parsed.Value };
-                if (!_holdByVk.TryGetValue(parsed.Value.Vk, out var bindings))
+                var binding = new HoldBinding { Request = req, Hotkey = parsed };
+                if (!_holdByVk.TryGetValue(parsed.Vk, out var bindings))
                 {
                     bindings = [];
-                    _holdByVk[parsed.Value.Vk] = bindings;
+                    _holdByVk[parsed.Vk] = bindings;
                 }
                 bindings.Add(binding);
                 if (_hookHandle == 0)
@@ -151,7 +152,7 @@ public sealed class HotkeyManager
                     if (_hookHandle == 0)
                     {
                         bindings.Remove(binding);
-                        if (bindings.Count == 0) _holdByVk.Remove(parsed.Value.Vk);
+                        if (bindings.Count == 0) _holdByVk.Remove(parsed.Vk);
                         conflicts.Add($"热键 '{req.Key}'（{req.DisplayName}）低级键盘钩子安装失败：Win32 {Marshal.GetLastWin32Error()}");
                     }
                 }
@@ -164,6 +165,14 @@ public sealed class HotkeyManager
     /// <summary>注销全部（Toggle 与 Hold 两类分开清理，对应 Python 坑 #2）。</summary>
     public void UnregisterAll()
     {
+        // 运行时修改热键可能发生在 Hold 正处于按下状态。注销钩子前必须先执行释放回调，
+        // 否则连点器会失去 key-up 事件而继续保持运行。
+        foreach (var binding in _activeHoldBindings.ToList())
+        {
+            try { binding.Request.ReleaseHandler?.Invoke(); }
+            catch (Exception ex) { Diag.Log($"[热键] 注销 Hold 时释放失败: {ex.Message}"); }
+        }
+
         foreach (var id in _registered.Keys.ToList())
             UnregisterHotKey(_hwnd, id);
         _registered.Clear();
@@ -178,10 +187,10 @@ public sealed class HotkeyManager
         _keysDown.Clear();
     }
 
-    public void ReRegister(IReadOnlyList<HotkeyRequest> requests)
+    public List<string> ReRegister(IReadOnlyList<HotkeyRequest> requests)
     {
         UnregisterAll();
-        RegisterAll(requests);
+        return RegisterAll(requests);
     }
 
     // ── WM_HOTKEY（UI 线程，直接调用）──

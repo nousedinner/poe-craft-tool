@@ -53,6 +53,13 @@ public partial class CraftPage : UserControl
         Loaded += (_, _) => OnLoaded();
     }
 
+    /// <summary>由 SettingsTool 在热键成功重注册后调用；不收集或改写页面业务配置。</summary>
+    internal void RefreshHotkeyHints(string startHotkey, string stopHotkey, string coordinateHotkey)
+    {
+        _coordHotkey = coordinateHotkey;
+        CraftHotkeyHint.Text = $"⚡ 游戏内按 {startHotkey} 启动 / {stopHotkey} 停止";
+    }
+
     private CraftMode CurrentMode => _tool.Rules.Mode;
 
     private void OnLoaded()

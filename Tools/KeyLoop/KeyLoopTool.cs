@@ -43,6 +43,8 @@ public sealed class KeyLoopTool : ITool
 
     public FrameworkElement CreatePage() => _page ??= new KeyLoopPage(this);
 
+    internal void RefreshSettingsPresentation() => _page?.RefreshSettingsPresentation();
+
     public void OnActivate() { }
 
     public void OnDeactivate()

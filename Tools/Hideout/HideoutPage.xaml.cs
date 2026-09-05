@@ -6,6 +6,7 @@ namespace ShiKe.Tools.Hideout;
 public partial class HideoutPage : UserControl
 {
     private readonly HideoutTool _tool;
+    private bool _refreshing;
 
     public HideoutPage(HideoutTool tool)
     {
@@ -17,8 +18,25 @@ public partial class HideoutPage : UserControl
         CommandText.Text = tool.Command;
     }
 
+    internal void RefreshFromTool()
+    {
+        _refreshing = true;
+        try
+        {
+            EnableCheck.IsChecked = _tool.IsEnabled;
+            HotkeyLabel.Text = $"（热键 {_tool.Hotkey}）";
+            InstructionHotkeyRun.Text = $"游戏内按 {_tool.Hotkey}：自动打开聊天框输入 ";
+            CommandText.Text = _tool.Command;
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
     private void OnToggleChanged(object sender, System.Windows.RoutedEventArgs e)
     {
+        if (_refreshing) return;
         _tool.SetEnabled(EnableCheck.IsChecked == true);
     }
 

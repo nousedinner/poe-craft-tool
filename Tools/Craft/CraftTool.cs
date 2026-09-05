@@ -125,6 +125,10 @@ public sealed class CraftTool : ITool, ICoordinateProvider
 
     public FrameworkElement CreatePage() => _page ??= new CraftPage(_host!, this);
 
+    /// <summary>Settings 页修改共享热键后，刷新已经创建的 Craft 页面提示。</summary>
+    internal void RefreshSettingsPresentation()
+        => _page?.RefreshHotkeyHints(HotkeyStart, HotkeyStop, _host?.CoordinateHotkey ?? SettingsDefaults.HotkeySetCoord);
+
     // ── 热键声明 ──
     public IReadOnlyList<HotkeyRequest> GetHotkeyRequests() =>
     [

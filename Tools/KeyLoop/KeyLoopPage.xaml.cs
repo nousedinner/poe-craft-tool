@@ -144,6 +144,11 @@ public partial class KeyLoopPage : UserControl
         }
     }
 
+    internal void RefreshSettingsPresentation()
+    {
+        HotkeyText.Text = _tool.Hotkey;
+    }
+
     private void SaveRowChange()
     {
         if (_loading) return;

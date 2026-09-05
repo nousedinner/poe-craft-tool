@@ -20,6 +20,8 @@ public sealed class SoundService
         _soundDir = Path.Combine(AppContext.BaseDirectory, "sounds");
     }
 
+    public string SoundDirectory => _soundDir;
+
     /// <summary>播放音效文件（任意线程可调，通过 Dispatcher.Invoke 同步在 UI 线程执行）。</summary>
     public void Play(string? soundFileName)
     {

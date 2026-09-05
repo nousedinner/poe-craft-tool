@@ -3,6 +3,7 @@ using ShiKe.Tools.Clicker;
 using ShiKe.Tools.KeyLoop;
 using ShiKe.Services;
 using ShiKe.Tools.Hideout;
+using ShiKe.Tools.Settings;
 using ShiKe.Host;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -46,6 +47,11 @@ var tests = new (string Name, Action Run)[]
     ("Hold 支持独立修饰键", HoldSupportsStandaloneModifier),
     ("修饰键状态判定支持左右按键", ModifierStateSupportsLeftAndRightKeys),
     ("公共热键层统一执行前台门禁", HotkeyManagerEnforcesForegroundPolicy),
+    ("设置页按语义检测组合热键冲突", SettingsDetectsSemanticHotkeyConflicts),
+    ("设置页拒绝路径和控制字符", SettingsRejectsUnsafeValues),
+    ("热键重注册失败恢复旧配置", HotkeyTransactionRollsBackOnFailure),
+    ("SettingsTool 使用 host 分节完整往返", SettingsToolHostSectionRoundTrip),
+    ("宿主汇总七个统一热键请求", ToolHostBuildsCompleteHotkeySet),
     ("空目标进程采用 fail-closed", EmptyTargetProcessIsNotForeground),
     ("程序集版本与本次修复版本一致", AssemblyVersionIsCurrent),
     ("Craft 常驻任务可以正式关闭", CraftEngineCanShutdownWhileIdle),
@@ -741,12 +747,141 @@ static void EmptyTargetProcessIsNotForeground()
     False(detector.IsTargetForeground(), "空目标不得允许危险输入");
 }
 
+static void SettingsDetectsSemanticHotkeyConflicts()
+{
+    var hotkeys = new HotkeySettings(
+        "Ctrl+Alt+F5", "Alt+Ctrl+F5", "F7", "F8", "F11", "F9", "F2");
+    var errors = SettingsValidation.ValidateHotkeys(hotkeys);
+    True(errors.Any(error => error.Contains("冲突", StringComparison.Ordinal)),
+        "修饰键顺序不同的同一触发器必须判为冲突");
+
+    var standaloneToggle = hotkeys with { CraftStart = "Ctrl", CraftStop = "F6" };
+    True(SettingsValidation.ValidateHotkeys(standaloneToggle)
+            .Any(error => error.Contains("启动洗装", StringComparison.Ordinal)),
+        "Toggle 不得接受独立修饰键");
+
+    var standaloneHold = hotkeys with
+    {
+        CraftStart = "F5",
+        CraftStop = "F6",
+        ClickerHold = "Ctrl",
+    };
+    Equal(0, SettingsValidation.ValidateHotkeys(standaloneHold).Count,
+        "连点器 Hold 应允许独立修饰键");
+}
+
+static void SettingsRejectsUnsafeValues()
+{
+    var draft = new SettingsDraft(
+        new HotkeySettings("F5", "F6", "F7", "F8", "F11", "F9", "F2"),
+        "..\\PathOfExile.exe", true, true, true, "..\\outside.mp3", false, false,
+        true, "/hideout\n/exit");
+    var errors = SettingsValidation.Validate(draft);
+    True(errors.Any(error => error.Contains("目标进程", StringComparison.Ordinal)),
+        "目标进程路径必须被拒绝");
+    True(errors.Any(error => error.Contains("音效", StringComparison.Ordinal)),
+        "音效目录穿越必须被拒绝");
+    True(errors.Any(error => error.Contains("控制字符", StringComparison.Ordinal)),
+        "回城命令换行必须被拒绝");
+}
+
+static void HotkeyTransactionRollsBackOnFailure()
+{
+    var old = new HotkeySettings("F5", "F6", "F7", "F8", "F11", "F9", "F2");
+    var candidate = old with { CraftStart = "F10" };
+    var current = old;
+    var attempts = 0;
+    var result = HotkeySettingsTransaction.TryApply(
+        old,
+        candidate,
+        value => current = value,
+        () =>
+        {
+            attempts++;
+            return current == candidate ? ["F10 被其他程序占用"] : [];
+        });
+
+    False(result.Success, "候选热键注册失败时事务不得成功");
+    Equal(old, current, "注册失败后必须恢复全部旧热键字段");
+    Equal(2, attempts, "失败后必须再次注册恢复的旧热键集合");
+}
+
+static void SettingsToolHostSectionRoundTrip()
+{
+    RunInSta(() =>
+    {
+        var craft = new CraftTool();
+        var clicker = new ClickerTool();
+        var keyLoop = new KeyLoopTool();
+        var hideout = new HideoutTool();
+        var settingsTool = new SettingsTool(craft, clicker, keyLoop, hideout);
+        var registry = new ToolRegistry();
+        registry.Register(craft);
+        registry.Register(clicker);
+        registry.Register(keyLoop);
+        registry.Register(hideout);
+        registry.Register(settingsTool);
+        var host = new ToolHost(registry);
+        foreach (var tool in registry.Tools) tool.Initialize(host);
+
+        using var document = JsonDocument.Parse("""
+            {
+              "target_process": "PathOfExile_x64.exe",
+              "auto_detect_poe": false,
+              "hotkeys": { "start": "Ctrl+F5", "stop": "F6", "coordinate": "F10" }
+            }
+            """);
+        settingsTool.LoadSettings(document.RootElement);
+
+        Equal("PathOfExile_x64.exe", host.Foreground.TargetProcess!, "目标进程未加载");
+        False(host.AutoDetectPoe, "自动检测开关未加载");
+        Equal("Ctrl+F5", craft.HotkeyStart, "Craft 启动热键未加载");
+        Equal("F10", host.CoordinateHotkey, "坐标热键未加载");
+
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream)) settingsTool.SaveSettings(writer);
+        var saved = JsonNode.Parse(stream.ToArray())!.AsObject();
+        Equal("PathOfExile_x64.exe", saved["target_process"]!.GetValue<string>(), "目标进程未保存");
+        Equal(false, saved["auto_detect_poe"]!.GetValue<bool>(), "自动检测开关未保存");
+        Equal("Ctrl+F5", saved["hotkeys"]!["start"]!.GetValue<string>(), "启动热键未保存");
+        Equal("F10", saved["hotkeys"]!["coordinate"]!.GetValue<string>(), "坐标热键未保存");
+
+        foreach (var tool in registry.Tools) tool.OnShutdown();
+    });
+}
+
+static void ToolHostBuildsCompleteHotkeySet()
+{
+    RunInSta(() =>
+    {
+        var craft = new CraftTool();
+        var clicker = new ClickerTool();
+        var keyLoop = new KeyLoopTool();
+        var hideout = new HideoutTool();
+        var settingsTool = new SettingsTool(craft, clicker, keyLoop, hideout);
+        var registry = new ToolRegistry();
+        registry.Register(craft);
+        registry.Register(clicker);
+        registry.Register(keyLoop);
+        registry.Register(hideout);
+        registry.Register(settingsTool);
+        var host = new ToolHost(registry);
+        foreach (var tool in registry.Tools) tool.Initialize(host);
+
+        var requests = host.BuildHotkeyRequests();
+        Equal(7, requests.Count, "应汇总 Craft 2 + Clicker 2 + KeyLoop 1 + Hideout 1 + 坐标 1");
+        Equal(1, requests.Count(request => request.DisplayName == "坐标录制"), "坐标热键必须只注册一次");
+
+        foreach (var tool in registry.Tools) tool.OnShutdown();
+    });
+}
+
 static void AssemblyVersionIsCurrent()
 {
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(21, version.Build, "程序集 Build 必须为本次 1.0.21");
+    Equal(22, version.Build, "程序集 Build 必须为本次 1.0.22");
 }
 
 static void CraftEngineCanShutdownWhileIdle()
@@ -979,4 +1114,18 @@ static void WithTempDirectory(Action<string> action)
             throw new InvalidOperationException("拒绝清理测试根目录之外的路径");
         if (Directory.Exists(fullDirectory)) Directory.Delete(fullDirectory, recursive: true);
     }
+}
+
+static void RunInSta(Action action)
+{
+    Exception? failure = null;
+    var thread = new Thread(() =>
+    {
+        try { action(); }
+        catch (Exception ex) { failure = ex; }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    True(thread.Join(TimeSpan.FromSeconds(5)), "STA 测试线程未在限定时间退出");
+    if (failure is not null) throw failure;
 }
