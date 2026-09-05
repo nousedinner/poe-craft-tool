@@ -13,10 +13,10 @@
                               VerticalAlignment="Center"
                               Checked="OnToggleChanged"
                               Unchecked="OnToggleChanged"/>
-                    <TextBlock Text="（热键 F2）" Foreground="#668" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="HotkeyLabel" Text="（热键）" Foreground="#668" Margin="10,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
                 <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Foreground="#556" FontSize="13" LineHeight="20">
-                    <Run Text="游戏内按 F2：自动打开聊天框输入 "/>
+                    <Run x:Name="InstructionHotkeyRun" Text="游戏内按热键：自动打开聊天框输入 "/>
                     <Run Text="/hideout" FontFamily="Consolas" Foreground="#1a6fb5"/>
                     <Run Text=" 并发送，返回藏身处（与 Python 旧版行为一致）。"/>
                 </TextBlock>

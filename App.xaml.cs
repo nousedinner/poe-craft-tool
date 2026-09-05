@@ -61,6 +61,7 @@ public partial class App : Application
 
         _mainWindow = new MainWindow(registry, _host);
         MainWindow = _mainWindow;
+        WireCraftStatus();
 
         // 托盘（依赖窗口，App 直接管理）
         _tray = new TrayService(_mainWindow);
@@ -110,6 +111,25 @@ public partial class App : Application
         if (_isShuttingDown) return;
         _isShuttingDown = true;
         Shutdown();
+    }
+
+    private void WireCraftStatus()
+    {
+        var engine = _craftTool?.Engine;
+        if (engine is null) return;
+
+        engine.StatusUpdated += status => Dispatcher.BeginInvoke(() =>
+        {
+            if (_mainWindow is null) return;
+            _mainWindow.SetStatus(status.Text, status.Running);
+            _mainWindow.SetUseCount(status.UseCount);
+        });
+        engine.Stopped += reason => Dispatcher.BeginInvoke(() =>
+        {
+            if (_mainWindow is null) return;
+            _mainWindow.SetStatus(reason);
+            _mainWindow.SetUseCount(engine.UseCount);
+        });
     }
 
     // ── 热键 ──

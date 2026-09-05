@@ -48,6 +48,7 @@ public partial class CraftPage : UserControl
         InitializeComponent();
         _host = host;
         _tool = tool;
+        CraftHotkeyHint.Text = $"⚡ 游戏内按 {tool.HotkeyStart} 启动 / {tool.HotkeyStop} 停止";
 
         Loaded += (_, _) => OnLoaded();
     }

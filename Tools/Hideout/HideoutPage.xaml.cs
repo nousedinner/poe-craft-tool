@@ -12,6 +12,8 @@ public partial class HideoutPage : UserControl
         _tool = tool;
         InitializeComponent();
         EnableCheck.IsChecked = tool.IsEnabled;
+        HotkeyLabel.Text = $"（热键 {tool.Hotkey}）";
+        InstructionHotkeyRun.Text = $"游戏内按 {tool.Hotkey}：自动打开聊天框输入 ";
     }
 
     private void OnToggleChanged(object sender, System.Windows.RoutedEventArgs e)

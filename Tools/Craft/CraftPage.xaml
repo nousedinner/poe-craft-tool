@@ -199,9 +199,9 @@
                 </StackPanel>
             </Border>
 
-            <!-- 状态（启停用快捷键 F5/F6，游戏内直接触发，无需切回窗口） -->
+            <!-- 状态（启停快捷键来自 host 设置，游戏内直接触发，无需切回窗口） -->
             <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                <TextBlock Text="⚡ 游戏内按 F5 启动 / F6 停止" Foreground="{StaticResource AccentBrush}"
+                <TextBlock x:Name="CraftHotkeyHint" Text="⚡ 游戏内热键启动 / 停止" Foreground="{StaticResource AccentBrush}"
                            FontSize="12" VerticalAlignment="Center" FontWeight="Bold"/>
                 <TextBlock x:Name="CraftStatusText" Text="就绪" Foreground="#445566" FontSize="12"
                            VerticalAlignment="Center" Margin="12,0,0,0"/>

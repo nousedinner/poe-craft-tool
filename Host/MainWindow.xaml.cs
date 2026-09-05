@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using ShiKe.Services;
 
 namespace ShiKe.Host;
@@ -14,6 +15,7 @@ public partial class MainWindow : Window
     private readonly ToolHost _host;
     private readonly Dictionary<string, FrameworkElement> _pages = [];
     private ITool? _currentTool;
+    private string? _bottomAdUrl;
 
     public MainWindow(ToolRegistry registry, ToolHost host)
     {
@@ -25,6 +27,7 @@ public partial class MainWindow : Window
         ToolList.ItemsSource = registry.Tools;
         ToolList.DisplayMemberPath = nameof(ITool.Name);
         ToolList.SelectedIndex = 0; // 默认选中第一个抽屉
+        BottomAdButton.Click += BottomAdButton_Click;
     }
 
     // ── 导航 ──
@@ -51,7 +54,13 @@ public partial class MainWindow : Window
 
     // ── 状态栏 ──
 
-    public void SetStatus(string text) => StatusText.Text = text;
+    public void SetStatus(string text, bool active = false)
+    {
+        StatusText.Text = text;
+        StatusDot.Foreground = active
+            ? new SolidColorBrush(Color.FromRgb(0x1B, 0x8A, 0x3E))
+            : new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xAA));
+    }
 
     /// <summary>已使用次数（洗装模式下显示）。</summary>
     public void SetUseCount(int count)
@@ -105,17 +114,13 @@ public partial class MainWindow : Window
         {
             BottomAdButton.Content = bottomAd.Text;
             BottomAdButton.Visibility = Visibility.Visible;
-            if (!string.IsNullOrEmpty(bottomAd.Link))
-            {
-                var url = bottomAd.Link;
-                BottomAdButton.Click -= OpenBrowserFromAd; // 防重复绑定
-                BottomAdButton.Click += (_, _) => OpenBrowser(url);
-            }
+            _bottomAdUrl = string.IsNullOrWhiteSpace(bottomAd.Link) ? null : bottomAd.Link;
         }
         else
         {
             BottomAdButton.Content = "广告位招租";
             BottomAdButton.Visibility = Visibility.Collapsed;
+            _bottomAdUrl = null;
         }
     }
 
@@ -129,7 +134,10 @@ public partial class MainWindow : Window
         Child = new TextBlock { Text = "广告位招租", Foreground = System.Windows.Media.Brushes.LightGray, FontSize = 11 },
     };
 
-    private void OpenBrowserFromAd(object sender, RoutedEventArgs e) { }
+    private void BottomAdButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_bottomAdUrl is not null) OpenBrowser(_bottomAdUrl);
+    }
 
     // ── 链接 ──
 

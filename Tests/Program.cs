@@ -604,7 +604,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(17, version.Build, "程序集 Build 必须为本次 1.0.17");
+    Equal(18, version.Build, "程序集 Build 必须为本次 1.0.18");
 }
 
 static void CraftEngineCanShutdownWhileIdle()
