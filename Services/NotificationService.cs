@@ -24,9 +24,16 @@ public sealed class NotificationService
     private const int GWL_EXSTYLE = -20;
     private const int WS_EX_TRANSPARENT = 0x00000020;
     private const int WS_EX_TOOLWINDOW = 0x00000080;
+    private const uint MB_OK = 0x00000000;
+    private const uint MB_ICONERROR = 0x00000010;
+    private const uint MB_TASKMODAL = 0x00002000;
+    private const uint MB_SETFOREGROUND = 0x00010000;
+    private const uint MB_TOPMOST = 0x00040000;
 
     [DllImport("user32.dll")] private static extern int GetWindowLong(nint hwnd, int index);
     [DllImport("user32.dll")] private static extern int SetWindowLong(nint hwnd, int index, int newStyle);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int MessageBoxW(nint hwnd, string text, string caption, uint type);
 
     public NotificationService()
     {
@@ -118,7 +125,13 @@ public sealed class NotificationService
     {
         if (_errorShown) return;
         _errorShown = true;
-        try { MessageBox.Show(message, "拾刻 - 错误", MessageBoxButton.OK, MessageBoxImage.Error); }
+        try
+        {
+            var result = MessageBoxW(0, message, "拾刻 - 错误",
+                MB_OK | MB_ICONERROR | MB_TASKMODAL | MB_SETFOREGROUND | MB_TOPMOST);
+            if (result == 0)
+                Diag.Log($"[通知] 置顶错误弹窗显示失败: Win32 {Marshal.GetLastWin32Error()}");
+        }
         finally { _errorShown = false; }
     }
 

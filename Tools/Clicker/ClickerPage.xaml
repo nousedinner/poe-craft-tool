@@ -71,18 +71,15 @@
         </Border>
 
         <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
-            <Button x:Name="ToggleButton" Content="启动连点" Width="110" Height="34"
-                    Background="{StaticResource AccentBrush}" Foreground="White" BorderThickness="0"
-                    FontWeight="Bold" Cursor="Hand" Click="ToggleButton_Click"/>
             <TextBlock x:Name="StatusDot" Text="●" Foreground="#AAAAAA" FontSize="15"
-                       Margin="18,0,5,0" VerticalAlignment="Center"/>
+                       Margin="0,0,5,0" VerticalAlignment="Center"/>
             <TextBlock x:Name="StatusText" Text="连点器就绪" Foreground="#445566" VerticalAlignment="Center"/>
             <TextBlock Text="已点击:" Foreground="#778899" Margin="20,0,5,0" VerticalAlignment="Center"/>
             <TextBlock x:Name="ClickCountText" Text="0" Foreground="{StaticResource AccentBrush}"
                        FontWeight="Bold" VerticalAlignment="Center"/>
         </StackPanel>
 
-        <TextBlock Text="提示：页面按钮启动后会等待游戏回到前台；可用连点器启停热键停止，主屏左上角 48×48 安全区也会自动停止。"
+        <TextBlock Text="提示：使用连点器快捷键启动或停止；主屏左上角 100×200 安全区也会自动停止。"
                    Foreground="#9A7B45" FontSize="11" Margin="0,12,0,0" TextWrapping="Wrap"/>
     </StackPanel>
 </UserControl>

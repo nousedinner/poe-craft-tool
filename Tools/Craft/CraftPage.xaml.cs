@@ -41,7 +41,6 @@ public partial class CraftPage : UserControl
     private bool _initialized;   // Loaded 防重复（WPF Loaded 在每次进入可视树时触发，卡片会翻倍）
     private bool _restoringHitCount;
     private bool _refreshingEnabled;
-    private bool _restoringDebugDelay;
     private int _lastValidPrimaryHit;
     private int _lastValidSecondaryHit;
 
@@ -83,6 +82,7 @@ public partial class CraftPage : UserControl
     {
         if (_initialized) return; // 防重复：切走再切回不重建
         _initialized = true;
+        var startupTimer = Stopwatch.StartNew();
 
         // 坐标热键显示名（host 节，默认 F7）
         try
@@ -114,8 +114,10 @@ public partial class CraftPage : UserControl
         DelaySlider.ValueChanged += (_, _) => DelayValue.Text = $"{(int)DelaySlider.Value} ms";
         DelaySlider.Value = _tool.DelayMs;
         DelayValue.Text = $"{_tool.DelayMs} ms";
-        SelectMode3DebugDelay(_tool.Mode3DebugDelayMs);
         RefreshEnabledPresentation();
+        var startupElapsedMs = startupTimer.ElapsedMilliseconds;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
+            new Action(() => Diag.Log($"[启动性能] Craft 首次页面初始化完成={startupElapsedMs}ms")));
     }
 
     private void EnableToolSwitch_Changed(object sender, RoutedEventArgs e)
@@ -553,31 +555,6 @@ public partial class CraftPage : UserControl
         _dirty = true;
     }
 
-    private void Mode3DebugDelay_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_initialized || _restoringDebugDelay || Mode3DebugDelayCombo.SelectedItem is not ComboBoxItem item) return;
-        _tool.Mode3DebugDelayMs = int.TryParse(item.Tag?.ToString(), out var value)
-            ? CraftTool.NormalizeMode3DebugDelay(value)
-            : 0;
-        _dirty = true;
-    }
-
-    private void SelectMode3DebugDelay(int value)
-    {
-        var normalized = CraftTool.NormalizeMode3DebugDelay(value);
-        _restoringDebugDelay = true;
-        try
-        {
-            Mode3DebugDelayCombo.SelectedItem = Mode3DebugDelayCombo.Items
-                .OfType<ComboBoxItem>()
-                .First(item => string.Equals(item.Tag?.ToString(), normalized.ToString(), StringComparison.Ordinal));
-        }
-        finally
-        {
-            _restoringDebugDelay = false;
-        }
-    }
-
     private CraftMode CurrentModeFromRadio()
     {
         if (Mode1Radio.IsChecked == true) return CraftMode.Single;
@@ -749,10 +726,6 @@ public partial class CraftPage : UserControl
         _tool.Mode2ScourAlch = Mode2ScourAlch.IsChecked == true;
         _tool.UseExalt = ExaltCheck.IsChecked == true;
         _tool.DelayMs = (int)DelaySlider.Value;
-        _tool.Mode3DebugDelayMs = Mode3DebugDelayCombo.SelectedItem is ComboBoxItem debugItem &&
-                                  int.TryParse(debugItem.Tag?.ToString(), out var debugDelay)
-            ? CraftTool.NormalizeMode3DebugDelay(debugDelay)
-            : 0;
     }
 
     // ── 引擎事件（后台线程 → Dispatcher）──

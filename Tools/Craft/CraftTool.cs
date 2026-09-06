@@ -35,7 +35,6 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
     public string SelectedSound { get; set; } = SettingsDefaults.SelectedSound;
     public bool Mode2ScourAlch { get; set; }
     public bool UseExalt { get; set; }
-    public int Mode3DebugDelayMs { get; set; } = SettingsDefaults.Mode3DebugDelayMs;
     private bool _enabled = SettingsDefaults.CraftEnabled;
     public bool IsEnabled => _enabled;
 
@@ -205,7 +204,7 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
 
         _engine.SetStopKey(HotkeyStop); // 设置停止键 VK（GetAsyncKeyState 轮询用）
         _engine.Start(Rules, Coordinates, DelayMs, SoundEnabled, PopupEnabled,
-            SelectedSound, ExhaustionThreshold, Mode2ScourAlch, UseExalt, Mode3DebugDelayMs);
+            SelectedSound, ExhaustionThreshold, Mode2ScourAlch, UseExalt);
         if (_engine.IsRunning && PopupEnabled)
             _host.Notification.Show("▶ 洗词缀 启动");
     }
@@ -299,7 +298,6 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
         SelectedSound = GetString(section, "selected_sound", SettingsDefaults.SelectedSound);
         Mode2ScourAlch = GetBool(section, "mode2_scour_alch", false);
         UseExalt = GetBool(section, "use_exalt", false);
-        Mode3DebugDelayMs = NormalizeMode3DebugDelay(GetInt(section, "mode3_debug_delay_ms", SettingsDefaults.Mode3DebugDelayMs));
         Diag.Log($"[设置] Craft 已加载: delay={DelayMs}, sound={SoundEnabled}, popup={PopupEnabled}, " +
                  $"mode2ScourAlch={Mode2ScourAlch}, useExalt={UseExalt}");
     }
@@ -330,14 +328,6 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
         ["selected_sound"] = SelectedSound,
         ["mode2_scour_alch"] = Mode2ScourAlch,
         ["use_exalt"] = UseExalt,
-        ["mode3_debug_delay_ms"] = NormalizeMode3DebugDelay(Mode3DebugDelayMs),
-    };
-
-    internal static int NormalizeMode3DebugDelay(int value) => value switch
-    {
-        1000 => 1000,
-        2000 => 2000,
-        _ => 0,
     };
 
     private static int GetInt(JsonElement section, string key, int fallback)

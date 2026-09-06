@@ -21,7 +21,6 @@ public static class SettingsDefaults
     public const bool SoundEnabled = true;
     public const bool PopupEnabled = true;
     public const int ClipboardUnchangedThreshold = 10;        // 连续 N 次剪贴板相同 = 通货耗尽
-    public const int Mode3DebugDelayMs = 0;                   // 仅诊断时启用：相邻通货使用的最小间隔
     public const string SelectedSound = "default_ding.wav";   // 注意：sounds/ 实际是 mp3，走 stem 回退
     public const bool CraftEnabled = true;
 

@@ -48,7 +48,6 @@ public partial class ClickerPage : UserControl
         try
         {
             EnableToolSwitch.IsChecked = _tool.IsEnabled;
-            ToggleButton.IsEnabled = _tool.IsEnabled;
             HotkeyHint.Opacity = _tool.IsEnabled ? 1.0 : 0.55;
             if (!_tool.IsEnabled && !_tool.IsRunning) StatusText.Text = "功能已停用";
             else if (_tool.IsEnabled && !_tool.IsRunning && StatusText.Text == "功能已停用") StatusText.Text = "连点器就绪";
@@ -93,11 +92,6 @@ public partial class ClickerPage : UserControl
         _tool.SaveSettingsToStorage();
     }
 
-    private void ToggleButton_Click(object sender, RoutedEventArgs e)
-    {
-        _tool.ToggleFromPage();
-    }
-
     private void ApplyStatus(ClickerStatus status)
     {
         StatusText.Text = !_tool.IsEnabled && !status.Running ? "功能已停用" : status.Text;
@@ -105,8 +99,6 @@ public partial class ClickerPage : UserControl
         StatusDot.Foreground = status.Running
             ? new SolidColorBrush(Color.FromRgb(0x1B, 0x8A, 0x3E))
             : new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xAA));
-        ToggleButton.Content = status.Running ? "停止连点" : "启动连点";
-        ToggleButton.IsEnabled = _tool.IsEnabled;
         LeftButtonRadio.IsEnabled = !status.Running;
         RightButtonRadio.IsEnabled = !status.Running;
         IntervalSlider.IsEnabled = !status.Running;

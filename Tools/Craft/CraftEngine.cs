@@ -37,8 +37,6 @@ public sealed class CraftEngine
     private int _exhaustionThreshold = SettingsDefaults.ClipboardUnchangedThreshold;
     private bool _mode2ScourAlch;
     private bool _useExalt;
-    private int _mode3DebugDelayMs;
-    private long _lastMode3CurrencyUseTimestamp;
     private bool _shutdownRequested;
     private string? _completionReason;
     private ushort _stopKeyVk; // F6 停止键的虚拟键码（轮询兜底用）
@@ -76,7 +74,7 @@ public sealed class CraftEngine
 
     public void Start(CraftRules rules, Dictionary<string, Point> coordinates, int delayMs,
         bool soundEnabled, bool popupEnabled, string selectedSound, int exhaustionThreshold,
-        bool mode2ScourAlch, bool useExalt, int mode3DebugDelayMs = 0)
+        bool mode2ScourAlch, bool useExalt)
     {
         lock (this)
         {
@@ -111,8 +109,6 @@ public sealed class CraftEngine
             _exhaustionThreshold = exhaustionThreshold;
             _mode2ScourAlch = mode2ScourAlch;
             _useExalt = useExalt;
-            _mode3DebugDelayMs = CraftTool.NormalizeMode3DebugDelay(mode3DebugDelayMs);
-            _lastMode3CurrencyUseTimestamp = 0;
             _completionReason = null;
             _activeCurrency = null;
             _activeCurrencyCoordinate = default;
@@ -122,8 +118,7 @@ public sealed class CraftEngine
             _runId++;
             _running = true;
             _wakeSignal.Set();
-            Diag.Log($"[引擎] Start: runId={_runId}, mode={rules.Mode}, delay={delayMs}ms, " +
-                     $"mode3DebugDelay={_mode3DebugDelayMs}ms, 坐标数={coordinates.Count}");
+            Diag.Log($"[引擎] Start: runId={_runId}, mode={rules.Mode}, delay={delayMs}ms, 坐标数={coordinates.Count}");
         }
     }
 
@@ -836,20 +831,7 @@ public sealed class CraftEngine
 
     private async Task UseMode3CurrencyOnItemAsync(Point itemCoord, CancellationToken token)
     {
-        if (_mode3DebugDelayMs > 0 && _lastMode3CurrencyUseTimestamp != 0)
-        {
-            var elapsed = (int)Stopwatch.GetElapsedTime(_lastMode3CurrencyUseTimestamp).TotalMilliseconds;
-            var remaining = Math.Max(0, _mode3DebugDelayMs - elapsed);
-            if (remaining > 0)
-            {
-                ReportStatus($"Mode 3 调试等待 {remaining} ms...");
-                Diag.Log($"[引擎] Mode3 调试间隔: 等待 {remaining}ms");
-                await Task.Delay(remaining, token);
-            }
-        }
-
         await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
-        _lastMode3CurrencyUseTimestamp = Stopwatch.GetTimestamp();
     }
 
     // ── Mode 3：改造+增幅+富豪（+可选崇高）（Python _mode3）──

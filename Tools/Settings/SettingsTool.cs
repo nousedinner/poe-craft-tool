@@ -22,6 +22,7 @@ public sealed class SettingsTool : ITool
     private readonly HideoutTool _hideout;
     private ToolHost? _host;
     private SettingsPage? _page;
+    private bool _hotkeysSuspendedForCapture;
 
     public SettingsTool(CraftTool craft, ClickerTool clicker, KeyLoopTool keyLoop, HideoutTool hideout)
     {
@@ -43,13 +44,46 @@ public sealed class SettingsTool : ITool
 
     public FrameworkElement CreatePage() => _page ??= new SettingsPage(this);
 
-    public void OnActivate() => _page?.RefreshFromTool(refreshLists: true);
+    public void OnActivate() => _page?.ActivatePage();
 
-    public void OnDeactivate() { }
+    public void OnDeactivate() => _page?.DeactivatePage();
 
     public void OnShutdown() { }
 
     public IReadOnlyList<HotkeyRequest> GetHotkeyRequests() => [];
+
+    internal SettingsApplyResult BeginHotkeyCapture()
+    {
+        var host = _host ?? throw new InvalidOperationException("SettingsTool 尚未初始化");
+        if (HasActiveAutomation())
+            return SettingsApplyResult.Fail("请先停止洗装、连点器和按键循环，再修改热键");
+        if (_hotkeysSuspendedForCapture)
+            return SettingsApplyResult.Ok("正在捕获热键");
+
+        host.Hotkeys.UnregisterAll();
+        _hotkeysSuspendedForCapture = true;
+        Diag.Log("[设置页] 热键捕获开始：已临时暂停全局热键");
+        return SettingsApplyResult.Ok("正在捕获热键");
+    }
+
+    internal IReadOnlyList<string> EndHotkeyCapture(bool hotkeysAlreadyRegistered)
+    {
+        if (!_hotkeysSuspendedForCapture) return [];
+        _hotkeysSuspendedForCapture = false;
+        if (hotkeysAlreadyRegistered)
+        {
+            Diag.Log("[设置页] 热键捕获结束：新热键已由设置事务注册");
+            return [];
+        }
+
+        var host = _host;
+        if (host is null) return ["热键服务尚未初始化"];
+        var issues = host.Hotkeys.ReRegister(host.BuildHotkeyRequests());
+        Diag.Log(issues.Count == 0
+            ? "[设置页] 热键捕获结束：已恢复全局热键"
+            : "[设置页] 热键捕获结束但恢复异常：" + string.Join(" | ", issues));
+        return issues;
+    }
 
     public SettingsDraft CaptureDraft()
     {

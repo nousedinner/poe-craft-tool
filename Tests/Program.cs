@@ -43,7 +43,10 @@ var tests = new (string Name, Action Run)[]
     ("剪贴板只接受合法物品文本头", ClipboardItemHeaderValidation),
     ("输入层点击间隔计算", CraftClickIntervalSemantics),
     ("连点器左上角安全区判定", ClickerTopLeftSafetyZone),
-    ("Mode3 调试间隔只接受预设值", Mode3DebugDelayIsNormalized),
+    ("Clicker 和 KeyLoop 仅保留热键运行入口", ToolPagesUseHotkeysForRuntimeStart),
+    ("滑块开关包含缓动动画", SwitchStyleContainsMotionAnimation),
+    ("设置热键捕获成对暂停和恢复注册", SettingsHotkeyCaptureIsSymmetric),
+    ("启动性能覆盖首帧和 Craft 初始化", StartupTimingMarkersCoverFirstRender),
     ("Mode1 完整物品状态变化判定", Mode1ItemStateChangeDetection),
     ("Mode1 状态同步超时有安全下限", Mode1StateSyncTimeoutPolicy),
     ("Mode2/3 通货状态转换矩阵", CurrencyTransitionMatrix),
@@ -446,7 +449,8 @@ static void CraftSettingsRoundTrip()
     Equal(true, restored.Mode2ScourAlch, "Mode2 子模式往返失败");
     Equal(true, restored.UseExalt, "崇高开关往返失败");
     Equal(false, restored.IsEnabled, "Craft 启用状态往返失败");
-    Equal(2000, restored.Mode3DebugDelayMs, "Mode3 调试间隔往返失败");
+    False(document.RootElement.TryGetProperty("mode3_debug_delay_ms", out _),
+        "正式设置不应继续保存临时 Mode3 调试间隔");
 }
 
 static void ClickerSettingsRoundTrip()
@@ -670,17 +674,65 @@ static void CraftClickIntervalSemantics()
 static void ClickerTopLeftSafetyZone()
 {
     True(InputSimulator.IsInClickerSafetyZone(0, 0), "主屏左上角必须触发安全停止");
-    True(InputSimulator.IsInClickerSafetyZone(48, 48), "安全区边界必须触发安全停止");
-    False(InputSimulator.IsInClickerSafetyZone(49, 48), "安全区外不得误停");
+    True(InputSimulator.IsInClickerSafetyZone(100, 200), "安全区边界必须触发安全停止");
+    False(InputSimulator.IsInClickerSafetyZone(101, 200), "安全区右侧不得误停");
+    False(InputSimulator.IsInClickerSafetyZone(100, 201), "安全区下方不得误停");
     False(InputSimulator.IsInClickerSafetyZone(-1, 0), "左侧副屏坐标不得视为主屏左上角");
 }
 
-static void Mode3DebugDelayIsNormalized()
+static void ToolPagesUseHotkeysForRuntimeStart()
 {
-    Equal(0, CraftTool.NormalizeMode3DebugDelay(-1), "非法负值应关闭调试间隔");
-    Equal(0, CraftTool.NormalizeMode3DebugDelay(500), "非预设间隔应关闭");
-    Equal(1000, CraftTool.NormalizeMode3DebugDelay(1000), "1000ms 预设应保留");
-    Equal(2000, CraftTool.NormalizeMode3DebugDelay(2000), "2000ms 预设应保留");
+    var root = FindProjectRoot();
+    var clicker = File.ReadAllText(Path.Combine(root, "Tools", "Clicker", "ClickerPage.xaml"));
+    var keyLoop = File.ReadAllText(Path.Combine(root, "Tools", "KeyLoop", "KeyLoopPage.xaml"));
+    False(clicker.Contains("x:Name=\"ToggleButton\"", StringComparison.Ordinal),
+        "Clicker 页面不应保留底部启停按钮");
+    False(keyLoop.Contains("x:Name=\"ToggleButton\"", StringComparison.Ordinal),
+        "KeyLoop 页面不应保留底部启停按钮");
+    True(clicker.Contains("使用连点器快捷键启动或停止", StringComparison.Ordinal),
+        "Clicker 页面必须明确使用快捷键启停");
+    True(keyLoop.Contains("按一次启动，再按一次停止", StringComparison.Ordinal),
+        "KeyLoop 页面必须保留快捷键启停说明");
+}
+
+static void SwitchStyleContainsMotionAnimation()
+{
+    var root = FindProjectRoot();
+    var theme = File.ReadAllText(Path.Combine(root, "Themes", "DefaultTheme.xaml"));
+    True(theme.Contains("ThumbTransform", StringComparison.Ordinal), "滑块圆点必须使用可动画位移");
+    True(theme.Contains("DoubleAnimation", StringComparison.Ordinal), "滑块必须包含位置动画");
+    True(theme.Contains("ColorAnimation", StringComparison.Ordinal), "滑块必须包含轨道颜色动画");
+    True(theme.Contains("CubicEase", StringComparison.Ordinal), "滑块移动必须使用缓动而非线性跳变");
+}
+
+static void SettingsHotkeyCaptureIsSymmetric()
+{
+    var root = FindProjectRoot();
+    var tool = File.ReadAllText(Path.Combine(root, "Tools", "Settings", "SettingsTool.cs"));
+    var page = File.ReadAllText(Path.Combine(root, "Tools", "Settings", "SettingsPage.xaml.cs"));
+    True(tool.Contains("BeginHotkeyCapture", StringComparison.Ordinal) &&
+         tool.Contains("host.Hotkeys.UnregisterAll()", StringComparison.Ordinal),
+        "开始捕获时必须暂停已注册热键");
+    True(tool.Contains("EndHotkeyCapture", StringComparison.Ordinal) &&
+         tool.Contains("host.Hotkeys.ReRegister(host.BuildHotkeyRequests())", StringComparison.Ordinal),
+        "结束或取消捕获时必须恢复当前热键集合");
+    True(page.Contains("CancelCaptureBecauseWindowInactive", StringComparison.Ordinal) &&
+         page.Contains("DeactivatePage", StringComparison.Ordinal),
+        "切页、隐藏或失焦时必须结束捕获并恢复热键");
+    True(page.Contains("ShowCaptureStatus", StringComparison.Ordinal) &&
+         page.Contains("HideResult", StringComparison.Ordinal),
+        "捕获状态与历史结果必须有明确生命周期");
+}
+
+static void StartupTimingMarkersCoverFirstRender()
+{
+    var root = FindProjectRoot();
+    var app = File.ReadAllText(Path.Combine(root, "App.xaml.cs"));
+    var craftPage = File.ReadAllText(Path.Combine(root, "Tools", "Craft", "CraftPage.xaml.cs"));
+    True(app.Contains("主窗口首帧完成", StringComparison.Ordinal), "启动日志必须覆盖主窗口首帧");
+    True(app.Contains("热键注册完成", StringComparison.Ordinal), "启动日志必须覆盖热键注册");
+    True(craftPage.Contains("Craft 首次页面初始化完成", StringComparison.Ordinal),
+        "启动日志必须单独记录 Craft 首次页面耗时");
 }
 
 static void Mode1ItemStateChangeDetection()
@@ -1035,7 +1087,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(25, version.Build, "程序集 Build 必须为本次 1.0.25");
+    Equal(26, version.Build, "程序集 Build 必须为本次 1.0.26");
 }
 
 static void CraftEngineCanShutdownWhileIdle()

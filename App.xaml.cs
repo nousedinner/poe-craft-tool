@@ -32,6 +32,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        var startupTimer = Stopwatch.StartNew();
 
         if (!TryAcquireSingleInstance())
         {
@@ -44,6 +45,10 @@ public partial class App : Application
 
         Diag.ClearOldLog();
         Diag.Log("=== 拾刻启动 ===");
+        var startupStages = new List<string>();
+        void MarkStartup(string stage) =>
+            startupStages.Add($"{stage}={startupTimer.ElapsedMilliseconds}ms");
+        MarkStartup("取得单实例锁");
 
         // 组装：注册表 → 注册抽屉 → 宿主 → 初始化
         var registry = new ToolRegistry();
@@ -57,9 +62,11 @@ public partial class App : Application
         registry.Register(_keyLoopTool);
         registry.Register(_hideoutTool);
         registry.Register(_settingsTool);
+        MarkStartup("工具注册表创建完成");
 
         _host = new ToolHost(registry);
         _host.IsCraftRunning = () => _craftTool!.IsRunning; // 关闭窗口拦截判断
+        MarkStartup("公共服务创建完成");
 
         // settings 只读取一次：先应用宿主设置，再按 Id 把对应分节交给每个抽屉。
         var settings = _host.Storage.LoadSettings();
@@ -69,16 +76,20 @@ public partial class App : Application
             var section = settings[tool.Id] as JsonObject ?? new JsonObject();
             tool.LoadSettings(JsonSerializer.SerializeToElement(section));
         }
+        MarkStartup("工具初始化与设置加载完成");
 
         _mainWindow = new MainWindow(registry, _host);
+        _mainWindow.ContentRendered += (_, _) => MarkStartup("主窗口首帧完成");
         MainWindow = _mainWindow;
         WireCraftStatus();
         WireClickerStatus();
         WireKeyLoopStatus();
+        MarkStartup("主窗口构造与事件连接完成");
 
         // 托盘（依赖窗口，App 直接管理）
         _tray = new TrayService(_mainWindow);
         _tray.ExitRequested += RequestShutdown;
+        MarkStartup("托盘创建完成");
 
         // 用户关闭主窗口始终隐藏到托盘；真正退出只走 RequestShutdown。
         _mainWindow.Closing += (_, e) =>
@@ -88,10 +99,14 @@ public partial class App : Application
         };
 
         _mainWindow.Show();
+        MarkStartup("Show 返回");
 
         // 热键统一注册（需要窗口句柄）
         _host.Hotkeys.AttachToWindow(_mainWindow);
         RegisterHotkeys();
+        MarkStartup("热键注册完成");
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ContextIdle,
+            new Action(() => Diag.Log("[启动性能] " + string.Join(" | ", startupStages))));
 
         // 启动 0.5s 后自动检测 POE 进程（Python QTimer.singleShot(500)）
         _ = AutoDetectPoeAsync();

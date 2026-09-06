@@ -17,6 +17,7 @@ public partial class SettingsPage : UserControl
     private string? _capturing;
     private bool _capturedMainKey;
     private bool _refreshing;
+    private Window? _ownerWindow;
 
     private sealed record NamedOption(string Label, string Value)
     {
@@ -38,6 +39,41 @@ public partial class SettingsPage : UserControl
             ["hideout"] = HideoutButton,
         };
         RefreshFromTool(refreshLists: true);
+        Loaded += SettingsPage_Loaded;
+    }
+
+    internal void ActivatePage()
+    {
+        RefreshFromTool(refreshLists: true);
+        HideResult();
+    }
+
+    internal void DeactivatePage()
+    {
+        CancelCapture();
+        HideResult();
+    }
+
+    private void SettingsPage_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_ownerWindow is not null) return;
+        _ownerWindow = Window.GetWindow(this);
+        if (_ownerWindow is null) return;
+        _ownerWindow.Deactivated += (_, _) => CancelCaptureBecauseWindowInactive();
+        _ownerWindow.IsVisibleChanged += (_, args) =>
+        {
+            if (args.NewValue is false) CancelCaptureBecauseWindowInactive();
+        };
+    }
+
+    private void CancelCaptureBecauseWindowInactive()
+    {
+        if (_capturing is null) return;
+        var restoreIssues = CancelCapture();
+        if (restoreIssues.Count == 0)
+            HideResult();
+        else
+            ShowResult("热键捕获中断后恢复失败：\n" + string.Join("\n", restoreIssues), success: false);
     }
 
     internal void RefreshFromTool(bool refreshLists)
@@ -98,12 +134,18 @@ public partial class SettingsPage : UserControl
     {
         if (sender is not Button button || button.Tag is not string id) return;
         CancelCapture();
+        var begin = _tool.BeginHotkeyCapture();
+        if (!begin.Success)
+        {
+            ShowResult(begin.Message, success: false);
+            ShowFailureDialog(begin.Message);
+            return;
+        }
         _capturing = id;
         _capturedMainKey = false;
         button.Content = "请按新热键…";
         button.BorderBrush = Brushes.Orange;
-        ResultText.Text = "正在捕获热键；按 Esc 取消";
-        ResultText.Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x6B, 0x2D));
+        ShowCaptureStatus();
         Focus();
         Keyboard.Focus(this);
     }
@@ -114,8 +156,11 @@ public partial class SettingsPage : UserControl
         var key = ResolveKey(e);
         if (key == Key.Escape)
         {
-            CancelCapture();
-            ShowResult("已取消热键修改", success: true);
+            var restoreIssues = CancelCapture();
+            if (restoreIssues.Count == 0)
+                ShowResult("已取消热键修改", success: true);
+            else
+                ShowResult("取消录入后恢复热键失败：\n" + string.Join("\n", restoreIssues), success: false);
             e.Handled = true;
             return;
         }
@@ -159,12 +204,28 @@ public partial class SettingsPage : UserControl
     private void CompleteHotkeyCapture(string value)
     {
         var id = _capturing!;
+        var previousValue = _hotkeyValues.GetValueOrDefault(id, string.Empty);
+        var valueChanged = !string.Equals(previousValue, value, StringComparison.OrdinalIgnoreCase);
         _capturing = null;
         _hotkeyValues[id] = value;
         _hotkeyButtons[id].Content = value;
         _hotkeyButtons[id].BorderBrush = new SolidColorBrush(Color.FromRgb(0xB9, 0xD0, 0xE2));
 
-        var result = _tool.ApplyDraft(BuildDraft());
+        SettingsApplyResult result;
+        try
+        {
+            result = _tool.ApplyDraft(BuildDraft());
+        }
+        catch (Exception ex)
+        {
+            result = SettingsApplyResult.Fail($"热键设置发生异常：{ex.Message}");
+        }
+
+        var resumeIssues = _tool.EndHotkeyCapture(
+            hotkeysAlreadyRegistered: result.Success && valueChanged);
+        if (resumeIssues.Count > 0)
+            result = SettingsApplyResult.Fail("热键恢复失败：\n" + string.Join("\n", resumeIssues));
+
         ShowResult(result.Message, result.Success);
         if (!result.Success)
         {
@@ -173,15 +234,19 @@ public partial class SettingsPage : UserControl
         }
     }
 
-    private void CancelCapture()
+    private IReadOnlyList<string> CancelCapture()
     {
-        if (_capturing is not null && _hotkeyButtons.TryGetValue(_capturing, out var button))
+        var wasCapturing = _capturing is not null;
+        if (wasCapturing && _hotkeyButtons.TryGetValue(_capturing!, out var button))
         {
-            button.Content = _hotkeyValues.GetValueOrDefault(_capturing, "未设置");
+            button.Content = _hotkeyValues.GetValueOrDefault(_capturing!, "未设置");
             button.BorderBrush = new SolidColorBrush(Color.FromRgb(0xB9, 0xD0, 0xE2));
         }
         _capturing = null;
         _capturedMainKey = false;
+        return wasCapturing
+            ? _tool.EndHotkeyCapture(hotkeysAlreadyRegistered: false)
+            : [];
     }
 
     private SettingsDraft BuildDraft()
@@ -332,6 +397,21 @@ public partial class SettingsPage : UserControl
         ResultText.Foreground = new SolidColorBrush(success
             ? Color.FromRgb(0x1B, 0x8A, 0x3E)
             : Color.FromRgb(0xD0, 0x45, 0x55));
+    }
+
+    private void ShowCaptureStatus()
+    {
+        ResultPanel.Visibility = Visibility.Visible;
+        ResultPanel.Background = new SolidColorBrush(Color.FromRgb(0xEA, 0xF3, 0xFA));
+        ResultPanel.BorderBrush = new SolidColorBrush(Color.FromRgb(0xD4, 0xE4, 0xF0));
+        ResultText.Text = "正在捕获热键；按 Esc 取消";
+        ResultText.Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x6B, 0x2D));
+    }
+
+    private void HideResult()
+    {
+        ResultPanel.Visibility = Visibility.Collapsed;
+        ResultText.Text = string.Empty;
     }
 
     private void ShowFailureDialog(string message)

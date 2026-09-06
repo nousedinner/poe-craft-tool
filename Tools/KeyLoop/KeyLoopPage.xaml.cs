@@ -159,7 +159,6 @@ public partial class KeyLoopPage : UserControl
         try
         {
             EnableToolSwitch.IsChecked = _tool.IsEnabled;
-            ToggleButton.IsEnabled = _tool.IsEnabled;
             HotkeyText.Opacity = _tool.IsEnabled ? 1.0 : 0.55;
             if (!_tool.IsEnabled && !_tool.IsRunning) StatusText.Text = "功能已停用";
             else if (_tool.IsEnabled && !_tool.IsRunning && StatusText.Text == "功能已停用") StatusText.Text = "按键循环就绪";
@@ -297,20 +296,12 @@ public partial class KeyLoopPage : UserControl
         MoreButton.Content = _allSlotsShown ? "▲ 收起 (10/10)" : "▼ 加载更多 (5/10)";
     }
 
-    private void ToggleButton_Click(object sender, RoutedEventArgs e)
-    {
-        CollectSettingsFromUi();
-        _tool.ToggleFromPage();
-    }
-
     private void ApplyStatus(KeyLoopStatus status)
     {
         StatusText.Text = !_tool.IsEnabled && !status.Running ? "功能已停用" : status.Text;
         StatusDot.Foreground = status.Running
             ? new SolidColorBrush(Color.FromRgb(0x1B, 0x8A, 0x3E))
             : new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xAA));
-        ToggleButton.Content = status.Running ? "停止循环" : "启动循环";
-        ToggleButton.IsEnabled = _tool.IsEnabled;
         for (var index = 0; index < _rows.Count; index++)
         {
             _rows[index].Count.Text = index < status.PressCounts.Count ? status.PressCounts[index].ToString() : "0";

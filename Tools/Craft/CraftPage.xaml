@@ -88,18 +88,6 @@
                            VerticalAlignment="Center" Margin="8,0,0,0"/>
             </StackPanel>
 
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                <TextBlock Text="Mode 3 调试间隔:" Foreground="#334455" FontSize="12" VerticalAlignment="Center"/>
-                <ComboBox x:Name="Mode3DebugDelayCombo" Width="94" Height="26" Margin="8,0,0,0"
-                          VerticalContentAlignment="Center" SelectionChanged="Mode3DebugDelay_Changed">
-                    <ComboBoxItem Content="关闭" Tag="0"/>
-                    <ComboBoxItem Content="1000 ms" Tag="1000"/>
-                    <ComboBoxItem Content="2000 ms" Tag="2000"/>
-                </ComboBox>
-                <TextBlock Text="仅用于观察相邻两次通货操作" Foreground="#8A9AAA" FontSize="10"
-                           VerticalAlignment="Center" Margin="8,0,0,0"/>
-            </StackPanel>
-
             <!-- 通货选择 -->
             <Border Background="{StaticResource CardBackground}" BorderBrush="{StaticResource CardBorder}"
                     BorderThickness="1" CornerRadius="10" Padding="10" Margin="0,0,0,8">

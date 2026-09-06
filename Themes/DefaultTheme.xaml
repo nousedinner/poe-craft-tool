@@ -63,14 +63,48 @@
                                 Background="#B7C4CE" CornerRadius="12"
                                 VerticalAlignment="Center">
                             <Ellipse x:Name="Thumb" Width="17" Height="17" Margin="3"
-                                     Fill="White" HorizontalAlignment="Left"
-                                     VerticalAlignment="Center"/>
+                                     Fill="White" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                     RenderTransformOrigin="0.5,0.5">
+                                <Ellipse.RenderTransform>
+                                    <TranslateTransform x:Name="ThumbTransform" X="0"/>
+                                </Ellipse.RenderTransform>
+                            </Ellipse>
                         </Border>
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="Track" Property="Background" Value="{StaticResource AccentBrush}"/>
-                            <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right"/>
+                            <Trigger.EnterActions>
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="ThumbTransform"
+                                                         Storyboard.TargetProperty="X" To="19"
+                                                         Duration="0:0:0.17">
+                                            <DoubleAnimation.EasingFunction>
+                                                <CubicEase EasingMode="EaseOut"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <ColorAnimation Storyboard.TargetName="Track"
+                                                        Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)"
+                                                        To="#237DBD" Duration="0:0:0.14"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.EnterActions>
+                            <Trigger.ExitActions>
+                                <BeginStoryboard HandoffBehavior="SnapshotAndReplace">
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="ThumbTransform"
+                                                         Storyboard.TargetProperty="X" To="0"
+                                                         Duration="0:0:0.17">
+                                            <DoubleAnimation.EasingFunction>
+                                                <CubicEase EasingMode="EaseOut"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <ColorAnimation Storyboard.TargetName="Track"
+                                                        Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)"
+                                                        To="#B7C4CE" Duration="0:0:0.14"/>
+                                    </Storyboard>
+                                </BeginStoryboard>
+                            </Trigger.ExitActions>
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="Track" Property="Opacity" Value="0.88"/>

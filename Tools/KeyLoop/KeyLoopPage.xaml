@@ -32,11 +32,8 @@
                     Cursor="Hand" Click="MoreButton_Click"/>
 
             <StackPanel Orientation="Horizontal">
-                <Button x:Name="ToggleButton" Content="启动循环" Width="110" Height="34"
-                        Background="{StaticResource AccentBrush}" Foreground="White" BorderThickness="0"
-                        FontWeight="Bold" Cursor="Hand" Click="ToggleButton_Click"/>
                 <TextBlock x:Name="StatusDot" Text="●" Foreground="#AAAAAA" FontSize="15"
-                           Margin="18,0,5,0" VerticalAlignment="Center"/>
+                           Margin="0,0,5,0" VerticalAlignment="Center"/>
                 <TextBlock x:Name="StatusText" Text="按键循环就绪" Foreground="#445566" VerticalAlignment="Center"/>
             </StackPanel>
 
