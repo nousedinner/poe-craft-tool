@@ -35,6 +35,7 @@ var tests = new (string Name, Action Run)[]
     ("KeyLoop 启动前校验槽位", KeyLoopValidatesEnabledSlots),
     ("Hideout 命令设置可完整往返", HideoutCommandRoundTrip),
     ("Mode3 改造阶段判定矩阵", Mode3AlterationDecisionMatrix),
+    ("Mode3 蜕变产物进入魔法阶段判定", Mode3TransmutationDecisionMatrix),
     ("Mode3 增幅达标后必须进入富豪", Mode3AugmentationAlwaysProceedsToRegal),
     ("Mode3 启动稀有度判定矩阵", Mode3StartDecisionMatrix),
     ("Mode3 只记录两词缀未达阈值样本", Mode3DiagnosticCapturePolicy),
@@ -591,6 +592,22 @@ static void Mode3AlterationDecisionMatrix()
     Equal(Mode3MagicDecision.ContinueAlteration, CraftDecisions.AfterAlteration(1, 0, 2), "一词缀无命中应继续改造");
 }
 
+static void Mode3TransmutationDecisionMatrix()
+{
+    Equal(Mode3MagicDecision.ProceedToRegal,
+        CraftDecisions.AfterTransmutation(2, 2, 2, false),
+        "蜕变直接得到两条达标词缀时必须跳过改造并进入富豪");
+    Equal(Mode3MagicDecision.UseAugmentation,
+        CraftDecisions.AfterTransmutation(1, 1, 2, false),
+        "蜕变直接得到单条命中词缀时必须跳过改造并进入增幅");
+    Equal(Mode3MagicDecision.ContinueAlteration,
+        CraftDecisions.AfterTransmutation(2, 1, 2, false),
+        "蜕变得到两条但命中不足时才应进入改造");
+    Equal(Mode3MagicDecision.ContinueAlteration,
+        CraftDecisions.AfterTransmutation(2, 2, 2, true),
+        "蜕变命中排除词缀时必须进入改造，不能直接富豪");
+}
+
 static void Mode3AugmentationAlwaysProceedsToRegal()
 {
     Equal(Mode3MagicDecision.ProceedToRegal, CraftDecisions.AfterAugmentation(2, 2), "增幅达阈值必须去富豪");
@@ -1018,7 +1035,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(24, version.Build, "程序集 Build 必须为本次 1.0.24");
+    Equal(25, version.Build, "程序集 Build 必须为本次 1.0.25");
 }
 
 static void CraftEngineCanShutdownWhileIdle()

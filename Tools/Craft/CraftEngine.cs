@@ -924,73 +924,109 @@ public sealed class CraftEngine
                 try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
             }
 
+            // 蜕变本身可能直接生成 1～2 条可用词缀，必须在任何改造点击前判定。
+            // 否则蜕变直出的达标结果会被第一颗改造石无条件覆盖。
+            var (transmutationResult, transmutationAffixCount) = CheckItem(currentText);
+            MatchCount = transmutationResult.TotalHits;
+            var transmutationDecision = CraftDecisions.AfterTransmutation(
+                transmutationAffixCount,
+                transmutationResult.TotalHits,
+                threshold,
+                transmutationResult.HasExclude);
+            Diag.Log($"[引擎] Mode3 蜕变后判定: affixes={transmutationAffixCount}, " +
+                     $"hits={transmutationResult.TotalHits}, exclude={transmutationResult.HasExclude}, " +
+                     $"threshold={threshold}, decision={transmutationDecision}");
+
             // ===== 魔法阶段内层循环（改造 + 可选增幅）=====
-            var goToRegal = false;
+            var goToRegal = transmutationDecision == Mode3MagicDecision.ProceedToRegal;
+            var augmentTransmutationResult = transmutationDecision == Mode3MagicDecision.UseAugmentation;
+            ReportStatus(transmutationDecision switch
+            {
+                Mode3MagicDecision.ProceedToRegal =>
+                    $"#{UseCount} 蜕变后命中{transmutationResult.TotalHits}，进入富豪...",
+                Mode3MagicDecision.UseAugmentation =>
+                    $"#{UseCount} 蜕变后单词缀命中，进入增幅...",
+                _ when transmutationResult.HasExclude =>
+                    $"#{UseCount} 蜕变后命中排除，进入改造...",
+                _ => $"#{UseCount} 蜕变后未达阈值，进入改造...",
+            }, force: true);
+
             while (true)
             {
                 token.ThrowIfCancellationRequested();
                 await AwaitForegroundAsync(token);
 
-                // Phase 2: 改造（右键一次，shift+click 循环）
-                await SelectCurrencyAsync(Currency.Alteration, altCoord, token);
-                await _host.Input.HoldShiftAsync(token);
-                string text;
-                try
+                if (goToRegal)
+                    break;
+
+                var text = currentText;
+
+                // 蜕变得到单条命中时直接增幅；其余情况进入改造循环。
+                if (!augmentTransmutationResult)
                 {
-                    while (true)
+                    // Phase 2: 改造（右键一次，shift+click 循环）
+                    await SelectCurrencyAsync(Currency.Alteration, altCoord, token);
+                    await _host.Input.HoldShiftAsync(token);
+                    try
                     {
-                        token.ThrowIfCancellationRequested();
-                        await AwaitForegroundAsync(token);
-                        await UseMode3CurrencyOnItemAsync(itemCoord, token);
-                        UseCount++;
-
-                        text = await WaitForExpectedTransitionAsync(currentText,
-                            CraftCurrencyOperation.Alteration, "改造石", token);
-                        currentText = text;
-                        var (result, affixCount) = CheckItem(text);
-                        MatchCount = result.TotalHits;
-
-                        if (result.HasExclude)
+                        while (true)
                         {
-                            ReportStatus($"#{UseCount} 排除命中，继续改造...");
-                            continue;
-                        }
+                            token.ThrowIfCancellationRequested();
+                            await AwaitForegroundAsync(token);
+                            await UseMode3CurrencyOnItemAsync(itemCoord, token);
+                            UseCount++;
 
-                        var hits = result.TotalHits;
-                        var decision = CraftDecisions.AfterAlteration(affixCount, hits, threshold);
-                        if (CraftDecisions.ShouldCaptureMode3Miss(affixCount, hits, threshold, result.HasExclude))
-                        {
-                            Mode3DiagnosticRecorder.Capture(
-                                text,
-                                _rules,
-                                result,
-                                affixCount,
-                                threshold,
-                                _runId,
-                                UseCount);
-                        }
+                            text = await WaitForExpectedTransitionAsync(currentText,
+                                CraftCurrencyOperation.Alteration, "改造石", token);
+                            currentText = text;
+                            var (result, affixCount) = CheckItem(text);
+                            MatchCount = result.TotalHits;
 
-                        switch (decision)
-                        {
-                            case Mode3MagicDecision.ProceedToRegal:
-                                goToRegal = true;
-                                break; // 2 词缀达标 → 去富豪
-                            case Mode3MagicDecision.UseAugmentation:
-                                break; // 1 词缀命中 → 去增幅
-                            default:
-                                // 2 词缀未达标 → 继续 shift+click 重 roll（不释放 Shift，铁律 #5/方案 D4）
-                                ReportStatus(affixCount >= 2
-                                    ? $"#{UseCount} 2词缀命中{hits}不足{threshold}，继续改造..."
-                                    : $"#{UseCount} 改造中...");
+                            if (result.HasExclude)
+                            {
+                                ReportStatus($"#{UseCount} 排除命中，继续改造...");
                                 continue;
+                            }
+
+                            var hits = result.TotalHits;
+                            var decision = CraftDecisions.AfterAlteration(affixCount, hits, threshold);
+                            if (CraftDecisions.ShouldCaptureMode3Miss(affixCount, hits, threshold, result.HasExclude))
+                            {
+                                Mode3DiagnosticRecorder.Capture(
+                                    text,
+                                    _rules,
+                                    result,
+                                    affixCount,
+                                    threshold,
+                                    _runId,
+                                    UseCount);
+                            }
+
+                            switch (decision)
+                            {
+                                case Mode3MagicDecision.ProceedToRegal:
+                                    goToRegal = true;
+                                    break; // 2 词缀达标 → 去富豪
+                                case Mode3MagicDecision.UseAugmentation:
+                                    break; // 1 词缀命中 → 去增幅
+                                default:
+                                    // 2 词缀未达标 → 继续 shift+click 重 roll（不释放 Shift，铁律 #5/方案 D4）
+                                    ReportStatus(affixCount >= 2
+                                        ? $"#{UseCount} 2词缀命中{hits}不足{threshold}，继续改造..."
+                                        : $"#{UseCount} 改造中...");
+                                    continue;
+                            }
+                            break;
                         }
-                        break;
+                    }
+                    finally
+                    {
+                        try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
                     }
                 }
-                finally
-                {
-                    try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
-                }
+
+                // 该标记只允许跳过蜕变后的第一轮改造；增幅未达标后必须回到改造循环。
+                augmentTransmutationResult = false;
 
                 if (goToRegal)
                     break; // 退出魔法阶段 → 富豪

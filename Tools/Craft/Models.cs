@@ -179,6 +179,16 @@ public static class CraftDecisions
         _ => Mode3StartDecision.StopUnsupported,
     };
 
+    /// <summary>
+    /// 蜕变后必须先检查新生成的魔法词缀，再决定直接富豪、增幅或进入改造循环。
+    /// 排除词缀在魔法阶段仍使用“跳过并继续改造”的既定语义。
+    /// </summary>
+    public static Mode3MagicDecision AfterTransmutation(
+        int explicitAffixCount, int hits, int threshold, bool hasExclude)
+        => hasExclude
+            ? Mode3MagicDecision.ContinueAlteration
+            : AfterAlteration(explicitAffixCount, hits, threshold);
+
     /// <summary>改造后：两词缀达到阈值去富豪；一词缀至少一命中才允许增幅。</summary>
     public static Mode3MagicDecision AfterAlteration(int explicitAffixCount, int hits, int threshold)
     {
