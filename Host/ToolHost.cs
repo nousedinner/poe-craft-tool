@@ -20,6 +20,7 @@ public sealed class ToolHost
         Input = new InputSimulator(() => _emergencyCts, Foreground);
         Storage = new StorageService();
         Notification = new NotificationService();
+        Hotkeys.RuntimeErrorOccurred += Notification.ShowError;
         Sound = new SoundService();
         Coordinates = new CoordinateRecorder(Storage);
         Network = new NetworkService();

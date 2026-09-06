@@ -122,9 +122,10 @@ public sealed class HideoutTool : ITool, IEnableableTool
         {
             Diag.Log("[回城] ExecuteHideout: 已取消");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // 对齐 Python except: pass（失败静默）
+            Diag.Log($"[回城] ExecuteHideout 失败: {ex.GetType().Name}: {ex.Message}");
+            _host?.Notification.ShowError($"一键回城执行失败：{ex.Message}");
         }
     }
 

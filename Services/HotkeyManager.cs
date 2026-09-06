@@ -42,6 +42,12 @@ public sealed class HotkeyManager
     private int _nextId = 0xC001;
     private nint _hookHandle;
 
+    /// <summary>
+    /// 游戏内热键回调或前台检测发生未预料异常时上报。宿主统一接到置顶错误提示；
+    /// 普通的“当前不是目标前台”仍按既有契约静默拦截。
+    /// </summary>
+    public event Action<string>? RuntimeErrorOccurred;
+
     public HotkeyManager(Func<bool> isTargetForeground)
     {
         ArgumentNullException.ThrowIfNull(isTargetForeground);
@@ -207,18 +213,21 @@ public sealed class HotkeyManager
     /// <summary>执行热键请求前统一应用前台契约；检测异常按危险输入 fail-closed 处理。</summary>
     internal bool TryInvoke(HotkeyRequest request)
     {
-        if (!CanDispatch(request))
+        if (!CanDispatch(request, out var foregroundError))
         {
-            request.ForegroundRejectedHandler?.Invoke();
+            if (foregroundError is not null)
+                ReportRuntimeError(request, "前台检查", foregroundError);
+            else
+                InvokeSafely(request, request.ForegroundRejectedHandler, "前台拒绝提示");
             return false;
         }
 
-        request.Handler();
-        return true;
+        return InvokeSafely(request, request.Handler, "执行");
     }
 
-    private bool CanDispatch(HotkeyRequest request)
+    private bool CanDispatch(HotkeyRequest request, out Exception? error)
     {
+        error = null;
         if (!request.CheckForeground) return true;
         try
         {
@@ -227,7 +236,34 @@ public sealed class HotkeyManager
         catch (Exception ex)
         {
             Diag.Log($"[热键] 前台检查异常，已拦截“{request.DisplayName}”: {ex.GetType().Name}: {ex.Message}");
+            error = ex;
             return false;
+        }
+    }
+
+    private bool InvokeSafely(HotkeyRequest request, Action? callback, string phase)
+    {
+        if (callback is null) return true;
+        try
+        {
+            callback();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            ReportRuntimeError(request, phase, ex);
+            return false;
+        }
+    }
+
+    private void ReportRuntimeError(HotkeyRequest request, string phase, Exception error)
+    {
+        var message = $"{request.DisplayName}{phase}失败：{error.Message}";
+        Diag.Log($"[热键] {message} ({error.GetType().Name})");
+        try { RuntimeErrorOccurred?.Invoke(message); }
+        catch (Exception notifyError)
+        {
+            Diag.Log($"[热键] 运行错误提示失败: {notifyError.GetType().Name}: {notifyError.Message}");
         }
     }
 
@@ -256,13 +292,19 @@ public sealed class HotkeyManager
 
                     // Hold 只在按下阶段检查前台。已经启动的 Hold 无论当前前台如何，
                     // 松开时都必须调用 ReleaseHandler，防止残留鼠标/按键状态。
-                    if (!CanDispatch(binding.Request))
+                    if (!CanDispatch(binding.Request, out var foregroundError))
                     {
-                        dispatcher?.BeginInvoke(() => binding.Request.ForegroundRejectedHandler?.Invoke());
+                        dispatcher?.BeginInvoke(() =>
+                        {
+                            if (foregroundError is not null)
+                                ReportRuntimeError(binding.Request, "前台检查", foregroundError);
+                            else
+                                InvokeSafely(binding.Request, binding.Request.ForegroundRejectedHandler, "前台拒绝提示");
+                        });
                         continue;
                     }
                     _activeHoldBindings.Add(binding);
-                    dispatcher?.BeginInvoke(() => binding.Request.Handler());
+                    dispatcher?.BeginInvoke(() => InvokeSafely(binding.Request, binding.Request.Handler, "执行"));
                 }
             }
 
@@ -274,7 +316,7 @@ public sealed class HotkeyManager
                         HotkeyParser.AreModifiersPressed(binding.Hotkey.Modifiers, key => _keysDown.Contains(key)))
                         continue;
                     _activeHoldBindings.Remove(binding);
-                    dispatcher?.BeginInvoke(() => binding.Request.ReleaseHandler?.Invoke());
+                    dispatcher?.BeginInvoke(() => InvokeSafely(binding.Request, binding.Request.ReleaseHandler, "释放"));
                 }
             }
         }

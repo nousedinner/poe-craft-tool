@@ -54,6 +54,7 @@ var tests = new (string Name, Action Run)[]
     ("Hold 支持独立修饰键", HoldSupportsStandaloneModifier),
     ("修饰键状态判定支持左右按键", ModifierStateSupportsLeftAndRightKeys),
     ("公共热键层统一执行前台门禁", HotkeyManagerEnforcesForegroundPolicy),
+    ("游戏内运行异常统一进入置顶提示", RuntimeFailuresReachTopmostNotification),
     ("设置页按语义检测组合热键冲突", SettingsDetectsSemanticHotkeyConflicts),
     ("设置页拒绝路径和控制字符", SettingsRejectsUnsafeValues),
     ("Ctrl 按住连点与 Craft 启用状态互斥", CtrlHoldClickerConflictsWithCraft),
@@ -850,6 +851,46 @@ static void HotkeyManagerEnforcesForegroundPolicy()
     False(failingDetector.TryInvoke(guarded), "前台检测异常必须 fail-closed");
 }
 
+static void RuntimeFailuresReachTopmostNotification()
+{
+    var messages = new List<string>();
+    var manager = new HotkeyManager(() => true);
+    manager.RuntimeErrorOccurred += messages.Add;
+    var throwingRequest = new HotkeyRequest
+    {
+        Key = "F5",
+        DisplayName = "测试运行操作",
+        CheckForeground = true,
+        Mode = HotkeyMode.Toggle,
+        Handler = () => throw new InvalidOperationException("模拟执行失败"),
+    };
+
+    False(manager.TryInvoke(throwingRequest), "热键回调异常必须转换为安全失败");
+    Equal(1, messages.Count, "热键回调异常必须上报一次");
+    True(messages[0].Contains("测试运行操作执行失败", StringComparison.Ordinal),
+        "运行错误必须指出失败功能和阶段");
+
+    var detectorMessages = new List<string>();
+    var failingDetector = new HotkeyManager(() => throw new InvalidOperationException("模拟前台检测失败"));
+    failingDetector.RuntimeErrorOccurred += detectorMessages.Add;
+    False(failingDetector.TryInvoke(throwingRequest), "前台检测异常必须阻止功能运行");
+    Equal(1, detectorMessages.Count, "前台检测异常必须上报一次");
+    True(detectorMessages[0].Contains("前台检查失败", StringComparison.Ordinal),
+        "前台检测错误必须与普通非游戏前台静默拦截区分");
+
+    var root = FindProjectRoot();
+    var host = File.ReadAllText(Path.Combine(root, "Host", "ToolHost.cs"));
+    var hideout = File.ReadAllText(Path.Combine(root, "Tools", "Hideout", "HideoutTool.cs"));
+    var notification = File.ReadAllText(Path.Combine(root, "Services", "NotificationService.cs"));
+    True(host.Contains("Hotkeys.RuntimeErrorOccurred += Notification.ShowError", StringComparison.Ordinal),
+        "宿主必须把热键运行异常接到置顶错误服务");
+    True(hideout.Contains("Notification.ShowError", StringComparison.Ordinal),
+        "一键回城输入异常不得继续静默吞掉");
+    True(notification.Contains("MB_TOPMOST", StringComparison.Ordinal) &&
+         notification.Contains("MB_SETFOREGROUND", StringComparison.Ordinal),
+        "运行错误服务必须请求置顶和前台显示");
+}
+
 static void EmptyTargetProcessIsNotForeground()
 {
     var detector = new ForegroundDetector { TargetProcess = "" };
@@ -1087,7 +1128,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(26, version.Build, "程序集 Build 必须为本次 1.0.26");
+    Equal(27, version.Build, "程序集 Build 必须为本次 1.0.27");
 }
 
 static void CraftEngineCanShutdownWhileIdle()

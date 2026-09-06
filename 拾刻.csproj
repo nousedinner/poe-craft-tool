@@ -12,7 +12,7 @@
     <AssemblyName>拾刻</AssemblyName>
     <ApplicationIcon>poe.ico</ApplicationIcon>
     <!-- 版本单一来源：续用 1.x 系列，C# 版从 v1.0.5 起（方案 §10） -->
-    <Version>1.0.26</Version>
+    <Version>1.0.27</Version>
     <AssemblyTitle>拾刻</AssemblyTitle>
     <Product>拾刻</Product>
     <Description>PoE 洗词缀自动化 + 连点器 + 按键循环 + 一键回城聚合工具（C# 重构版）</Description>
