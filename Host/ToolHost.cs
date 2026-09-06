@@ -69,8 +69,11 @@ public sealed class ToolHost
     /// </summary>
     public IReadOnlyList<HotkeyRequest> BuildHotkeyRequests()
     {
-        var requests = RegisteredTools.SelectMany(tool => tool.GetHotkeyRequests()).ToList();
-        if (RegisteredTools.Any(tool => tool is ICoordinateProvider))
+        var enabledTools = RegisteredTools
+            .Where(tool => tool is not IEnableableTool enableable || enableable.IsEnabled)
+            .ToList();
+        var requests = enabledTools.SelectMany(tool => tool.GetHotkeyRequests()).ToList();
+        if (enabledTools.Any(tool => tool is ICoordinateProvider))
         {
             requests.Add(new HotkeyRequest
             {

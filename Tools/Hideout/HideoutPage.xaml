@@ -7,8 +7,9 @@
         <Border Background="#f0f6fb" CornerRadius="8" Padding="16,14" BorderBrush="#d4e4f0" BorderThickness="1">
             <StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <CheckBox x:Name="EnableCheck"
+                    <ToggleButton x:Name="EnableCheck"
                               Content="启用一键回城"
+                              Style="{StaticResource ModernSwitchStyle}"
                               FontSize="15"
                               VerticalAlignment="Center"
                               Checked="OnToggleChanged"
@@ -25,7 +26,8 @@
                 </TextBlock>
                 <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                     <TextBlock Text="执行命令" Foreground="#445566" VerticalAlignment="Center"/>
-                    <TextBox x:Name="CommandText" Width="180" Margin="10,0,0,0" Padding="5,3"
+                    <TextBox x:Name="CommandText" Width="180" Margin="10,0,0,0" Padding="5,3" MaxLength="200"
+                             TextChanged="CommandText_Changed"
                              LostFocus="CommandText_Commit" KeyDown="CommandText_KeyDown"/>
                 </StackPanel>
             </StackPanel>

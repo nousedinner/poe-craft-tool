@@ -109,6 +109,17 @@ public sealed class InputSimulator
         }
     }
 
+    private void CheckClickerSafetyStop()
+    {
+        if (!GetCursorPos(out var pt) || !IsInClickerSafetyZone(pt.X, pt.Y)) return;
+        Diag.Log($"[输入] 连点器安全停止触发: 光标位于 ({pt.X}, {pt.Y})");
+        _emergencyCtsProvider().Cancel();
+        throw new OperationCanceledException("连点器安全停止：光标进入主屏左上角 48×48 区域");
+    }
+
+    public static bool IsInClickerSafetyZone(int x, int y)
+        => x is >= 0 and <= 48 && y is >= 0 and <= 48;
+
     /// <summary>
     /// 等待目标进程回到前台（对齐 Python _interruptible_sleep 的前台检查）。
     /// TargetProcess 为空时 fail-closed，禁止向未知窗口发送输入。
@@ -280,7 +291,7 @@ public sealed class InputSimulator
     public async Task ClickAsync(int delayMs, CancellationToken token)
     {
         await EnsureForegroundForInputAsync(token);
-        CheckEmergencyStop();
+        CheckClickerSafetyStop();
         SendMouseOrThrow(MOUSEEVENTF_LEFTDOWN, "鼠标左键按下");
         try
         {
@@ -297,7 +308,7 @@ public sealed class InputSimulator
     public async Task RightClickAsync(int delayMs, CancellationToken token)
     {
         await EnsureForegroundForInputAsync(token);
-        CheckEmergencyStop();
+        CheckClickerSafetyStop();
         SendMouseOrThrow(MOUSEEVENTF_RIGHTDOWN, "鼠标右键按下");
         try
         {

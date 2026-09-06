@@ -16,6 +16,7 @@ public partial class SettingsPage : UserControl
     private readonly Dictionary<string, string> _hotkeyValues = new(StringComparer.OrdinalIgnoreCase);
     private string? _capturing;
     private bool _capturedMainKey;
+    private bool _refreshing;
 
     private sealed record NamedOption(string Label, string Value)
     {
@@ -41,34 +42,40 @@ public partial class SettingsPage : UserControl
 
     internal void RefreshFromTool(bool refreshLists)
     {
-        var draft = _tool.CaptureDraft();
-        SetHotkey("craft_start", draft.Hotkeys.CraftStart);
-        SetHotkey("craft_stop", draft.Hotkeys.CraftStop);
-        SetHotkey("coordinate", draft.Hotkeys.Coordinate);
-        SetHotkey("clicker_toggle", draft.Hotkeys.ClickerToggle);
-        SetHotkey("clicker_hold", draft.Hotkeys.ClickerHold);
-        SetHotkey("keyloop", draft.Hotkeys.KeyLoop);
-        SetHotkey("hideout", draft.Hotkeys.Hideout);
-
-        if (refreshLists)
+        _refreshing = true;
+        try
         {
-            PopulateProcesses(draft.TargetProcess);
-            PopulateSounds(draft.SelectedSound);
-        }
-        else
-        {
-            SelectOption(ProcessCombo, draft.TargetProcess);
-            SelectOption(SoundCombo, draft.SelectedSound);
-        }
+            var draft = _tool.CaptureDraft();
+            SetHotkey("craft_start", draft.Hotkeys.CraftStart);
+            SetHotkey("craft_stop", draft.Hotkeys.CraftStop);
+            SetHotkey("coordinate", draft.Hotkeys.Coordinate);
+            SetHotkey("clicker_toggle", draft.Hotkeys.ClickerToggle);
+            SetHotkey("clicker_hold", draft.Hotkeys.ClickerHold);
+            SetHotkey("keyloop", draft.Hotkeys.KeyLoop);
+            SetHotkey("hideout", draft.Hotkeys.Hideout);
 
-        AutoDetectCheck.IsChecked = draft.AutoDetectPoe;
-        CraftSoundCheck.IsChecked = draft.CraftSoundEnabled;
-        CraftPopupCheck.IsChecked = draft.CraftPopupEnabled;
-        ClickerNotificationCheck.IsChecked = draft.ClickerNotificationsEnabled;
-        KeyLoopNotificationCheck.IsChecked = draft.KeyLoopNotificationsEnabled;
-        HideoutEnableCheck.IsChecked = draft.HideoutEnabled;
-        HideoutCommandText.Text = draft.HideoutCommand;
-        CancelCapture();
+            if (refreshLists)
+            {
+                PopulateProcesses(draft.TargetProcess);
+                PopulateSounds(draft.SelectedSound);
+            }
+            else
+            {
+                SelectOption(ProcessCombo, draft.TargetProcess);
+                SelectOption(SoundCombo, draft.SelectedSound);
+            }
+
+            AutoDetectCheck.IsChecked = draft.AutoDetectPoe;
+            CraftSoundCheck.IsChecked = draft.CraftSoundEnabled;
+            CraftPopupCheck.IsChecked = draft.CraftPopupEnabled;
+            ClickerNotificationCheck.IsChecked = draft.ClickerNotificationsEnabled;
+            KeyLoopNotificationCheck.IsChecked = draft.KeyLoopNotificationsEnabled;
+            CancelCapture();
+        }
+        finally
+        {
+            _refreshing = false;
+        }
     }
 
     internal void ShowSoundStatus(SoundPlaybackStatus status)
@@ -160,7 +167,10 @@ public partial class SettingsPage : UserControl
         var result = _tool.ApplyDraft(BuildDraft());
         ShowResult(result.Message, result.Success);
         if (!result.Success)
+        {
             RefreshFromTool(refreshLists: false);
+            ShowFailureDialog(result.Message);
+        }
     }
 
     private void CancelCapture()
@@ -176,8 +186,10 @@ public partial class SettingsPage : UserControl
 
     private SettingsDraft BuildDraft()
     {
-        return new SettingsDraft(
-            new HotkeySettings(
+        var current = _tool.CaptureDraft();
+        return current with
+        {
+            Hotkeys = new HotkeySettings(
                 _hotkeyValues["craft_start"],
                 _hotkeyValues["craft_stop"],
                 _hotkeyValues["coordinate"],
@@ -185,34 +197,59 @@ public partial class SettingsPage : UserControl
                 _hotkeyValues["clicker_hold"],
                 _hotkeyValues["keyloop"],
                 _hotkeyValues["hideout"]),
-            SelectedValue(ProcessCombo),
-            AutoDetectCheck.IsChecked == true,
-            CraftSoundCheck.IsChecked == true,
-            CraftPopupCheck.IsChecked == true,
-            SelectedValue(SoundCombo),
-            ClickerNotificationCheck.IsChecked == true,
-            KeyLoopNotificationCheck.IsChecked == true,
-            HideoutEnableCheck.IsChecked == true,
-            HideoutCommandText.Text);
+            TargetProcess = SelectedValue(ProcessCombo),
+            AutoDetectPoe = AutoDetectCheck.IsChecked == true,
+            CraftSoundEnabled = CraftSoundCheck.IsChecked == true,
+            CraftPopupEnabled = CraftPopupCheck.IsChecked == true,
+            SelectedSound = SelectedValue(SoundCombo),
+            ClickerNotificationsEnabled = ClickerNotificationCheck.IsChecked == true,
+            KeyLoopNotificationsEnabled = KeyLoopNotificationCheck.IsChecked == true,
+        };
     }
 
-    private void ApplyButton_Click(object sender, RoutedEventArgs e)
+    private void RealtimeSetting_Changed(object sender, RoutedEventArgs e)
     {
+        if (_refreshing) return;
         CancelCapture();
         var result = _tool.ApplyDraft(BuildDraft());
         ShowResult(result.Message, result.Success);
+        if (!result.Success)
+        {
+            RefreshFromTool(refreshLists: false);
+            ShowFailureDialog(result.Message);
+        }
+    }
+
+    private void RestoreDefaultHotkeys_Click(object sender, RoutedEventArgs e)
+    {
+        CancelCapture();
+        var defaults = new HotkeySettings(
+            SettingsDefaults.HotkeyStart,
+            SettingsDefaults.HotkeyStop,
+            SettingsDefaults.HotkeySetCoord,
+            SettingsDefaults.ClickerHotkey,
+            SettingsDefaults.ClickerHoldHotkey,
+            SettingsDefaults.KeyLoopHotkey,
+            SettingsDefaults.HideoutHotkey);
+        var result = _tool.ApplyDraft(_tool.CaptureDraft() with { Hotkeys = defaults });
+        ShowResult(result.Success ? "默认热键已恢复并立即生效" : result.Message, result.Success);
         RefreshFromTool(refreshLists: false);
+        if (!result.Success) ShowFailureDialog(result.Message);
     }
 
     private void RefreshProcesses_Click(object sender, RoutedEventArgs e)
     {
-        PopulateProcesses(SelectedValue(ProcessCombo));
+        _refreshing = true;
+        try { PopulateProcesses(SelectedValue(ProcessCombo)); }
+        finally { _refreshing = false; }
         ShowResult("进程列表已刷新", success: true);
     }
 
     private void RefreshSounds_Click(object sender, RoutedEventArgs e)
     {
-        PopulateSounds(SelectedValue(SoundCombo));
+        _refreshing = true;
+        try { PopulateSounds(SelectedValue(SoundCombo)); }
+        finally { _refreshing = false; }
         ShowResult("音效列表已刷新", success: true);
     }
 
@@ -284,10 +321,26 @@ public partial class SettingsPage : UserControl
 
     private void ShowResult(string message, bool success)
     {
+        ResultPanel.Visibility = Visibility.Visible;
+        ResultPanel.Background = new SolidColorBrush(success
+            ? Color.FromRgb(0xEA, 0xF6, 0xEF)
+            : Color.FromRgb(0xFD, 0xEC, 0xEE));
+        ResultPanel.BorderBrush = new SolidColorBrush(success
+            ? Color.FromRgb(0xB9, 0xDD, 0xC6)
+            : Color.FromRgb(0xEF, 0xB9, 0xC0));
         ResultText.Text = message;
         ResultText.Foreground = new SolidColorBrush(success
             ? Color.FromRgb(0x1B, 0x8A, 0x3E)
             : Color.FromRgb(0xD0, 0x45, 0x55));
+    }
+
+    private void ShowFailureDialog(string message)
+    {
+        var owner = Window.GetWindow(this);
+        if (owner is null)
+            MessageBox.Show(message, "设置未生效", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            MessageBox.Show(owner, message, "设置未生效", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private static Key ResolveKey(KeyEventArgs e) => e.Key switch

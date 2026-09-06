@@ -6,7 +6,7 @@ using ShiKe.Services;
 
 namespace ShiKe.Tools.KeyLoop;
 
-public sealed class KeyLoopTool : ITool
+public sealed class KeyLoopTool : ITool, IEnableableTool
 {
     private ToolHost? _host;
     private KeyLoopEngine? _engine;
@@ -19,6 +19,8 @@ public sealed class KeyLoopTool : ITool
 
     public string Hotkey { get; set; } = SettingsDefaults.KeyLoopHotkey;
     public bool NotificationsEnabled { get; set; }
+    private bool _enabled = SettingsDefaults.KeyLoopEnabled;
+    public bool IsEnabled => _enabled;
     public List<KeyLoopSlot> Slots { get; } = Enumerable.Range(0, KeyLoopEngine.MaxSlots)
         .Select(_ => new KeyLoopSlot())
         .ToList();
@@ -76,6 +78,11 @@ public sealed class KeyLoopTool : ITool
     {
         _page?.CollectSettingsFromUi();
         if (_engine is null || _host is null) return;
+        if (!_enabled)
+        {
+            _host.Notification.ShowError("按键循环当前未启用，请先打开功能开关");
+            return;
+        }
         if (IsRunning)
         {
             _engine.Stop();
@@ -93,6 +100,7 @@ public sealed class KeyLoopTool : ITool
 
     private void ToggleFromHotkey()
     {
+        if (!_enabled) return;
         _page?.CollectSettingsFromUi();
         if (_engine is null) return;
         if (IsRunning)
@@ -113,6 +121,18 @@ public sealed class KeyLoopTool : ITool
             return;
         }
         _engine.Start(Slots);
+    }
+
+    public ToolEnablementResult SetEnabled(bool enabled)
+    {
+        if (_host is null) return ToolEnablementResult.Fail("按键循环尚未初始化");
+        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, Stop);
+        if (result.Success)
+        {
+            SaveSettingsToStorage();
+            _page?.RefreshEnabledPresentation();
+        }
+        return result;
     }
 
     public string? ValidateSlots()
@@ -153,6 +173,7 @@ public sealed class KeyLoopTool : ITool
         }
         return new JsonObject
         {
+            ["enabled"] = _enabled,
             ["hotkey"] = Hotkey,
             ["slots"] = slots,
             ["notifications_enabled"] = NotificationsEnabled,
@@ -161,6 +182,9 @@ public sealed class KeyLoopTool : ITool
 
     public void LoadSettings(JsonElement section)
     {
+        if (section.TryGetProperty("enabled", out var toolEnabled) &&
+            toolEnabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            _enabled = toolEnabled.GetBoolean();
         if (section.TryGetProperty("hotkey", out var hotkey) && hotkey.ValueKind == JsonValueKind.String &&
             !string.IsNullOrWhiteSpace(hotkey.GetString()))
             Hotkey = hotkey.GetString()!;

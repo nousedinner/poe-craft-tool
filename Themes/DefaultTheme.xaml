@@ -11,4 +11,78 @@
     <SolidColorBrush x:Key="SuccessGreen" Color="#1B8A3E"/>
     <SolidColorBrush x:Key="DangerRed" Color="#D04555"/>
 
+    <!-- 统一关闭 WPF 默认的黑色虚线焦点框；键盘焦点与快捷键行为保持不变。 -->
+    <Style TargetType="Button">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+    <Style TargetType="RadioButton">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+    <Style TargetType="CheckBox">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+    <Style TargetType="ListBox">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+    <Style TargetType="ListBoxItem">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+    <Style TargetType="ScrollViewer">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+    <Style TargetType="Slider">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+    <Style TargetType="ComboBox">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+    <Style TargetType="TextBox">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    </Style>
+
+    <!-- 开关类设置统一使用滑块，替代平台默认勾选框。 -->
+    <Style x:Key="ModernSwitchStyle" TargetType="ToggleButton">
+        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Foreground" Value="#445566"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Grid Background="Transparent">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <ContentPresenter Grid.Column="0" Margin="0,0,10,0"
+                                          VerticalAlignment="Center"
+                                          RecognizesAccessKey="True"/>
+                        <Border x:Name="Track" Grid.Column="1" Width="42" Height="23"
+                                Background="#B7C4CE" CornerRadius="12"
+                                VerticalAlignment="Center">
+                            <Ellipse x:Name="Thumb" Width="17" Height="17" Margin="3"
+                                     Fill="White" HorizontalAlignment="Left"
+                                     VerticalAlignment="Center"/>
+                        </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Track" Property="Background" Value="{StaticResource AccentBrush}"/>
+                            <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Track" Property="Opacity" Value="0.88"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
 </ResourceDictionary>

@@ -41,6 +41,8 @@ var tests = new (string Name, Action Run)[]
     ("非法命中数恢复上一次合法选择", InvalidHitCountRestoresPreviousSelection),
     ("剪贴板只接受合法物品文本头", ClipboardItemHeaderValidation),
     ("输入层点击间隔计算", CraftClickIntervalSemantics),
+    ("连点器左上角安全区判定", ClickerTopLeftSafetyZone),
+    ("Mode3 调试间隔只接受预设值", Mode3DebugDelayIsNormalized),
     ("Mode1 完整物品状态变化判定", Mode1ItemStateChangeDetection),
     ("Mode1 状态同步超时有安全下限", Mode1StateSyncTimeoutPolicy),
     ("Mode2/3 通货状态转换矩阵", CurrencyTransitionMatrix),
@@ -50,9 +52,10 @@ var tests = new (string Name, Action Run)[]
     ("公共热键层统一执行前台门禁", HotkeyManagerEnforcesForegroundPolicy),
     ("设置页按语义检测组合热键冲突", SettingsDetectsSemanticHotkeyConflicts),
     ("设置页拒绝路径和控制字符", SettingsRejectsUnsafeValues),
+    ("Ctrl 按住连点与 Craft 启用状态互斥", CtrlHoldClickerConflictsWithCraft),
     ("热键重注册失败恢复旧配置", HotkeyTransactionRollsBackOnFailure),
     ("SettingsTool 使用 host 分节完整往返", SettingsToolHostSectionRoundTrip),
-    ("宿主汇总七个统一热键请求", ToolHostBuildsCompleteHotkeySet),
+    ("宿主只汇总已启用工具的热键", ToolHostBuildsEnabledHotkeySet),
     ("音效扫描和路径解析限制在 sounds 目录", SoundFilesStayInsideSoundDirectory),
     ("网络版本比较使用 Version 语义", NetworkVersionComparisonIsNumeric),
     ("匿名统计载荷不包含本机数据", PingPayloadContainsOnlyFixedFields),
@@ -412,16 +415,19 @@ static void ToolSettingsAreLoaded()
 
 static void CraftSettingsRoundTrip()
 {
-    var source = new CraftTool
+    var source = new CraftTool();
+    source.LoadSettings(JsonSerializer.SerializeToElement(new
     {
-        DelayMs = 123,
-        SoundEnabled = false,
-        PopupEnabled = false,
-        ExhaustionThreshold = 17,
-        SelectedSound = "roundtrip.wav",
-        Mode2ScourAlch = true,
-        UseExalt = true,
-    };
+        enabled = false,
+        mode3_debug_delay_ms = 2000,
+    }));
+    source.DelayMs = 123;
+    source.SoundEnabled = false;
+    source.PopupEnabled = false;
+    source.ExhaustionThreshold = 17;
+    source.SelectedSound = "roundtrip.wav";
+    source.Mode2ScourAlch = true;
+    source.UseExalt = true;
 
     using var stream = new MemoryStream();
     using (var writer = new Utf8JsonWriter(stream))
@@ -438,6 +444,8 @@ static void CraftSettingsRoundTrip()
     Equal("roundtrip.wav", restored.SelectedSound, "音效文件往返失败");
     Equal(true, restored.Mode2ScourAlch, "Mode2 子模式往返失败");
     Equal(true, restored.UseExalt, "崇高开关往返失败");
+    Equal(false, restored.IsEnabled, "Craft 启用状态往返失败");
+    Equal(2000, restored.Mode3DebugDelayMs, "Mode3 调试间隔往返失败");
 }
 
 static void ClickerSettingsRoundTrip()
@@ -450,6 +458,12 @@ static void ClickerSettingsRoundTrip()
         MouseButton = ClickerMouseButton.Right,
         NotificationsEnabled = true,
     };
+    source.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true }));
+    source.Hotkey = "Ctrl+F8";
+    source.HoldHotkey = "Shift+F11";
+    source.IntervalMs = 47;
+    source.MouseButton = ClickerMouseButton.Right;
+    source.NotificationsEnabled = true;
 
     using var stream = new MemoryStream();
     using (var writer = new Utf8JsonWriter(stream))
@@ -464,6 +478,7 @@ static void ClickerSettingsRoundTrip()
     Equal(47, restored.IntervalMs, "Clicker 间隔往返失败");
     Equal(ClickerMouseButton.Right, restored.MouseButton, "Clicker 鼠标键往返失败");
     Equal(true, restored.NotificationsEnabled, "Clicker 通知开关往返失败");
+    Equal(true, restored.IsEnabled, "Clicker 工具启用状态往返失败");
 
     restored.LoadSettings(JsonSerializer.SerializeToElement(new { interval_ms = -5, button = "unknown" }));
     Equal(10, restored.IntervalMs, "Clicker 非法低间隔必须收敛到 10ms");
@@ -487,6 +502,9 @@ static void ClickerDeclaresBothHotkeys()
 static void KeyLoopSettingsRoundTrip()
 {
     var source = new KeyLoopTool { Hotkey = "Ctrl+F9", NotificationsEnabled = true };
+    source.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true }));
+    source.Hotkey = "Ctrl+F9";
+    source.NotificationsEnabled = true;
     source.Slots[0].Enabled = true;
     source.Slots[0].Key = "q";
     source.Slots[0].DelaySeconds = 0.4;
@@ -503,6 +521,7 @@ static void KeyLoopSettingsRoundTrip()
     restored.LoadSettings(document.RootElement);
     Equal("Ctrl+F9", restored.Hotkey, "KeyLoop 热键往返失败");
     Equal(true, restored.NotificationsEnabled, "KeyLoop 通知设置往返失败");
+    Equal(true, restored.IsEnabled, "KeyLoop 工具启用状态往返失败");
     Equal(true, restored.Slots[0].Enabled, "KeyLoop 槽位启用状态往返失败");
     Equal("q", restored.Slots[0].Key, "KeyLoop 槽位按键往返失败");
     Equal(0.4, restored.Slots[0].DelaySeconds, "KeyLoop 新 delay_s 字段往返失败");
@@ -629,6 +648,22 @@ static void CraftClickIntervalSemantics()
     Equal(150, InputSimulator.CalculateRemainingClickDelay(200, 50), "已过 50ms 时应再等 150ms");
     Equal(0, InputSimulator.CalculateRemainingClickDelay(200, 250), "已超过间隔时不应额外等待");
     Equal(0, InputSimulator.CalculateRemainingClickDelay(0, 0), "零间隔不得产生负等待");
+}
+
+static void ClickerTopLeftSafetyZone()
+{
+    True(InputSimulator.IsInClickerSafetyZone(0, 0), "主屏左上角必须触发安全停止");
+    True(InputSimulator.IsInClickerSafetyZone(48, 48), "安全区边界必须触发安全停止");
+    False(InputSimulator.IsInClickerSafetyZone(49, 48), "安全区外不得误停");
+    False(InputSimulator.IsInClickerSafetyZone(-1, 0), "左侧副屏坐标不得视为主屏左上角");
+}
+
+static void Mode3DebugDelayIsNormalized()
+{
+    Equal(0, CraftTool.NormalizeMode3DebugDelay(-1), "非法负值应关闭调试间隔");
+    Equal(0, CraftTool.NormalizeMode3DebugDelay(500), "非预设间隔应关闭");
+    Equal(1000, CraftTool.NormalizeMode3DebugDelay(1000), "1000ms 预设应保留");
+    Equal(2000, CraftTool.NormalizeMode3DebugDelay(2000), "2000ms 预设应保留");
 }
 
 static void Mode1ItemStateChangeDetection()
@@ -780,7 +815,7 @@ static void SettingsRejectsUnsafeValues()
     var draft = new SettingsDraft(
         new HotkeySettings("F5", "F6", "F7", "F8", "F11", "F9", "F2"),
         "..\\PathOfExile.exe", true, true, true, "..\\outside.mp3", false, false,
-        true, "/hideout\n/exit");
+        true, "/hideout\n/exit", true, false, false);
     var errors = SettingsValidation.Validate(draft);
     True(errors.Any(error => error.Contains("目标进程", StringComparison.Ordinal)),
         "目标进程路径必须被拒绝");
@@ -788,6 +823,34 @@ static void SettingsRejectsUnsafeValues()
         "音效目录穿越必须被拒绝");
     True(errors.Any(error => error.Contains("控制字符", StringComparison.Ordinal)),
         "回城命令换行必须被拒绝");
+}
+
+static void CtrlHoldClickerConflictsWithCraft()
+{
+    var safe = new SettingsDraft(
+        new HotkeySettings("F5", "F6", "F7", "F8", "Ctrl", "F9", "F2"),
+        "PathOfExile_x64.exe", true, true, true, "default_ding.wav", false, false,
+        false, "/hideout", true, false, false);
+    False(SettingsValidation.Validate(safe).Any(error => error.Contains("不能同时启用", StringComparison.Ordinal)),
+        "连点器停用时允许预先配置 Ctrl 按住热键");
+
+    var conflict = safe with { ClickerEnabled = true };
+    True(SettingsValidation.Validate(conflict).Any(error => error.Contains("不能同时启用", StringComparison.Ordinal)),
+        "Craft 与 Ctrl 按住连点同时启用时必须拒绝");
+
+    var craft = new CraftTool();
+    var clicker = new ClickerTool();
+    clicker.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true, hold_hotkey = "Ctrl" }));
+    var registry = new ToolRegistry();
+    registry.Register(craft);
+    registry.Register(clicker);
+    True(ToolEnablement.ValidateCompatibility(registry.Tools)?.Contains("不能同时启用", StringComparison.Ordinal) == true,
+        "运行时启用事务必须执行同一安全约束");
+
+    var clickerOnly = new ToolRegistry();
+    clickerOnly.Register(clicker);
+    True(ToolEnablement.ValidateCompatibility(clickerOnly.Tools) is null,
+        "未注册 Craft 的独立宿主不得产生虚假冲突");
 }
 
 static void HotkeyTransactionRollsBackOnFailure()
@@ -855,7 +918,7 @@ static void SettingsToolHostSectionRoundTrip()
     });
 }
 
-static void ToolHostBuildsCompleteHotkeySet()
+static void ToolHostBuildsEnabledHotkeySet()
 {
     RunInSta(() =>
     {
@@ -874,6 +937,12 @@ static void ToolHostBuildsCompleteHotkeySet()
         foreach (var tool in registry.Tools) tool.Initialize(host);
 
         var requests = host.BuildHotkeyRequests();
+        Equal(3, requests.Count, "默认仅启用 Craft，应注册启动、停止和坐标三个热键");
+
+        clicker.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true }));
+        keyLoop.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true }));
+        hideout.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true }));
+        requests = host.BuildHotkeyRequests();
         Equal(7, requests.Count, "应汇总 Craft 2 + Clicker 2 + KeyLoop 1 + Hideout 1 + 坐标 1");
         Equal(1, requests.Count(request => request.DisplayName == "坐标录制"), "坐标热键必须只注册一次");
 
@@ -949,7 +1018,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(23, version.Build, "程序集 Build 必须为本次 1.0.23");
+    Equal(24, version.Build, "程序集 Build 必须为本次 1.0.24");
 }
 
 static void CraftEngineCanShutdownWhileIdle()

@@ -4,6 +4,7 @@
              xmlns:craft="clr-namespace:ShiKe.Tools.Craft">
     <UserControl.Resources>
         <Style x:Key="CardButton" TargetType="Button">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Background" Value="#80FFFFFF"/>
             <Setter Property="BorderBrush" Value="#260050A0"/>
             <Setter Property="BorderThickness" Value="1"/>
@@ -13,6 +14,7 @@
             <Setter Property="Cursor" Value="Hand"/>
         </Style>
         <Style x:Key="HitButton" TargetType="RadioButton">
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Foreground" Value="#55666666"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="Margin" Value="2,0"/>
@@ -41,6 +43,12 @@
 
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="4" MaxWidth="540">
+            <StackPanel Orientation="Horizontal" Margin="2,0,0,8">
+                <ToggleButton x:Name="EnableToolSwitch" Content="启用洗词缀"
+                              Style="{StaticResource ModernSwitchStyle}"
+                              FontSize="13" FontWeight="SemiBold"
+                              Checked="EnableToolSwitch_Changed" Unchecked="EnableToolSwitch_Changed"/>
+            </StackPanel>
             <!-- 模式选择 -->
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,8">
                 <RadioButton x:Name="Mode1Radio" Content="🔨 Mode 1&#x0a;单通货" GroupName="Mode"
@@ -64,9 +72,9 @@
 
             <!-- Mode 3 崇高 -->
             <StackPanel x:Name="Mode3Frame" Orientation="Horizontal" Visibility="Collapsed" Margin="0,0,0,6">
-                <CheckBox x:Name="ExaltCheck" Content="富豪后使用崇高石" Foreground="#B45F06" FontSize="13"
-                          FontWeight="Bold" Cursor="Hand"
-                          Checked="ExaltCheck_Changed" Unchecked="ExaltCheck_Changed"/>
+                <ToggleButton x:Name="ExaltCheck" Content="富豪后使用崇高石"
+                              Style="{StaticResource ModernSwitchStyle}" Foreground="#B45F06" FontSize="13"
+                              FontWeight="Bold" Checked="ExaltCheck_Changed" Unchecked="ExaltCheck_Changed"/>
             </StackPanel>
 
             <!-- 洗装同步/点击间隔 -->
@@ -77,6 +85,18 @@
                 <TextBlock x:Name="DelayValue" Text="33 ms" Foreground="#334455" FontSize="12"
                            VerticalAlignment="Center" Margin="4,0"/>
                 <TextBlock Text="通货点击后的服务器同步等待" Foreground="#8A9AAA" FontSize="10"
+                           VerticalAlignment="Center" Margin="8,0,0,0"/>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="Mode 3 调试间隔:" Foreground="#334455" FontSize="12" VerticalAlignment="Center"/>
+                <ComboBox x:Name="Mode3DebugDelayCombo" Width="94" Height="26" Margin="8,0,0,0"
+                          VerticalContentAlignment="Center" SelectionChanged="Mode3DebugDelay_Changed">
+                    <ComboBoxItem Content="关闭" Tag="0"/>
+                    <ComboBoxItem Content="1000 ms" Tag="1000"/>
+                    <ComboBoxItem Content="2000 ms" Tag="2000"/>
+                </ComboBox>
+                <TextBlock Text="仅用于观察相邻两次通货操作" Foreground="#8A9AAA" FontSize="10"
                            VerticalAlignment="Center" Margin="8,0,0,0"/>
             </StackPanel>
 

@@ -34,7 +34,10 @@ public sealed record SettingsDraft(
     bool ClickerNotificationsEnabled,
     bool KeyLoopNotificationsEnabled,
     bool HideoutEnabled,
-    string HideoutCommand)
+    string HideoutCommand,
+    bool CraftEnabled,
+    bool ClickerEnabled,
+    bool KeyLoopEnabled)
 {
     public SettingsDraft Normalize() => this with
     {
@@ -70,6 +73,9 @@ public static class SettingsValidation
             errors.Add("回城命令不能包含换行或其他控制字符");
         if (draft.HideoutCommand.Length > 200)
             errors.Add("回城命令不能超过 200 个字符");
+        if (draft.CraftEnabled && draft.ClickerEnabled &&
+            HotkeyParser.ParseHold(draft.Hotkeys.ClickerHold) is { Modifiers: 0, Vk: KeyCode.Control })
+            errors.Add("连点器按住热键为 Ctrl 时，连点器与洗词缀不能同时启用");
 
         return errors;
     }

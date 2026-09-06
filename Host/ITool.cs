@@ -40,3 +40,11 @@ public interface ITool
     /// <summary>宿主保存时调用，写入 [Id] 节。</summary>
     void SaveSettings(Utf8JsonWriter writer);
 }
+
+/// <summary>
+/// 可按需启用的工具能力。宿主只为已启用工具注册操作热键；配置页面仍可正常打开。
+/// </summary>
+public interface IEnableableTool
+{
+    bool IsEnabled { get; }
+}

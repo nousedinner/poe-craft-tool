@@ -71,7 +71,10 @@ public sealed class SettingsTool : ITool
             _clicker.NotificationsEnabled,
             _keyLoop.NotificationsEnabled,
             _hideout.IsEnabled,
-            _hideout.Command);
+            _hideout.Command,
+            _craft.IsEnabled,
+            _clicker.IsEnabled,
+            _keyLoop.IsEnabled);
     }
 
     public SettingsApplyResult ApplyDraft(SettingsDraft requested)

@@ -13,7 +13,7 @@ namespace ShiKe.Tools.Hideout;
 ///   Enter → sleep(0.1s) → 输入 /hideout → Enter
 /// - 存储：hideout 节 {enabled, hotkey}，默认 false / F2（storage.py:123-124）
 /// </summary>
-public sealed class HideoutTool : ITool
+public sealed class HideoutTool : ITool, IEnableableTool
 {
     private ToolHost? _host;
     private HideoutPage? _page;
@@ -129,10 +129,21 @@ public sealed class HideoutTool : ITool
     }
 
     /// <summary>页面开关调用：更新启用状态并立即保存。</summary>
-    public void SetEnabled(bool enabled)
+    public ToolEnablementResult SetEnabled(bool enabled)
     {
-        _enabled = enabled;
-        SaveNow();
+        if (_host is null) return ToolEnablementResult.Fail("一键回城尚未初始化");
+        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, CancelCurrentOperation);
+        if (result.Success)
+        {
+            SaveNow();
+            _page?.RefreshFromTool();
+        }
+        return result;
+    }
+
+    private void CancelCurrentOperation()
+    {
+        lock (_operationGate) _operationCts?.Cancel();
     }
 
     public void SetCommand(string command)

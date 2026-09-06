@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 
@@ -11,7 +12,7 @@ public partial class KeyLoopPage : UserControl
     private sealed class SlotRow
     {
         public required Border Root { get; init; }
-        public required CheckBox Enabled { get; init; }
+        public required ToggleButton Enabled { get; init; }
         public required Button KeyButton { get; init; }
         public required TextBox Delay { get; init; }
         public required TextBlock Count { get; init; }
@@ -27,11 +28,13 @@ public partial class KeyLoopPage : UserControl
     {
         _tool = tool;
         InitializeComponent();
+        EnableToolSwitch.IsChecked = tool.IsEnabled;
         HotkeyText.Text = tool.Hotkey;
         BuildRows();
         ApplyStatus(new KeyLoopStatus(tool.IsRunning, Enumerable.Repeat(0, KeyLoopEngine.MaxSlots).ToArray(),
             tool.IsRunning ? "按键循环运行中..." : "按键循环就绪"));
         _loading = false;
+        RefreshEnabledPresentation();
         tool.StatusUpdated += status => Dispatcher.BeginInvoke(() => ApplyStatus(status));
     }
 
@@ -41,9 +44,10 @@ public partial class KeyLoopPage : UserControl
         {
             var capturedIndex = index;
             var slot = _tool.Slots[index];
-            var enabled = new CheckBox
+            var enabled = new ToggleButton
             {
                 IsChecked = slot.Enabled,
+                Style = (Style)FindResource("ModernSwitchStyle"),
                 VerticalAlignment = VerticalAlignment.Center,
                 ToolTip = "启用此槽位",
             };
@@ -147,6 +151,36 @@ public partial class KeyLoopPage : UserControl
     internal void RefreshSettingsPresentation()
     {
         HotkeyText.Text = _tool.Hotkey;
+    }
+
+    internal void RefreshEnabledPresentation()
+    {
+        _loading = true;
+        try
+        {
+            EnableToolSwitch.IsChecked = _tool.IsEnabled;
+            ToggleButton.IsEnabled = _tool.IsEnabled;
+            HotkeyText.Opacity = _tool.IsEnabled ? 1.0 : 0.55;
+            if (!_tool.IsEnabled && !_tool.IsRunning) StatusText.Text = "功能已停用";
+            else if (_tool.IsEnabled && !_tool.IsRunning && StatusText.Text == "功能已停用") StatusText.Text = "按键循环就绪";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void EnableToolSwitch_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        var result = _tool.SetEnabled(EnableToolSwitch.IsChecked == true);
+        if (result.Success) return;
+        RefreshEnabledPresentation();
+        var owner = Window.GetWindow(this);
+        if (owner is null)
+            MessageBox.Show(result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            MessageBox.Show(owner, result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private void SaveRowChange()
@@ -271,11 +305,12 @@ public partial class KeyLoopPage : UserControl
 
     private void ApplyStatus(KeyLoopStatus status)
     {
-        StatusText.Text = status.Text;
+        StatusText.Text = !_tool.IsEnabled && !status.Running ? "功能已停用" : status.Text;
         StatusDot.Foreground = status.Running
             ? new SolidColorBrush(Color.FromRgb(0x1B, 0x8A, 0x3E))
             : new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xAA));
         ToggleButton.Content = status.Running ? "停止循环" : "启动循环";
+        ToggleButton.IsEnabled = _tool.IsEnabled;
         for (var index = 0; index < _rows.Count; index++)
         {
             _rows[index].Count.Text = index < status.PressCounts.Count ? status.PressCounts[index].ToString() : "0";

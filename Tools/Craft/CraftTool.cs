@@ -13,7 +13,7 @@ namespace ShiKe.Tools.Craft;
 /// - 坐标槽位：物品 + 10 种通货（divine 占位永不显示，对齐 config_tab.py）
 /// - 存储：craft 节 settings + rules.json/coordinates.json 兼容旧版
 /// </summary>
-public sealed class CraftTool : ITool, ICoordinateProvider
+public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
 {
     private ToolHost? _host;
     private CraftEngine? _engine;
@@ -35,6 +35,9 @@ public sealed class CraftTool : ITool, ICoordinateProvider
     public string SelectedSound { get; set; } = SettingsDefaults.SelectedSound;
     public bool Mode2ScourAlch { get; set; }
     public bool UseExalt { get; set; }
+    public int Mode3DebugDelayMs { get; set; } = SettingsDefaults.Mode3DebugDelayMs;
+    private bool _enabled = SettingsDefaults.CraftEnabled;
+    public bool IsEnabled => _enabled;
 
     // ── 热键（host 节，默认 F5/F6）──
     public string HotkeyStart { get; set; } = SettingsDefaults.HotkeyStart;
@@ -182,6 +185,11 @@ public sealed class CraftTool : ITool, ICoordinateProvider
     public void Start()
     {
         if (_host is null || _engine is null) return;
+        if (!_enabled)
+        {
+            _host.Notification.ShowError("洗词缀当前未启用，请先在洗词缀页面打开功能开关");
+            return;
+        }
         if (string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess))
         {
             _host.Notification.ShowError("尚未锁定游戏进程，请先启动游戏或在设置中选择目标进程");
@@ -197,7 +205,7 @@ public sealed class CraftTool : ITool, ICoordinateProvider
 
         _engine.SetStopKey(HotkeyStop); // 设置停止键 VK（GetAsyncKeyState 轮询用）
         _engine.Start(Rules, Coordinates, DelayMs, SoundEnabled, PopupEnabled,
-            SelectedSound, ExhaustionThreshold, Mode2ScourAlch, UseExalt);
+            SelectedSound, ExhaustionThreshold, Mode2ScourAlch, UseExalt, Mode3DebugDelayMs);
         if (_engine.IsRunning && PopupEnabled)
             _host.Notification.Show("▶ 洗词缀 启动");
     }
@@ -251,6 +259,18 @@ public sealed class CraftTool : ITool, ICoordinateProvider
         // 通知由 _engine.Stopped 事件统一处理（覆盖所有停止路径）
     }
 
+    public ToolEnablementResult SetEnabled(bool enabled)
+    {
+        if (_host is null) return ToolEnablementResult.Fail("洗词缀尚未初始化");
+        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, Stop);
+        if (result.Success)
+        {
+            SaveSettingsToStorage();
+            _page?.RefreshEnabledPresentation();
+        }
+        return result;
+    }
+
     public void OnActivate() { }
 
     public void OnDeactivate()
@@ -271,6 +291,7 @@ public sealed class CraftTool : ITool, ICoordinateProvider
 
     public void LoadSettings(JsonElement section)
     {
+        _enabled = GetBool(section, "enabled", SettingsDefaults.CraftEnabled);
         DelayMs = GetInt(section, "delay_ms", SettingsDefaults.DelayMs);
         SoundEnabled = GetBool(section, "sound_enabled", SettingsDefaults.SoundEnabled);
         PopupEnabled = GetBool(section, "popup_enabled", SettingsDefaults.PopupEnabled);
@@ -278,6 +299,7 @@ public sealed class CraftTool : ITool, ICoordinateProvider
         SelectedSound = GetString(section, "selected_sound", SettingsDefaults.SelectedSound);
         Mode2ScourAlch = GetBool(section, "mode2_scour_alch", false);
         UseExalt = GetBool(section, "use_exalt", false);
+        Mode3DebugDelayMs = NormalizeMode3DebugDelay(GetInt(section, "mode3_debug_delay_ms", SettingsDefaults.Mode3DebugDelayMs));
         Diag.Log($"[设置] Craft 已加载: delay={DelayMs}, sound={SoundEnabled}, popup={PopupEnabled}, " +
                  $"mode2ScourAlch={Mode2ScourAlch}, useExalt={UseExalt}");
     }
@@ -300,6 +322,7 @@ public sealed class CraftTool : ITool, ICoordinateProvider
 
     private JsonObject CreateSettingsSection() => new()
     {
+        ["enabled"] = _enabled,
         ["delay_ms"] = DelayMs,
         ["sound_enabled"] = SoundEnabled,
         ["popup_enabled"] = PopupEnabled,
@@ -307,6 +330,14 @@ public sealed class CraftTool : ITool, ICoordinateProvider
         ["selected_sound"] = SelectedSound,
         ["mode2_scour_alch"] = Mode2ScourAlch,
         ["use_exalt"] = UseExalt,
+        ["mode3_debug_delay_ms"] = NormalizeMode3DebugDelay(Mode3DebugDelayMs),
+    };
+
+    internal static int NormalizeMode3DebugDelay(int value) => value switch
+    {
+        1000 => 1000,
+        2000 => 2000,
+        _ => 0,
     };
 
     private static int GetInt(JsonElement section, string key, int fallback)

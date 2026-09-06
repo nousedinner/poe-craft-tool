@@ -4,7 +4,13 @@
              PreviewKeyDown="Page_PreviewKeyDown">
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="16,8" MaxWidth="540">
-            <TextBlock Text="按键循环" FontSize="20" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock Text="按键循环" FontSize="20" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
+                <ToggleButton x:Name="EnableToolSwitch" Grid.Column="1" Content="启用按键循环"
+                              Style="{StaticResource ModernSwitchStyle}"
+                              Checked="EnableToolSwitch_Changed" Unchecked="EnableToolSwitch_Changed"/>
+            </Grid>
             <TextBlock Text="每个启用的按键按自己的间隔独立触发，离开游戏后自动暂停。"
                        FontSize="12" Foreground="#778899" Margin="0,4,0,12"/>
 

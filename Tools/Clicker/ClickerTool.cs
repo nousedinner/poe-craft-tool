@@ -6,7 +6,7 @@ using ShiKe.Services;
 
 namespace ShiKe.Tools.Clicker;
 
-public sealed class ClickerTool : ITool
+public sealed class ClickerTool : ITool, IEnableableTool
 {
     private ToolHost? _host;
     private ClickerEngine? _engine;
@@ -23,6 +23,8 @@ public sealed class ClickerTool : ITool
     public int IntervalMs { get; set; } = SettingsDefaults.ClickerIntervalMs;
     public ClickerMouseButton MouseButton { get; set; } = ClickerMouseButton.Left;
     public bool NotificationsEnabled { get; set; }
+    private bool _enabled = SettingsDefaults.ClickerEnabled;
+    public bool IsEnabled => _enabled;
 
     public bool IsRunning => _engine?.IsRunning ?? false;
     public int ClickCount => _engine?.ClickCount ?? 0;
@@ -87,6 +89,11 @@ public sealed class ClickerTool : ITool
     {
         _page?.CollectSettingsFromUi();
         if (_engine is null || _host is null) return;
+        if (!_enabled)
+        {
+            _host.Notification.ShowError("连点器当前未启用，请先打开功能开关");
+            return;
+        }
         if (!IsRunning && string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess))
         {
             _host.Notification.ShowError("尚未锁定游戏进程，无法启动连点器");
@@ -100,6 +107,7 @@ public sealed class ClickerTool : ITool
 
     private void ToggleFromHotkey()
     {
+        if (!_enabled) return;
         _page?.CollectSettingsFromUi();
         _holdStarted = false;
         _engine?.Toggle(MouseButton, IntervalMs);
@@ -107,6 +115,7 @@ public sealed class ClickerTool : ITool
 
     private void StartHoldFromHotkey()
     {
+        if (!_enabled) return;
         _page?.CollectSettingsFromUi();
         _holdStarted = _engine?.Start(MouseButton, IntervalMs) == true;
     }
@@ -118,6 +127,18 @@ public sealed class ClickerTool : ITool
         _engine?.Stop("按住连点已停止");
     }
 
+    public ToolEnablementResult SetEnabled(bool enabled)
+    {
+        if (_host is null) return ToolEnablementResult.Fail("连点器尚未初始化");
+        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, Stop);
+        if (result.Success)
+        {
+            SaveSettingsToStorage();
+            _page?.RefreshEnabledPresentation();
+        }
+        return result;
+    }
+
     public void SaveSettingsToStorage()
     {
         if (_host is null) return;
@@ -126,6 +147,7 @@ public sealed class ClickerTool : ITool
 
     private JsonObject CreateSettingsNode() => new()
     {
+        ["enabled"] = _enabled,
         ["hotkey"] = Hotkey,
         ["hold_hotkey"] = HoldHotkey,
         ["interval_ms"] = Math.Clamp(IntervalMs, 10, 200),
@@ -135,6 +157,9 @@ public sealed class ClickerTool : ITool
 
     public void LoadSettings(JsonElement section)
     {
+        if (section.TryGetProperty("enabled", out var enabled) &&
+            enabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            _enabled = enabled.GetBoolean();
         if (section.TryGetProperty("hotkey", out var hotkey) && hotkey.ValueKind == JsonValueKind.String &&
             !string.IsNullOrWhiteSpace(hotkey.GetString()))
             Hotkey = hotkey.GetString()!;

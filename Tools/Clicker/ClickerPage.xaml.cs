@@ -15,6 +15,7 @@ public partial class ClickerPage : UserControl
         _tool = tool;
         InitializeComponent();
 
+        EnableToolSwitch.IsChecked = tool.IsEnabled;
         LeftButtonRadio.IsChecked = tool.MouseButton == ClickerMouseButton.Left;
         RightButtonRadio.IsChecked = tool.MouseButton == ClickerMouseButton.Right;
         IntervalSlider.Value = tool.IntervalMs;
@@ -23,6 +24,7 @@ public partial class ClickerPage : UserControl
         ApplyStatus(new ClickerStatus(tool.IsRunning, tool.ClickCount,
             tool.IsRunning ? "连点中..." : "连点器就绪"));
         _loading = false;
+        RefreshEnabledPresentation();
 
         tool.StatusUpdated += status => Dispatcher.BeginInvoke(() => ApplyStatus(status));
     }
@@ -38,6 +40,36 @@ public partial class ClickerPage : UserControl
     internal void RefreshSettingsPresentation()
     {
         HotkeyHint.Text = $"切换热键：{_tool.Hotkey}    按住热键：{_tool.HoldHotkey}";
+    }
+
+    internal void RefreshEnabledPresentation()
+    {
+        _loading = true;
+        try
+        {
+            EnableToolSwitch.IsChecked = _tool.IsEnabled;
+            ToggleButton.IsEnabled = _tool.IsEnabled;
+            HotkeyHint.Opacity = _tool.IsEnabled ? 1.0 : 0.55;
+            if (!_tool.IsEnabled && !_tool.IsRunning) StatusText.Text = "功能已停用";
+            else if (_tool.IsEnabled && !_tool.IsRunning && StatusText.Text == "功能已停用") StatusText.Text = "连点器就绪";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void EnableToolSwitch_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        var result = _tool.SetEnabled(EnableToolSwitch.IsChecked == true);
+        if (result.Success) return;
+        RefreshEnabledPresentation();
+        var owner = Window.GetWindow(this);
+        if (owner is null)
+            MessageBox.Show(result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            MessageBox.Show(owner, result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private void MouseButton_Checked(object sender, RoutedEventArgs e)
@@ -68,12 +100,13 @@ public partial class ClickerPage : UserControl
 
     private void ApplyStatus(ClickerStatus status)
     {
-        StatusText.Text = status.Text;
+        StatusText.Text = !_tool.IsEnabled && !status.Running ? "功能已停用" : status.Text;
         ClickCountText.Text = status.ClickCount.ToString();
         StatusDot.Foreground = status.Running
             ? new SolidColorBrush(Color.FromRgb(0x1B, 0x8A, 0x3E))
             : new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xAA));
         ToggleButton.Content = status.Running ? "停止连点" : "启动连点";
+        ToggleButton.IsEnabled = _tool.IsEnabled;
         LeftButtonRadio.IsEnabled = !status.Running;
         RightButtonRadio.IsEnabled = !status.Running;
         IntervalSlider.IsEnabled = !status.Running;

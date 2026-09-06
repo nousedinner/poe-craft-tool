@@ -40,6 +40,8 @@ public partial class CraftPage : UserControl
     private bool _dirty;
     private bool _initialized;   // Loaded 防重复（WPF Loaded 在每次进入可视树时触发，卡片会翻倍）
     private bool _restoringHitCount;
+    private bool _refreshingEnabled;
+    private bool _restoringDebugDelay;
     private int _lastValidPrimaryHit;
     private int _lastValidSecondaryHit;
 
@@ -58,6 +60,21 @@ public partial class CraftPage : UserControl
     {
         _coordHotkey = coordinateHotkey;
         CraftHotkeyHint.Text = $"⚡ 游戏内按 {startHotkey} 启动 / {stopHotkey} 停止";
+    }
+
+    internal void RefreshEnabledPresentation()
+    {
+        _refreshingEnabled = true;
+        try
+        {
+            EnableToolSwitch.IsChecked = _tool.IsEnabled;
+            CraftHotkeyHint.Opacity = _tool.IsEnabled ? 1.0 : 0.55;
+            CraftStatusText.Text = _tool.IsEnabled ? (CraftStatusText.Text == "功能已停用" ? "就绪" : CraftStatusText.Text) : "功能已停用";
+        }
+        finally
+        {
+            _refreshingEnabled = false;
+        }
     }
 
     private CraftMode CurrentMode => _tool.Rules.Mode;
@@ -97,6 +114,28 @@ public partial class CraftPage : UserControl
         DelaySlider.ValueChanged += (_, _) => DelayValue.Text = $"{(int)DelaySlider.Value} ms";
         DelaySlider.Value = _tool.DelayMs;
         DelayValue.Text = $"{_tool.DelayMs} ms";
+        SelectMode3DebugDelay(_tool.Mode3DebugDelayMs);
+        RefreshEnabledPresentation();
+    }
+
+    private void EnableToolSwitch_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_refreshingEnabled || !_initialized) return;
+        var result = _tool.SetEnabled(EnableToolSwitch.IsChecked == true);
+        if (!result.Success)
+        {
+            RefreshEnabledPresentation();
+            ShowOwnedMessage(result.Message, "无法修改启用状态", MessageBoxImage.Warning);
+        }
+    }
+
+    private void ShowOwnedMessage(string message, string title, MessageBoxImage image)
+    {
+        var owner = Window.GetWindow(this);
+        if (owner is null)
+            MessageBox.Show(message, title, MessageBoxButton.OK, image);
+        else
+            MessageBox.Show(owner, message, title, MessageBoxButton.OK, image);
     }
 
     // ── 通货网格 ──
@@ -514,6 +553,31 @@ public partial class CraftPage : UserControl
         _dirty = true;
     }
 
+    private void Mode3DebugDelay_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_initialized || _restoringDebugDelay || Mode3DebugDelayCombo.SelectedItem is not ComboBoxItem item) return;
+        _tool.Mode3DebugDelayMs = int.TryParse(item.Tag?.ToString(), out var value)
+            ? CraftTool.NormalizeMode3DebugDelay(value)
+            : 0;
+        _dirty = true;
+    }
+
+    private void SelectMode3DebugDelay(int value)
+    {
+        var normalized = CraftTool.NormalizeMode3DebugDelay(value);
+        _restoringDebugDelay = true;
+        try
+        {
+            Mode3DebugDelayCombo.SelectedItem = Mode3DebugDelayCombo.Items
+                .OfType<ComboBoxItem>()
+                .First(item => string.Equals(item.Tag?.ToString(), normalized.ToString(), StringComparison.Ordinal));
+        }
+        finally
+        {
+            _restoringDebugDelay = false;
+        }
+    }
+
     private CraftMode CurrentModeFromRadio()
     {
         if (Mode1Radio.IsChecked == true) return CraftMode.Single;
@@ -685,6 +749,10 @@ public partial class CraftPage : UserControl
         _tool.Mode2ScourAlch = Mode2ScourAlch.IsChecked == true;
         _tool.UseExalt = ExaltCheck.IsChecked == true;
         _tool.DelayMs = (int)DelaySlider.Value;
+        _tool.Mode3DebugDelayMs = Mode3DebugDelayCombo.SelectedItem is ComboBoxItem debugItem &&
+                                  int.TryParse(debugItem.Tag?.ToString(), out var debugDelay)
+            ? CraftTool.NormalizeMode3DebugDelay(debugDelay)
+            : 0;
     }
 
     // ── 引擎事件（后台线程 → Dispatcher）──
@@ -696,11 +764,11 @@ public partial class CraftPage : UserControl
 
         engine.StatusUpdated += s => Dispatcher.BeginInvoke(() =>
         {
-            CraftStatusText.Text = s.Text;
+            CraftStatusText.Text = _tool.IsEnabled ? s.Text : "功能已停用";
         });
         engine.Stopped += reason => Dispatcher.BeginInvoke(() =>
         {
-            CraftStatusText.Text = reason;
+            CraftStatusText.Text = _tool.IsEnabled ? reason : "功能已停用";
         });
         // 错误弹窗由 CraftTool 全局订阅（页面未开也弹），这里不重复订阅
     }
