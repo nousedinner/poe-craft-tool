@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <StartupObject>ShiKe.Bootstrapper</StartupObject>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <!-- WinForms 互操作：阶段2 托盘 NotifyIcon 用 -->
@@ -11,8 +12,10 @@
     <RootNamespace>ShiKe</RootNamespace>
     <AssemblyName>拾刻</AssemblyName>
     <ApplicationIcon>poe.ico</ApplicationIcon>
+    <!-- 编译产物集中保存；日常运行目录的 data 不作为构建输出。 -->
+    <BaseOutputPath>bin\Release\net10.0-windows\构建\</BaseOutputPath>
     <!-- 版本单一来源：续用 1.x 系列，C# 版从 v1.0.5 起（方案 §10） -->
-    <Version>1.0.27</Version>
+    <Version>1.0.33</Version>
     <AssemblyTitle>拾刻</AssemblyTitle>
     <Product>拾刻</Product>
     <Description>PoE 洗词缀自动化 + 连点器 + 按键循环 + 一键回城聚合工具（C# 重构版）</Description>

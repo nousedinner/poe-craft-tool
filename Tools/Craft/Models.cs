@@ -237,6 +237,10 @@ public sealed class CraftRules
     /// <summary>验证规则约束（对齐 Python validate；primary_hit_count=0 合法，方案 D5）。</summary>
     public (bool Ok, string Message) Validate()
     {
+        if (!Enum.IsDefined(Mode))
+            return (false, "洗词缀模式无法识别，请重新选择模式");
+        if (PrimaryHitCount < 0 || SecondaryHitCount < 0)
+            return (false, "主/次词缀命中数不能为负数");
         var seenRules = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (poolName, rules) in new[]
                  {

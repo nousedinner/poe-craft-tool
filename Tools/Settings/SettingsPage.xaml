@@ -22,6 +22,12 @@
             <Setter Property="FontWeight" Value="Bold"/>
             <Setter Property="Cursor" Value="Hand"/>
         </Style>
+        <Style x:Key="ClearHotkeyButton" TargetType="Button" BasedOn="{StaticResource HotkeyButton}">
+            <Setter Property="Width" Value="46"/>
+            <Setter Property="Margin" Value="6,0,0,0"/>
+            <Setter Property="FontWeight" Value="Normal"/>
+            <Setter Property="ToolTip" Value="清空此项热键，功能启用状态不变"/>
+        </Style>
         <Style x:Key="SettingLabel" TargetType="TextBlock">
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Foreground" Value="#445566"/>
@@ -47,6 +53,7 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="34"/><RowDefinition Height="34"/><RowDefinition Height="34"/>
@@ -56,27 +63,43 @@
                         <TextBlock Grid.Row="0" Text="启动洗装" Style="{StaticResource SettingLabel}"/>
                         <Button x:Name="CraftStartButton" Grid.Row="0" Grid.Column="1" Tag="craft_start"
                                 Style="{StaticResource HotkeyButton}" Click="BeginHotkeyCapture_Click"/>
+                        <Button Grid.Row="0" Grid.Column="2" Tag="craft_start" Content="清空"
+                                Style="{StaticResource ClearHotkeyButton}" Click="ClearHotkey_Click"/>
                         <TextBlock Grid.Row="1" Text="停止洗装" Style="{StaticResource SettingLabel}"/>
                         <Button x:Name="CraftStopButton" Grid.Row="1" Grid.Column="1" Tag="craft_stop"
                                 Style="{StaticResource HotkeyButton}" Click="BeginHotkeyCapture_Click"/>
+                        <Button Grid.Row="1" Grid.Column="2" Tag="craft_stop" Content="清空"
+                                Style="{StaticResource ClearHotkeyButton}" Click="ClearHotkey_Click"/>
                         <TextBlock Grid.Row="2" Text="坐标录制" Style="{StaticResource SettingLabel}"/>
                         <Button x:Name="CoordinateButton" Grid.Row="2" Grid.Column="1" Tag="coordinate"
                                 Style="{StaticResource HotkeyButton}" Click="BeginHotkeyCapture_Click"/>
+                        <Button Grid.Row="2" Grid.Column="2" Tag="coordinate" Content="清空"
+                                Style="{StaticResource ClearHotkeyButton}" Click="ClearHotkey_Click"/>
                         <TextBlock Grid.Row="3" Text="连点器切换" Style="{StaticResource SettingLabel}"/>
                         <Button x:Name="ClickerToggleButton" Grid.Row="3" Grid.Column="1" Tag="clicker_toggle"
                                 Style="{StaticResource HotkeyButton}" Click="BeginHotkeyCapture_Click"/>
+                        <Button Grid.Row="3" Grid.Column="2" Tag="clicker_toggle" Content="清空"
+                                Style="{StaticResource ClearHotkeyButton}" Click="ClearHotkey_Click"/>
                         <TextBlock Grid.Row="4" Text="连点器按住" Style="{StaticResource SettingLabel}"/>
                         <Button x:Name="ClickerHoldButton" Grid.Row="4" Grid.Column="1" Tag="clicker_hold"
                                 Style="{StaticResource HotkeyButton}" Click="BeginHotkeyCapture_Click"/>
+                        <Button Grid.Row="4" Grid.Column="2" Tag="clicker_hold" Content="清空"
+                                Style="{StaticResource ClearHotkeyButton}" Click="ClearHotkey_Click"/>
                         <TextBlock Grid.Row="5" Text="按键循环" Style="{StaticResource SettingLabel}"/>
                         <Button x:Name="KeyLoopButton" Grid.Row="5" Grid.Column="1" Tag="keyloop"
                                 Style="{StaticResource HotkeyButton}" Click="BeginHotkeyCapture_Click"/>
+                        <Button Grid.Row="5" Grid.Column="2" Tag="keyloop" Content="清空"
+                                Style="{StaticResource ClearHotkeyButton}" Click="ClearHotkey_Click"/>
                         <TextBlock Grid.Row="6" Text="一键回城" Style="{StaticResource SettingLabel}"/>
                         <Button x:Name="HideoutButton" Grid.Row="6" Grid.Column="1" Tag="hideout"
                                 Style="{StaticResource HotkeyButton}" Click="BeginHotkeyCapture_Click"/>
+                        <Button Grid.Row="6" Grid.Column="2" Tag="hideout" Content="清空"
+                                Style="{StaticResource ClearHotkeyButton}" Click="ClearHotkey_Click"/>
                     </Grid>
                     <TextBlock Text="点击右侧按键后输入新热键；Esc 取消。除“连点器按住”外，不能只绑定 Ctrl/Alt/Shift。"
                                Foreground="#7B8C9D" FontSize="11" Margin="0,7,0,0" TextWrapping="Wrap"/>
+                    <TextBlock Text="新绑定优先，冲突旧项会自动清空；未绑定项不响应快捷键。洗装停止热键未绑定时无法启动洗装。"
+                               Foreground="#7B8C9D" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
                     <Button Content="恢复默认热键" Width="104" Height="29" HorizontalAlignment="Left"
                             Margin="0,10,0,0" Background="#66FFFFFF" BorderBrush="#B9D0E2"
                             Foreground="{StaticResource AccentBrush}" Cursor="Hand"

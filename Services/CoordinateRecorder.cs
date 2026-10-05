@@ -49,10 +49,10 @@ public sealed class CoordinateRecorder
             return;
         }
 
-        _activeSlot = null; // 成功取得位置后再清除；失败允许原槽位直接重试
         var coords = _storage.LoadCoordinates();
         coords[slot.SlotId] = pt.Value;
         _storage.SaveCoordinates(coords);
+        _activeSlot = null; // 保存成功后再清除；读取或保存失败时允许原槽位重试。
         RecordingCompleted?.Invoke(slot, pt.Value);
     }
 
@@ -62,11 +62,20 @@ public sealed class CoordinateRecorder
     public Point? GetCoordinate(string slotId)
         => _storage.LoadCoordinates().TryGetValue(slotId, out var pt) ? pt : null;
 
-    public void ClearCoordinate(string slotId)
+    /// <summary>一次读取全部坐标，用于整页刷新；不长期缓存文件。</summary>
+    public Dictionary<string, Point> GetCoordinates() => _storage.LoadCoordinates();
+
+    public void ClearCoordinate(string slotId) => ClearCoordinates([slotId]);
+
+    /// <summary>整组清空只持久化一次；保存失败时原件与录制状态都保留。</summary>
+    public void ClearCoordinates(IEnumerable<string> slotIds)
     {
+        var ids = slotIds.ToHashSet(StringComparer.Ordinal);
         var coords = _storage.LoadCoordinates();
-        if (coords.Remove(slotId))
-            _storage.SaveCoordinates(coords);
+        var changed = false;
+        foreach (var id in ids) changed |= coords.Remove(id);
+        if (changed) _storage.SaveCoordinates(coords);
+        if (_activeSlot is not null && ids.Contains(_activeSlot.SlotId)) _activeSlot = null;
     }
 
     // ── 光标位置 ──

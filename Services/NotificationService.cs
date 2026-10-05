@@ -12,13 +12,15 @@ namespace ShiKe.Services;
 /// - 无边框 + Topmost + 不抢焦点 + 透明背景；屏幕中央；2s 自动消失
 /// - WS_EX_TRANSPARENT 确保不拦截鼠标事件
 /// </summary>
-public sealed class NotificationService
+public sealed class NotificationService : IDisposable
 {
-    private readonly Window _overlay;
-    private readonly TextBlock _label;
-    private readonly DispatcherTimer _dismissTimer;
-    private DateTime _lastShowTime = DateTime.MinValue;
+    private readonly Dispatcher _dispatcher;
+    private Window? _overlay;
+    private TextBlock? _label;
+    private DispatcherTimer? _dismissTimer;
     private bool _errorShown;
+    private volatile bool _disposed;
+    private bool _overlayClosed;
 
     // Win32 扩展窗口样式
     private const int GWL_EXSTYLE = -20;
@@ -36,7 +38,11 @@ public sealed class NotificationService
     private static extern int MessageBoxW(nint hwnd, string text, string caption, uint type);
 
     public NotificationService()
+        => _dispatcher = Dispatcher.CurrentDispatcher;
+
+    private void EnsureOverlay()
     {
+        if (_overlay is not null) return;
         _label = new TextBlock
         {
             Foreground = Brushes.White,
@@ -76,54 +82,51 @@ public sealed class NotificationService
             var exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
             SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW);
         };
+        _overlay.Closed += (_, _) => _overlayClosed = true;
 
         _dismissTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-        _dismissTimer.Tick += (_, _) =>
-        {
-            _dismissTimer.Stop();
-            _overlay.Hide();
-        };
+        _dismissTimer.Tick += DismissTimer_Tick;
     }
 
-    /// <summary>显示浮层通知（2s 自动消失；2200ms 防重）。</summary>
+    /// <summary>软件配置或文件错误：归属于软件窗口，不使用游戏运行错误的强制置顶标志。</summary>
+    public static void ShowConfigurationError(string message, Window? owner = null)
+    {
+        if (owner is { IsVisible: true })
+            MessageBox.Show(owner, message, "配置文件错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            MessageBox.Show(message, "配置文件错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    /// <summary>显示浮层通知（新消息覆盖旧消息，2s 自动消失）。</summary>
     public void Show(string message)
     {
-        var dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher is null || dispatcher.CheckAccess())
-            ShowCore(message);
-        else
-            dispatcher.BeginInvoke(() => ShowCore(message));
+        DispatchWhileActive(() => ShowCore(message));
     }
 
     private void ShowCore(string message)
     {
-        var now = DateTime.Now;
-        _lastShowTime = now;
-
-        _label.Text = message;
+        if (_disposed || _overlayClosed) return;
+        EnsureOverlay();
+        _label!.Text = message;
         // 始终重新显示（覆盖旧通知或从隐藏状态恢复）
-        _overlay.Show();
+        _overlay!.Show();
         var work = SystemParameters.WorkArea;
         _overlay.Left = work.Left + (work.Width - _overlay.ActualWidth) / 2;
         _overlay.Top = work.Top + (work.Height - _overlay.ActualHeight) / 2;
 
-        _dismissTimer.Stop();
+        _dismissTimer!.Stop();
         _dismissTimer.Start();
     }
 
     /// <summary>错误提示（模态 MessageBox + 防风暴）。</summary>
     public void ShowError(string message)
     {
-        var dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher is null || dispatcher.CheckAccess())
-            ShowErrorCore(message);
-        else
-            dispatcher.BeginInvoke(() => ShowErrorCore(message));
+        DispatchWhileActive(() => ShowErrorCore(message));
     }
 
     private void ShowErrorCore(string message)
     {
-        if (_errorShown) return;
+        if (_disposed || _errorShown) return;
         _errorShown = true;
         try
         {
@@ -139,7 +142,47 @@ public sealed class NotificationService
 
     public void Hide()
     {
-        _dismissTimer.Stop();
-        _overlay.Hide();
+        DispatchWhileActive(() =>
+        {
+            _dismissTimer?.Stop();
+            if (!_overlayClosed) _overlay?.Hide();
+        });
+    }
+
+    private void DismissTimer_Tick(object? sender, EventArgs e) => Hide();
+
+    private void DispatchWhileActive(Action action)
+    {
+        var dispatcher = _dispatcher;
+        if (_disposed || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+        if (dispatcher.CheckAccess())
+            action();
+        else
+            dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (!_disposed && !dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished)
+                    action();
+            }));
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        var dispatcher = _dispatcher;
+        if (dispatcher.CheckAccess())
+            DisposeCore();
+        else if (!dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished)
+            dispatcher.BeginInvoke(new Action(DisposeCore));
+    }
+
+    private void DisposeCore()
+    {
+        if (_dismissTimer is not null)
+        {
+            _dismissTimer.Stop();
+            _dismissTimer.Tick -= DismissTimer_Tick;
+        }
+        if (!_overlayClosed) _overlay?.Close();
     }
 }

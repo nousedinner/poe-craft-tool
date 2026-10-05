@@ -27,7 +27,8 @@ public sealed class StorageService
     public StorageService(string? dataDir = null)
     {
         DataDir = dataDir ?? Path.Combine(AppContext.BaseDirectory, "data");
-        Directory.CreateDirectory(DataDir);
+        try { Directory.CreateDirectory(DataDir); }
+        catch (Exception ex) when (IsFileError(ex)) { throw new StorageException("创建数据目录", DataDir, ex); }
     }
 
     // ── settings.json：分节加载 + 旧版迁移 ──
@@ -45,33 +46,32 @@ public sealed class StorageService
 
     private JsonObject LoadSettingsCore()
     {
-        if (!File.Exists(SettingsPath)) return [];
-
         try
         {
-            var originalText = File.ReadAllText(SettingsPath);
-            var root = JsonNode.Parse(originalText) as JsonObject ?? [];
+            var root = ReadJsonObject(SettingsPath, ValidateSettings);
+            if (root is null) return [];
             if (IsSectionedSettings(root))
                 return root; // 已是分节格式
 
             // 旧版平铺 → 先备份原始文件，再原子写入迁移结果。
             // 不可先覆盖再 Move，否则被移走的是新文件而不是旧文件。
             var migrated = MigrateLegacySettings(root);
+            ValidateSettings(migrated);
             File.Copy(SettingsPath, SettingsPath + ".bak", overwrite: true);
             WriteJsonAtomic(SettingsPath, migrated);
             return migrated;
         }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        catch (StorageException) { throw; }
+        catch (Exception ex) when (IsFileError(ex))
         {
-            Diag.Log($"[存储] settings.json 加载/迁移失败: {ex.GetType().Name}: {ex.Message}");
-            return []; // 损坏文件：不覆盖，返回空
+            throw new StorageException("加载或迁移设置", SettingsPath, ex);
         }
     }
 
     public void SaveSettings(JsonObject root)
     {
         lock (_settingsGate)
-            WriteJsonAtomic(SettingsPath, root);
+            WriteJsonProtected(SettingsPath, root, ValidateSettings);
     }
 
     /// <summary>在同一锁内读取、修改并原子保存 settings，避免不同设置入口互相覆盖。</summary>
@@ -82,13 +82,179 @@ public sealed class StorageService
         {
             var root = LoadSettingsCore();
             update(root);
-            WriteJsonAtomic(SettingsPath, root);
+            WriteJsonProtected(SettingsPath, root, ValidateSettings);
         }
     }
 
     private static bool IsSectionedSettings(JsonObject root)
         => root.ContainsKey("craft") || root.ContainsKey("clicker") || root.ContainsKey("keyloop") ||
            root.ContainsKey("hideout") || root.ContainsKey("host") || root.ContainsKey("schema_version");
+
+    private static bool IsFileError(Exception ex)
+        => ex is JsonException or InvalidDataException or IOException or UnauthorizedAccessException;
+
+    private static JsonObject? ReadJsonObject(string path, Action<JsonObject>? validate = null)
+    {
+        try
+        {
+            var root = JsonNode.Parse(File.ReadAllText(path)) as JsonObject
+                ?? throw new InvalidDataException("JSON 顶层必须是对象，不能是数组、空值或其他类型");
+            validate?.Invoke(root);
+            return root;
+        }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
+        catch (Exception ex) when (IsFileError(ex)) { throw new StorageException("读取文件", path, ex); }
+    }
+
+    private static void WriteJsonProtected(string path, JsonObject root, Action<JsonObject>? validate = null)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        try
+        {
+            validate?.Invoke(root);
+            // 保存也重新读取现有文件，防止启动后文件损坏或被占用时覆盖成默认配置。
+            ReadJsonObject(path, validate);
+            WriteJsonAtomic(path, root);
+        }
+        catch (StorageException ex) { throw new StorageException("保存文件", path, ex.InnerException ?? ex); }
+        catch (Exception ex) when (IsFileError(ex)) { throw new StorageException("保存文件", path, ex); }
+    }
+
+    private static void ValidateSettings(JsonObject root)
+    {
+        if (!IsSectionedSettings(root))
+        {
+            ValidateIntFields(root, "delay_ms", "clipboard_unchanged_threshold", "clicker_interval_ms");
+            ValidateBoolFields(root, "sound_enabled", "popup_enabled", "auto_detect_poe", "hideout_enabled");
+            ValidateStringFields(root, "hotkey_start", "hotkey_stop", "hotkey_set_coord", "target_process",
+                "selected_sound", "clicker_hotkey", "clicker_hold_hotkey", "clicker_button", "clicker_mode",
+                "key_loop_hotkey", "hideout_hotkey");
+            ValidateSlots(root, "key_loop_slots");
+            // 直接保存也须检查旧平铺字段；只映射到内存，不触发备份或写入。
+            ValidateSettings(MigrateLegacySettings(root));
+            return;
+        }
+        foreach (var key in new[] { "craft", "clicker", "keyloop", "hideout", "host" })
+            if (root.TryGetPropertyValue(key, out var section) && section is not JsonObject)
+                throw new InvalidDataException($"设置分节“{key}”必须是对象");
+        ValidateIntFields(root, "schema_version");
+        if (root["host"] is JsonObject host)
+        {
+            ValidateStringFields(host, "target_process");
+            ValidateBoolFields(host, "auto_detect_poe");
+            if (host.TryGetPropertyValue("hotkeys", out var hotkeys))
+            {
+                if (hotkeys is not JsonObject keys) throw new InvalidDataException("host.hotkeys 必须是对象");
+                ValidateStringFields(keys, "start", "stop", "coordinate");
+            }
+        }
+        if (root["craft"] is JsonObject craft)
+        {
+            ValidateIntFields(craft, "delay_ms", "clipboard_unchanged_threshold");
+            ValidateBoolFields(craft, "enabled", "sound_enabled", "popup_enabled", "mode2_scour_alch", "use_exalt");
+            ValidateStringFields(craft, "selected_sound");
+        }
+        if (root["clicker"] is JsonObject clicker)
+        {
+            ValidateIntFields(clicker, "interval_ms");
+            ValidateBoolFields(clicker, "enabled", "notifications_enabled");
+            ValidateStringFields(clicker, "hotkey", "hold_hotkey", "button", "mode");
+        }
+        if (root["hideout"] is JsonObject hideout)
+        {
+            ValidateBoolFields(hideout, "enabled");
+            ValidateStringFields(hideout, "hotkey", "command");
+        }
+        if (root["keyloop"] is JsonObject keyLoop)
+        {
+            ValidateBoolFields(keyLoop, "enabled", "notifications_enabled");
+            ValidateStringFields(keyLoop, "hotkey");
+            ValidateSlots(keyLoop, "slots");
+        }
+    }
+
+    private static void ValidateSlots(JsonObject root, string propertyName)
+    {
+        if (!root.TryGetPropertyValue(propertyName, out var slotValue)) return;
+        if (slotValue is not JsonArray slots) throw new InvalidDataException($"“{propertyName}”必须是槽位数组");
+        foreach (var slotValueItem in slots)
+        {
+            if (slotValueItem is not JsonObject slot) throw new InvalidDataException("按键循环槽位必须是对象");
+            ValidateBoolFields(slot, "enabled");
+            ValidateStringFields(slot, "key");
+            foreach (var key in new[] { "delay_s", "delay" })
+            {
+                if (slot.TryGetPropertyValue(key, out var value) &&
+                    (value is not JsonValue || value.GetValueKind() != JsonValueKind.Number ||
+                     !JsonSerializer.SerializeToElement(value).TryGetDouble(out var delay) || !double.IsFinite(delay)))
+                    throw new InvalidDataException($"按键循环槽位的“{key}”必须是有限数值");
+            }
+        }
+    }
+
+    private static void ValidateIntFields(JsonObject root, params string[] keys)
+    {
+        foreach (var key in keys)
+            if (root.TryGetPropertyValue(key, out var value) && (value is not JsonValue v || !v.TryGetValue<int>(out _)))
+                throw new InvalidDataException($"“{key}”必须是整数");
+    }
+
+    private static void ValidateBoolFields(JsonObject root, params string[] keys)
+    {
+        foreach (var key in keys)
+            if (root.TryGetPropertyValue(key, out var value) && (value is not JsonValue v || !v.TryGetValue<bool>(out _)))
+                throw new InvalidDataException($"“{key}”必须是布尔值");
+    }
+
+    private static void ValidateStringFields(JsonObject root, params string[] keys)
+    {
+        foreach (var key in keys)
+            if (root.TryGetPropertyValue(key, out var value) && (value is not JsonValue v || !v.TryGetValue<string>(out _)))
+                throw new InvalidDataException($"“{key}”必须是字符串");
+    }
+
+    private static void ValidateRules(JsonObject root)
+    {
+        ValidateIntFields(root, "primary_hit_count", "secondary_hit_count");
+        foreach (var key in new[] { "primary_hit_count", "secondary_hit_count" })
+            if (root[key] is JsonValue hits && hits.TryGetValue<int>(out var count) && count < 0)
+                throw new InvalidDataException($"“{key}”不能为负数");
+        if (root.TryGetPropertyValue("single_currency", out var currency) &&
+            (currency is not JsonValue cv || !cv.TryGetValue<string>(out _)))
+            throw new InvalidDataException("single_currency 必须是通货名称字符串");
+        if (root.TryGetPropertyValue("mode", out var mode) &&
+            (mode is not JsonValue mv ||
+             !(mv.TryGetValue<int>(out var modeNumber) && modeNumber is >= 1 and <= 3 ||
+               mv.TryGetValue<string>(out var modeName) && modeName is "single" or "alt_aug" or "alt_aug_regal")))
+            throw new InvalidDataException("mode 必须是 1～3，或 single / alt_aug / alt_aug_regal");
+        foreach (var key in new[] { "primary_affixes", "secondary_affixes", "exclude_affixes" })
+        {
+            if (!root.ContainsKey(key)) continue;
+            if (root[key] is not JsonArray entries)
+                throw new InvalidDataException($"“{key}”必须是词缀数组");
+            foreach (var entry in entries)
+            {
+                if (entry is JsonValue text && text.TryGetValue<string>(out _)) continue;
+                if (entry is JsonObject obj && obj["text"] is JsonValue tv && tv.TryGetValue<string>(out _)) continue;
+                throw new InvalidDataException($"“{key}”中的词缀必须是字符串或含 text 字符串的对象");
+            }
+        }
+    }
+
+    private static Point ReadCoordinate(string key, JsonNode? value)
+    {
+        if (value is JsonArray arr && arr.Count >= 2 &&
+            arr[0] is JsonValue xv && xv.TryGetValue<int>(out var x) &&
+            arr[1] is JsonValue yv && yv.TryGetValue<int>(out var y))
+            return new Point(x, y);
+        throw new InvalidDataException($"坐标“{key}”必须是至少包含两个整数的数组");
+    }
+
+    private static void ValidateCoordinates(JsonObject root)
+    {
+        foreach (var (key, value) in root) ReadCoordinate(key, value);
+    }
 
     private static void WriteJsonAtomic(string path, JsonObject root)
     {
@@ -102,7 +268,11 @@ public sealed class StorageService
         }
         finally
         {
-            if (File.Exists(tempPath)) File.Delete(tempPath);
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); }
+            catch (Exception ex) when (IsFileError(ex))
+            {
+                Diag.Log($"[存储] 临时文件清理失败: {tempPath}, {ex.Message}");
+            }
         }
     }
 
@@ -160,27 +330,13 @@ public sealed class StorageService
 
     // ── coordinates.json（兼容旧版）──
 
-    /// <summary>加载坐标：{slotId: Point}。文件缺失/损坏返回空字典（抽屉自行兜底 null）。</summary>
+    /// <summary>加载坐标：{slotId: Point}。缺失返回空字典；损坏或无法读取必须报告，不能返回部分坐标。</summary>
     public Dictionary<string, Point> LoadCoordinates()
     {
         var result = new Dictionary<string, Point>();
-        if (!File.Exists(CoordinatesPath)) return result;
-        try
-        {
-            var root = JsonNode.Parse(File.ReadAllText(CoordinatesPath)) as JsonObject;
-            if (root is null) return result;
-            foreach (var (key, val) in root)
-            {
-                if (val is JsonArray arr && arr.Count >= 2 &&
-                    arr[0] is JsonValue xv && arr[1] is JsonValue yv)
-                {
-                    var x = xv.GetValue<int>();
-                    var y = yv.GetValue<int>();
-                    result[key] = new Point(x, y);
-                }
-            }
-        }
-        catch (JsonException) { }
+        var root = ReadJsonObject(CoordinatesPath, ValidateCoordinates);
+        if (root is not null)
+            foreach (var (key, value) in root) result[key] = ReadCoordinate(key, value);
         return result;
     }
 
@@ -189,58 +345,55 @@ public sealed class StorageService
         var obj = new JsonObject();
         foreach (var (key, pt) in coords)
             obj[key] = new JsonArray((int)pt.X, (int)pt.Y);
-        WriteJsonAtomic(CoordinatesPath, obj);
+        WriteJsonProtected(CoordinatesPath, obj, ValidateCoordinates);
     }
 
     // ── rules.json（兼容旧版，阶段3 使用）──
 
     public JsonObject? LoadRules()
     {
-        if (!File.Exists(RulesPath)) return null;
-        try
-        {
-            return JsonNode.Parse(File.ReadAllText(RulesPath)) as JsonObject;
-        }
-        catch (JsonException) { return null; }
+        return ReadJsonObject(RulesPath, ValidateRules);
     }
 
     public void SaveRules(JsonObject rules)
     {
-        WriteJsonAtomic(RulesPath, rules);
+        WriteJsonProtected(RulesPath, rules, ValidateRules);
     }
 
     // ── presets ──
 
     public List<string> ListPresets()
     {
-        Directory.CreateDirectory(PresetsDir);
-        return Directory.GetFiles(PresetsDir, "*.json")
-                        .Select(Path.GetFileNameWithoutExtension)
-                        .Where(n => n is not null)
-                        .Select(n => n!)
-                        .OrderBy(n => n, StringComparer.Ordinal)
-                        .ToList();
+        try
+        {
+            Directory.CreateDirectory(PresetsDir);
+            return Directory.GetFiles(PresetsDir, "*.json")
+                            .Select(Path.GetFileNameWithoutExtension)
+                            .Where(n => n is not null)
+                            .Select(n => n!)
+                            .OrderBy(n => n, StringComparer.Ordinal)
+                            .ToList();
+        }
+        catch (Exception ex) when (IsFileError(ex)) { throw new StorageException("读取预设目录", PresetsDir, ex); }
     }
 
     public JsonObject? LoadPreset(string name)
     {
         var path = GetPresetPath(name);
-        if (!File.Exists(path)) return null;
-        try { return JsonNode.Parse(File.ReadAllText(path)) as JsonObject; }
-        catch (JsonException) { return null; }
+        return ReadJsonObject(path, ValidateRules);
     }
 
     public void SavePreset(string name, JsonObject preset)
     {
         ArgumentNullException.ThrowIfNull(preset);
-        Directory.CreateDirectory(PresetsDir);
-        WriteJsonAtomic(GetPresetPath(name), preset);
+        WriteJsonProtected(GetPresetPath(name), preset, ValidateRules);
     }
 
     public void DeletePreset(string name)
     {
         var path = GetPresetPath(name);
-        if (File.Exists(path)) File.Delete(path);
+        try { File.Delete(path); }
+        catch (Exception ex) when (IsFileError(ex)) { throw new StorageException("删除预设", path, ex); }
     }
 
     /// <summary>验证用户可见的预设名称；服务入口仍会再次验证，不能只依赖 UI。</summary>

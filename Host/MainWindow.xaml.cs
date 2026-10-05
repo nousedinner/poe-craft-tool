@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -16,12 +15,27 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, FrameworkElement> _pages = [];
     private ITool? _currentTool;
     private string? _bottomAdUrl;
+    private volatile bool _statusUiVisible;
+    private int _statusRefreshPending;
+    private static readonly SolidColorBrush ActiveStatusBrush = MakeStatusBrush(0x1B, 0x8A, 0x3E);
+    private static readonly SolidColorBrush IdleStatusBrush = MakeStatusBrush(0xAA, 0xAA, 0xAA);
 
     public MainWindow(ToolRegistry registry, ToolHost host)
     {
         InitializeComponent();
         _registry = registry;
         _host = host;
+        _host.Statuses.Changed += ScheduleStatusRefresh;
+        IsVisibleChanged += (_, _) =>
+        {
+            _statusUiVisible = IsVisible;
+            if (_statusUiVisible) RefreshStatus();
+        };
+        Closed += (_, _) =>
+        {
+            _statusUiVisible = false;
+            _host.Statuses.Changed -= ScheduleStatusRefresh;
+        };
 
         // 导航绑定注册表，注册顺序 = 导航顺序
         ToolList.ItemsSource = registry.Tools;
@@ -38,7 +52,11 @@ public partial class MainWindow : Window
             return;
 
         // 切走通知
-        _currentTool?.OnDeactivate();
+        try { _currentTool?.OnDeactivate(); }
+        catch (StorageException error)
+        {
+            NotificationService.ShowConfigurationError(error.Message, this);
+        }
         _currentTool = tool;
 
         // 懒加载：首次选中创建页面，后续复用缓存
@@ -50,16 +68,47 @@ public partial class MainWindow : Window
 
         ToolContent.Content = page;
         tool.OnActivate();
+        RefreshStatus();
     }
 
     // ── 状态栏 ──
 
-    public void SetStatus(string text, bool active = false)
+    private static SolidColorBrush MakeStatusBrush(byte red, byte green, byte blue)
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(red, green, blue));
+        brush.Freeze();
+        return brush;
+    }
+
+    private void ScheduleStatusRefresh()
+    {
+        if (!_statusUiVisible || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished ||
+            Interlocked.Exchange(ref _statusRefreshPending, 1) != 0) return;
+        try
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                Interlocked.Exchange(ref _statusRefreshPending, 0);
+                if (_statusUiVisible) RefreshStatus();
+            });
+        }
+        catch (InvalidOperationException) { Interlocked.Exchange(ref _statusRefreshPending, 0); }
+    }
+
+    public void RefreshStatus()
+    {
+        var (selected, anyRunning) = _host.Statuses.Read(_currentTool?.Id ?? "");
+        var text = selected?.Text ?? (anyRunning ? "其他工具正在运行" :
+            string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess) ? "就绪" : $"已锁定: {_host.Foreground.TargetProcess}");
+        if (selected is { Running: false } && anyRunning) text += "；另有工具运行中";
+        SetStatus(text, anyRunning);
+        SetUseCount(_currentTool?.Id == "craft" ? selected?.UseCount ?? 0 : 0);
+    }
+
+    private void SetStatus(string text, bool active)
     {
         StatusText.Text = text;
-        StatusDot.Foreground = active
-            ? new SolidColorBrush(Color.FromRgb(0x1B, 0x8A, 0x3E))
-            : new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xAA));
+        StatusDot.Foreground = active ? ActiveStatusBrush : IdleStatusBrush;
     }
 
     /// <summary>已使用次数（洗装模式下显示）。</summary>
@@ -81,7 +130,7 @@ public partial class MainWindow : Window
     {
         TopAdPanel.Children.Clear();
 
-        var topAds = ads.Where(a => a.Location == "top").ToList();
+        var topAds = ads.Where(a => a.Location == "top" && a.Type == "text" && !string.IsNullOrWhiteSpace(a.Text)).ToList();
         if (topAds.Count == 0)
         {
             TopAdPanel.Children.Add(MakeAdPlaceholder());
@@ -109,7 +158,7 @@ public partial class MainWindow : Window
             }
         }
 
-        var bottomAd = ads.FirstOrDefault(a => a.Location == "bottom");
+        var bottomAd = ads.FirstOrDefault(a => a.Location == "bottom" && a.Type == "text" && !string.IsNullOrWhiteSpace(a.Text));
         if (bottomAd is { Type: "text" })
         {
             BottomAdButton.Content = bottomAd.Text;
@@ -145,15 +194,9 @@ public partial class MainWindow : Window
 
     private void FeedbackButton_Click(object sender, RoutedEventArgs e) => OpenBrowser(FeedbackUrl);
 
-    private static void OpenBrowser(string url)
+    private void OpenBrowser(string url)
     {
-        try
-        {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-        }
-        catch (Exception)
-        {
-            // 打开失败静默
-        }
+        if (!BrowserLauncher.TryOpen(url, out var error))
+            MessageBox.Show(this, error, "无法打开网页", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 }

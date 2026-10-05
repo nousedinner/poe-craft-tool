@@ -11,7 +11,7 @@ namespace ShiKe.Services;
 /// </summary>
 public sealed class ForegroundDetector
 {
-    /// <summary>目标进程名（带 .exe，如 "PathOfExile.exe"）。空 = 不检测。</summary>
+    /// <summary>目标进程名（带 .exe，如 "PathOfExile.exe"）。空时拒绝启动自动操作。</summary>
     public string? TargetProcess { get; set; }
 
     /// <summary>自动检测的 5 个 POE 进程变体（方案 §8）。</summary>
@@ -141,9 +141,10 @@ public sealed class ForegroundDetector
         {
             foreach (var p in Process.GetProcesses())
             {
+                using var process = p;
                 try
                 {
-                    names.Add(p.ProcessName + ".exe");
+                    names.Add(process.ProcessName + ".exe");
                 }
                 catch (Exception)
                 {

@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using ShiKe.Services;
 
 namespace ShiKe.Tools.KeyLoop;
 
@@ -29,7 +30,7 @@ public partial class KeyLoopPage : UserControl
         _tool = tool;
         InitializeComponent();
         EnableToolSwitch.IsChecked = tool.IsEnabled;
-        HotkeyText.Text = tool.Hotkey;
+        RefreshSettingsPresentation();
         BuildRows();
         ApplyStatus(new KeyLoopStatus(tool.IsRunning, Enumerable.Repeat(0, KeyLoopEngine.MaxSlots).ToArray(),
             tool.IsRunning ? "按键循环运行中..." : "按键循环就绪"));
@@ -150,7 +151,7 @@ public partial class KeyLoopPage : UserControl
 
     internal void RefreshSettingsPresentation()
     {
-        HotkeyText.Text = _tool.Hotkey;
+        HotkeyText.Text = HotkeySetting.Display(_tool.Hotkey);
     }
 
     internal void RefreshEnabledPresentation()

@@ -36,6 +36,7 @@ public sealed class ClickerTool : ITool, IEnableableTool
         _engine = new ClickerEngine(host);
         _engine.StatusUpdated += status =>
         {
+            host.Statuses.Report(Id, status.Text, status.Running);
             StatusUpdated?.Invoke(status);
             var stateChanged = _lastReportedRunning != status.Running;
             _lastReportedRunning = status.Running;
@@ -130,10 +131,9 @@ public sealed class ClickerTool : ITool, IEnableableTool
     public ToolEnablementResult SetEnabled(bool enabled)
     {
         if (_host is null) return ToolEnablementResult.Fail("连点器尚未初始化");
-        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, Stop);
+        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, Stop, SaveSettingsToStorage);
         if (result.Success)
         {
-            SaveSettingsToStorage();
             _page?.RefreshEnabledPresentation();
         }
         return result;
@@ -160,13 +160,10 @@ public sealed class ClickerTool : ITool, IEnableableTool
         if (section.TryGetProperty("enabled", out var enabled) &&
             enabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
             _enabled = enabled.GetBoolean();
-        if (section.TryGetProperty("hotkey", out var hotkey) && hotkey.ValueKind == JsonValueKind.String &&
-            !string.IsNullOrWhiteSpace(hotkey.GetString()))
-            Hotkey = hotkey.GetString()!;
-        if (section.TryGetProperty("hold_hotkey", out var holdHotkey) && holdHotkey.ValueKind == JsonValueKind.String &&
-            !string.IsNullOrWhiteSpace(holdHotkey.GetString()))
-            HoldHotkey = holdHotkey.GetString()!;
-        if (section.TryGetProperty("interval_ms", out var interval) && interval.TryGetInt32(out var intervalMs))
+        Hotkey = HotkeySetting.Read(section, "hotkey", Hotkey);
+        HoldHotkey = HotkeySetting.Read(section, "hold_hotkey", HoldHotkey);
+        if (section.TryGetProperty("interval_ms", out var interval) && interval.ValueKind == JsonValueKind.Number &&
+            interval.TryGetInt32(out var intervalMs))
             IntervalMs = Math.Clamp(intervalMs, 10, 200);
         if (section.TryGetProperty("button", out var button) && button.ValueKind == JsonValueKind.String)
             MouseButton = string.Equals(button.GetString(), "right", StringComparison.OrdinalIgnoreCase)

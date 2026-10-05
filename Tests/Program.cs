@@ -9,6 +9,10 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Xml.Linq;
+using System.Text;
+
+// 重定向日志与控制台使用同一编码，不能由 Windows 当前代码页决定中文用例名称。
+Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
 var tests = new (string Name, Action Run)[]
 {
@@ -22,9 +26,21 @@ var tests = new (string Name, Action Run)[]
     ("魔法名称与显式正文不会重复计算同一词缀", MagicNameDoesNotDuplicateExplicitAffix),
     ("同一候选不能同时计入主次池", OneCandidateCannotSatisfyPrimaryAndSecondary),
     ("三个词缀池禁止重复规则", DuplicateRuleAcrossPoolsIsRejected),
+    ("未知模式与负命中数拒绝运行且保留零命中语义", CraftRejectsInvalidRuleBounds),
     ("旧设置迁移保留原始备份", LegacySettingsMigrationKeepsOriginalBackup),
     ("仅 Hideout 分节不会被误迁移", HideoutOnlySectionIsRecognized),
     ("分节更新不会丢失其他设置", SectionUpdatePreservesOtherSections),
+    ("缺少数据文件仍使用正常默认值", MissingDataFilesRemainSupported),
+    ("损坏设置不迁移也不覆盖", DamagedSettingsAreNotOverwritten),
+    ("错误坐标不返回部分结果也不覆盖", InvalidCoordinatesAreNotOverwritten),
+    ("损坏规则和预设不覆盖并兼容字典词缀", InvalidRulesAndPresetsAreProtected),
+    ("文件占用和只读保存失败保留原件", InaccessibleFilesRemainIntact),
+    ("坐标保存失败保留录制状态供重试", CoordinateSaveFailureCanRetry),
+    ("删除预设只影响选中原件且失败可重试", PresetDeletionPreservesOtherData),
+    ("整组清空坐标失败保留原件与录制状态", CoordinateBatchClearIsAtomic),
+    ("抽屉标识不能重复或为空", ToolRegistryRejectsInvalidIdentity),
+    ("整组序列化失败不写入任何分节", ToolSettingsPersistenceRejectsPartialData),
+    ("多工具状态独立保存且全局活动标记准确", ToolStatusesRemainIndependent),
     ("预设名称限制在预设目录内", PresetNamesStayInsidePresetDirectory),
     ("坐标读取失败不保存零坐标", CursorReadFailureDoesNotSaveZeroCoordinate),
     ("Craft 和 Hideout 设置可由统一生命周期加载", ToolSettingsAreLoaded),
@@ -47,6 +63,8 @@ var tests = new (string Name, Action Run)[]
     ("滑块开关包含缓动动画", SwitchStyleContainsMotionAnimation),
     ("设置热键捕获成对暂停和恢复注册", SettingsHotkeyCaptureIsSymmetric),
     ("启动性能覆盖首帧和 Craft 初始化", StartupTimingMarkersCoverFirstRender),
+    ("启动测量不能在日常目录或未标记副本绕过单实例", StartupProfilesRequireOwnedCopy),
+    ("延迟通知支持首次显示隐藏及丢弃退出后的排队请求", LazyNotificationLifecycleIsSafe),
     ("Mode1 完整物品状态变化判定", Mode1ItemStateChangeDetection),
     ("Mode1 状态同步超时有安全下限", Mode1StateSyncTimeoutPolicy),
     ("Mode2/3 通货状态转换矩阵", CurrencyTransitionMatrix),
@@ -54,15 +72,34 @@ var tests = new (string Name, Action Run)[]
     ("Hold 支持独立修饰键", HoldSupportsStandaloneModifier),
     ("修饰键状态判定支持左右按键", ModifierStateSupportsLeftAndRightKeys),
     ("公共热键层统一执行前台门禁", HotkeyManagerEnforcesForegroundPolicy),
+    ("热键注销阻止排队旧回调且保留新事件顺序", UnregisteredHotkeysDiscardQueuedCallbacks),
     ("游戏内运行异常统一进入置顶提示", RuntimeFailuresReachTopmostNotification),
     ("设置页按语义检测组合热键冲突", SettingsDetectsSemanticHotkeyConflicts),
+    ("新热键优先并清空所有语义冲突项", NewHotkeyClearsSemanticConflicts),
+    ("七项热键互相覆盖与单项清空", HotkeysSupportReassignmentAndClearing),
+    ("空热键可校验、保存并完整往返", EmptyHotkeysRoundTrip),
+    ("洗装停止热键缺失或非法时拒绝启动", CraftRequiresValidStopHotkey),
     ("设置页拒绝路径和控制字符", SettingsRejectsUnsafeValues),
     ("Ctrl 按住连点与 Craft 启用状态互斥", CtrlHoldClickerConflictsWithCraft),
     ("热键重注册失败恢复旧配置", HotkeyTransactionRollsBackOnFailure),
+    ("保存失败恢复完整设置与旧热键", SettingsSaveFailureRestoresFullDraft),
+    ("保存失败且热键恢复异常时明确提示", SettingsRollbackFailureIsReported),
+    ("工具开关保存失败恢复启用状态和热键且可重试", ToolEnablementSaveFailureRollsBack),
+    ("工具开关校验注册和停止失败均不写入配置", ToolEnablementFailuresDoNotPersist),
+    ("工具开关恢复异常不误报恢复成功", ToolEnablementRollbackFailureIsReported),
+    ("回城命令拒绝控制字符且保存失败保留原命令", HideoutCommandFailuresPreservePrevious),
+    ("自动检测目标保存失败恢复原前台保护", AutoDetectedTargetSaveFailureRollsBack),
     ("SettingsTool 使用 host 分节完整往返", SettingsToolHostSectionRoundTrip),
     ("宿主只汇总已启用工具的热键", ToolHostBuildsEnabledHotkeySet),
+    ("宿主跳过全部未绑定热键", ToolHostSkipsUnassignedHotkeys),
     ("音效扫描和路径解析限制在 sounds 目录", SoundFilesStayInsideSoundDirectory),
     ("网络版本比较使用 Version 语义", NetworkVersionComparisonIsNumeric),
+    ("网页入口仅接受合法 HTTP(S) 地址", BrowserLinksRequireWebAddresses),
+    ("新版信息验证版本号和下载地址", NetworkValidatesVersionData),
+    ("广告跳过坏条目并保留其他内容", NetworkKeepsValidAds),
+    ("网络故障和过大响应留日志且不强退", NetworkFailuresAreDiagnosable),
+    ("应用取消终止网络请求且不当作故障", NetworkCancellationIsRespected),
+    ("统计请求保留固定载荷和版本请求头", NetworkPingUsesFixedPayload),
     ("匿名统计载荷不包含本机数据", PingPayloadContainsOnlyFixedFields),
     ("单文件发布配置保留 WPF 和资源安全选项", PublishProfileKeepsSafeWpfOptions),
     ("空目标进程采用 fail-closed", EmptyTargetProcessIsNotForeground),
@@ -275,6 +312,22 @@ static void DuplicateRuleAcrossPoolsIsRejected()
     True(message.Contains("基础物理", StringComparison.Ordinal), "校验错误应指出冲突规则");
 }
 
+static void CraftRejectsInvalidRuleBounds()
+{
+    foreach (var mode in new[] { CraftMode.Single, CraftMode.AltAug, CraftMode.AltAugRegal })
+    {
+        var rules = new CraftRules { Mode = mode, PrimaryHitCount = 0, SecondaryHitCount = 0 };
+        True(rules.Validate().Ok, "既定零命中规则必须保持合法");
+        rules.PrimaryHitCount = -1;
+        False(rules.Validate().Ok, "负主命中数不得放宽规则");
+        rules.PrimaryHitCount = 0;
+        rules.SecondaryHitCount = -1;
+        False(rules.Validate().Ok, "负次命中数不得放宽规则");
+    }
+    var unknown = new CraftRules { Mode = (CraftMode)99, PrimaryHitCount = 0, SecondaryHitCount = 0 };
+    False(unknown.Validate().Ok, "未知模式不能进入任何通货流程");
+}
+
 static void LegacySettingsMigrationKeepsOriginalBackup()
 {
     WithTempDirectory(directory =>
@@ -345,6 +398,246 @@ static void SectionUpdatePreservesOtherSections()
         Equal(false, loaded["hideout"]?["enabled"]?.GetValue<bool>() ?? true, "更新 host 不得丢失 hideout");
         Equal("PathOfExile_x64.exe", loaded["host"]?["target_process"]?.GetValue<string>() ?? "", "host 更新未保存");
     });
+}
+
+static void MissingDataFilesRemainSupported()
+{
+    WithTempDirectory(directory =>
+    {
+        var storage = new StorageService(directory);
+        Equal(0, storage.LoadSettings().Count, "首次使用缺少设置应返回空分节");
+        Equal(0, storage.LoadCoordinates().Count, "缺少坐标应返回空字典");
+        True(storage.LoadRules() is null, "缺少规则应保持未配置状态");
+        True(storage.LoadPreset("未创建") is null, "缺少预设应返回未找到");
+        storage.SaveRules(new JsonObject { ["primary_affixes"] = new JsonArray("物理伤害") });
+        storage.SaveCoordinates(new Dictionary<string, Point> { ["item"] = new(-20, 30) });
+        storage.UpdateSettings(root => root["host"] = new JsonObject());
+        Equal(new Point(-20, 30), storage.LoadCoordinates()["item"], "合法负坐标必须保持兼容");
+    });
+}
+
+static void DamagedSettingsAreNotOverwritten()
+{
+    WithTempDirectory(directory =>
+    {
+        var path = Path.Combine(directory, "settings.json");
+        var storage = new StorageService(directory);
+        foreach (var (text, kind) in new (string, StorageFailureKind)[]
+        {
+            ("{", StorageFailureKind.InvalidJson),
+            ("[]", StorageFailureKind.InvalidData),
+            ("null", StorageFailureKind.InvalidData),
+            ("{\"host\":[]}", StorageFailureKind.InvalidData),
+            ("{\"host\":null}", StorageFailureKind.InvalidData),
+            ("{\"host\":{\"hotkeys\":null}}", StorageFailureKind.InvalidData),
+            ("{\"host\":{\"hotkeys\":{\"stop\":6}}}", StorageFailureKind.InvalidData),
+            ("{\"host\":{\"auto_detect_poe\":\"true\"}}", StorageFailureKind.InvalidData),
+            ("{\"craft\":{\"delay_ms\":\"33\"}}", StorageFailureKind.InvalidData),
+            ("{\"craft\":{\"sound_enabled\":null}}", StorageFailureKind.InvalidData),
+            ("{\"clicker\":{\"hold_hotkey\":11}}", StorageFailureKind.InvalidData),
+            ("{\"hideout\":{\"command\":false}}", StorageFailureKind.InvalidData),
+            ("{\"keyloop\":{\"slots\":{}}}", StorageFailureKind.InvalidData),
+            ("{\"keyloop\":{\"slots\":[null]}}", StorageFailureKind.InvalidData),
+            ("{\"keyloop\":{\"slots\":[{\"enabled\":1}]}}", StorageFailureKind.InvalidData),
+            ("{\"keyloop\":{\"slots\":[{\"delay_s\":\"1\"}]}}", StorageFailureKind.InvalidData),
+            ("{\"delay_ms\":null}", StorageFailureKind.InvalidData),
+            ("{\"key_loop_slots\":[false]}", StorageFailureKind.InvalidData),
+            ("{\"clicker_interval_ms\":\"wrong\"}", StorageFailureKind.InvalidData),
+        })
+        {
+            File.WriteAllText(path, text);
+            ExpectStorageFailure(() => storage.LoadSettings(), kind, path);
+            ExpectStorageFailure(() => storage.UpdateSettings(root => root["host"] = new JsonObject()), kind, path);
+            ExpectStorageFailure(() => storage.SaveSettings(new JsonObject()), kind, path);
+            Equal(text, File.ReadAllText(path), "读取和后续保存均不得覆盖原始损坏设置");
+            False(File.Exists(path + ".bak"), "未成功解析的内容不得触发迁移");
+        }
+    });
+}
+
+static void InvalidCoordinatesAreNotOverwritten()
+{
+    WithTempDirectory(directory =>
+    {
+        var path = Path.Combine(directory, "coordinates.json");
+        const string text = "{\"item\":[10,20],\"alteration\":[\"bad\",30]}";
+        File.WriteAllText(path, text);
+        var storage = new StorageService(directory);
+        ExpectStorageFailure(() => storage.LoadCoordinates(), StorageFailureKind.InvalidData, path);
+        ExpectStorageFailure(() => storage.SaveCoordinates(new Dictionary<string, Point> { ["item"] = new(1, 2) }),
+            StorageFailureKind.InvalidData, path);
+        Equal(text, File.ReadAllText(path), "不得把部分读取成功的坐标写回原文件");
+    });
+}
+
+static void InvalidRulesAndPresetsAreProtected()
+{
+    WithTempDirectory(directory =>
+    {
+        var storage = new StorageService(directory);
+        var rulesPath = Path.Combine(directory, "rules.json");
+        Directory.CreateDirectory(Path.Combine(directory, "presets"));
+        var presetPath = Path.Combine(directory, "presets", "损坏.json");
+        var replacement = new JsonObject { ["primary_hit_count"] = 1 };
+        foreach (var text in new[]
+        {
+            "{\"primary_affixes\":\"bad\"}", "{\"primary_affixes\":null}",
+            "{\"mode\":\"unknown\"}", "{\"mode\":0}", "{\"mode\":null}",
+            "{\"primary_hit_count\":-1}", "{\"secondary_hit_count\":-1}",
+        })
+        {
+            File.WriteAllText(rulesPath, text);
+            File.WriteAllText(presetPath, text);
+            ExpectStorageFailure(() => storage.LoadRules(), StorageFailureKind.InvalidData, rulesPath);
+            ExpectStorageFailure(() => storage.SaveRules(replacement), StorageFailureKind.InvalidData, rulesPath);
+            ExpectStorageFailure(() => storage.LoadPreset("损坏"), StorageFailureKind.InvalidData, presetPath);
+            ExpectStorageFailure(() => storage.SavePreset("损坏", replacement), StorageFailureKind.InvalidData, presetPath);
+            Equal(text, File.ReadAllText(rulesPath), "规则原件必须保留");
+            Equal(text, File.ReadAllText(presetPath), "预设原件必须保留");
+        }
+
+        storage.SavePreset("旧字典词缀", JsonNode.Parse("{\"primary_affixes\":[{\"text\":\"物理伤害\"}]}")!.AsObject());
+        True(storage.LoadPreset("旧字典词缀")?["primary_affixes"] is JsonArray,
+            "旧字符串和字典词缀格式均应保持可加载");
+    });
+}
+
+static void InaccessibleFilesRemainIntact()
+{
+    WithTempDirectory(directory =>
+    {
+        var path = Path.Combine(directory, "rules.json");
+        const string text = "{\"primary_hit_count\":1}";
+        File.WriteAllText(path, text);
+        var storage = new StorageService(directory);
+        using (File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            ExpectStorageFailure(() => storage.LoadRules(), StorageFailureKind.FileAccess, path);
+            ExpectStorageFailure(() => storage.SaveRules(new JsonObject()), StorageFailureKind.FileAccess, path);
+        }
+        Equal(text, File.ReadAllText(path), "占用失败后必须保留原件");
+
+        var attributes = File.GetAttributes(path);
+        try
+        {
+            File.SetAttributes(path, attributes | FileAttributes.ReadOnly);
+            ExpectStorageFailure(() => storage.SaveRules(new JsonObject()), StorageFailureKind.FileAccess, path);
+            Equal(text, File.ReadAllText(path), "只读保存失败后必须保留原件");
+        }
+        finally { File.SetAttributes(path, attributes); }
+        Equal(0, Directory.GetFiles(directory, "*.tmp").Length, "失败的临时写入应得到清理");
+    });
+}
+
+static void CoordinateSaveFailureCanRetry()
+{
+    WithTempDirectory(directory =>
+    {
+        var path = Path.Combine(directory, "coordinates.json");
+        const string text = "{\"item\":[1,2]}";
+        File.WriteAllText(path, text);
+        var storage = new StorageService(directory);
+        var recorder = new CoordinateRecorder(storage, () => new Point(20, 30));
+        var completed = 0;
+        recorder.RecordingCompleted += (_, _) => completed++;
+        recorder.StartRecording(new CoordinateSlot { SlotId = "item", DisplayName = "装备" });
+        using (File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            ExpectStorageFailure(recorder.OnRecordHotkey, StorageFailureKind.FileAccess, path);
+        True(recorder.IsRecording, "保存失败不得清除待录制槽位");
+        Equal(0, completed, "保存失败不得发布录制成功事件");
+        Equal(text, File.ReadAllText(path), "失败时旧坐标必须保留");
+
+        recorder.OnRecordHotkey();
+        False(recorder.IsRecording, "重试成功后应结束录制");
+        Equal(1, completed, "重试成功只发布一次录制完成");
+        Equal(new Point(20, 30), storage.LoadCoordinates()["item"], "重试应保存新位置");
+    });
+}
+
+static void PresetDeletionPreservesOtherData()
+{
+    WithTempDirectory(directory =>
+    {
+        var storage = new StorageService(directory);
+        var data = new JsonObject { ["primary_affixes"] = new JsonArray("生命") };
+        storage.SaveRules(data);
+        storage.SavePreset("待删除", data);
+        storage.SavePreset("保留", data);
+        var path = Path.Combine(directory, "presets", "待删除.json");
+        using (File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            ExpectStorageFailure(() => storage.DeletePreset("待删除"), StorageFailureKind.FileAccess, path);
+        True(storage.LoadPreset("待删除") is not null, "删除失败应保留原件");
+        storage.DeletePreset("待删除");
+        True(storage.LoadPreset("待删除") is null, "只应删除选中预设");
+        True(JsonNode.DeepEquals(data, storage.LoadPreset("保留")), "其他预设必须保留");
+        True(JsonNode.DeepEquals(data, storage.LoadRules()), "当前规则文件必须保留");
+    });
+}
+
+static void CoordinateBatchClearIsAtomic()
+{
+    WithTempDirectory(directory =>
+    {
+        var storage = new StorageService(directory);
+        var path = Path.Combine(directory, "coordinates.json");
+        storage.SaveCoordinates(new Dictionary<string, Point> { ["item"] = new(1, 2), ["alteration"] = new(3, 4), ["reserved"] = new(9, 9) });
+        var original = File.ReadAllText(path);
+        var recorder = new CoordinateRecorder(storage, () => null);
+        recorder.StartRecording(new CoordinateSlot { SlotId = "item", DisplayName = "装备" });
+        using (File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            ExpectStorageFailure(() => recorder.ClearCoordinates(["item", "alteration"]), StorageFailureKind.FileAccess, path);
+        Equal(original, File.ReadAllText(path), "整组清空失败不能部分清空文件");
+        True(recorder.IsRecording, "保存失败应保留录制槽位");
+        recorder.ClearCoordinates(["item", "alteration"]);
+        False(recorder.IsRecording, "清空成功应取消相关录制");
+        var result = storage.LoadCoordinates();
+        Equal(1, result.Count, "只清空指定坐标");
+        Equal(new Point(9, 9), result["reserved"], "未知保留坐标不能丢失");
+    });
+}
+
+static void ToolRegistryRejectsInvalidIdentity()
+{
+    var registry = new ToolRegistry();
+    registry.Register(new StubTool("sample", new JsonObject()));
+    Throws<InvalidOperationException>(() => registry.Register(new StubTool("SAMPLE", new JsonObject())), "重复标识不能覆盖已有工具");
+    Throws<ArgumentException>(() => registry.Register(new StubTool(" ", new JsonObject())), "空标识不能进入存储");
+    Equal(1, registry.Tools.Count, "失败注册不得改变已有抽屉");
+}
+
+static void ToolSettingsPersistenceRejectsPartialData()
+{
+    WithTempDirectory(directory =>
+    {
+        var storage = new StorageService(directory);
+        storage.SaveSettings(new JsonObject { ["host"] = new JsonObject(), ["future"] = new JsonObject { ["keep"] = true } });
+        var path = Path.Combine(directory, "settings.json");
+        var original = File.ReadAllText(path);
+        var valid = new StubTool("sample", new JsonObject { ["value"] = 1 });
+        Throws<InvalidDataException>(() => ToolSettingsPersistence.SaveSections(storage, [valid, new StubTool("bad", null)]), "非法工具输出应中止整组保存");
+        Equal(original, File.ReadAllText(path), "候选序列化失败不能写入部分分节");
+        ToolSettingsPersistence.SaveSections(storage, [valid]);
+        var saved = storage.LoadSettings();
+        True(saved["future"]?["keep"]?.GetValue<bool>() == true, "其他工具分节必须保留");
+        Equal(1, saved["sample"]!["value"]!.GetValue<int>(), "有效工具应走统一保存入口");
+    });
+}
+
+static void ToolStatusesRemainIndependent()
+{
+    var statuses = new ToolStatusStore();
+    var notifications = 0;
+    statuses.Changed += () => notifications++;
+    statuses.Report("craft", "已完成", false, 8);
+    statuses.Report("clicker", "连点中", true);
+    statuses.Report("clicker", "连点中", true);
+    Equal(2, notifications, "重复状态不应重复刷新界面");
+    var craft = statuses.Read("craft");
+    True(craft.AnyRunning, "当前抽屉停止不能遮蔽其他运行工具");
+    Equal("已完成", craft.Selected!.Text, "其他工具不得覆盖当前抽屉状态");
+    Equal(8, craft.Selected.UseCount!.Value, "其他工具不得覆盖洗装计数");
+    statuses.Report("clicker", "已停止", false);
+    False(statuses.Read("host").AnyRunning, "所有工具停止后标记应空闲");
 }
 
 static void PresetNamesStayInsidePresetDirectory()
@@ -736,6 +1029,62 @@ static void StartupTimingMarkersCoverFirstRender()
         "启动日志必须单独记录 Craft 首次页面耗时");
 }
 
+static void StartupProfilesRequireOwnedCopy()
+{
+    var root = Path.Combine(AppContext.BaseDirectory, "profile-guard-fixture");
+    try
+    {
+        var allowed = Path.Combine(root, "验证记录", "启动性能", "副本");
+        Directory.CreateDirectory(allowed);
+        False(StartupPerformance.IsIsolatedProfileDirectory(allowed), "没有标记的副本不得测量");
+        var markerPath = Path.Combine(allowed, ".shike-output.json");
+        File.WriteAllText(markerPath, "{\"schemaVersion\":1,\"purpose\":\"启动性能副本\"}", new UTF8Encoding(true));
+        True(StartupPerformance.IsIsolatedProfileDirectory(allowed), "正确用途的隔离副本应允许测量");
+        File.WriteAllText(markerPath, "{\"schemaVersion\":1,\"purpose\":\"发布\"}");
+        False(StartupPerformance.IsIsolatedProfileDirectory(allowed), "发布目录用途不允许测量");
+        File.WriteAllText(markerPath, "not-json");
+        False(StartupPerformance.IsIsolatedProfileDirectory(allowed), "损坏标记不允许测量");
+        File.WriteAllText(Path.Combine(root, ".shike-output.json"), "{\"schemaVersion\":1,\"purpose\":\"启动性能副本\"}");
+        False(StartupPerformance.IsIsolatedProfileDirectory(root), "仅复制标记不能在日常目录开启测量");
+    }
+    finally
+    {
+        if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+}
+
+static void LazyNotificationLifecycleIsSafe()
+{
+    RunInSta(() =>
+    {
+        var before = PresentationSource.CurrentSources.Cast<PresentationSource>().ToHashSet();
+        var notification = new NotificationService();
+        notification.Hide(); // 从未显示也可以隐藏和清理。
+        notification.Show("首次通知");
+        var overlay = PresentationSource.CurrentSources.Cast<PresentationSource>()
+            .Where(source => !before.Contains(source)).Select(source => source.RootVisual).OfType<Window>().Single();
+        True(overlay.IsVisible, "首次通知必须真正显示");
+        notification.Hide();
+        False(overlay.IsVisible, "隐藏后不能继续显示通知");
+        notification.Show("第二次通知");
+        True(overlay.IsVisible, "隐藏后仍能显示下一条通知");
+        True(overlay.ShowActivated == false && overlay.ShowInTaskbar == false && overlay.Topmost,
+            "通知不能抢焦点或进入任务栏，仍须置顶");
+        True(Task.Run(() => notification.Show("退出前排队的通知")).Wait(TimeSpan.FromSeconds(1)),
+            "后台通知不得等待 UI 线程");
+        notification.Dispose();
+        notification.Dispose();
+        System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(() => { },
+            System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+        False(overlay.IsVisible, "退出后的排队通知不能复活窗口");
+        notification.Show("退出后的通知");
+        False(PresentationSource.CurrentSources.Cast<PresentationSource>().Any(source => !before.Contains(source)),
+            "退出必须释放通知窗口句柄");
+        using var neverShown = new NotificationService();
+        neverShown.Hide();
+    });
+}
+
 static void Mode1ItemStateChangeDetection()
 {
     const string baseline = "物品类别: 弓\r\n稀 有 度: 魔法\r\n物理伤害: 10-20\r\n";
@@ -851,6 +1200,55 @@ static void HotkeyManagerEnforcesForegroundPolicy()
     False(failingDetector.TryInvoke(guarded), "前台检测异常必须 fail-closed");
 }
 
+static void UnregisteredHotkeysDiscardQueuedCallbacks()
+{
+    var pending = new Queue<Action>();
+    var events = new List<string>();
+    var manager = new HotkeyManager(() => true, pending.Enqueue);
+    manager.QueueHookCallback(() => events.Add("旧按下"));
+    manager.QueueHookCallback(() => events.Add("旧释放"));
+    manager.UnregisterAll(); // 未注册原生热键，不调用键盘钩子或发送输入。
+    manager.QueueHookCallback(() => events.Add("新按下"));
+    manager.QueueHookCallback(() => events.Add("新释放"));
+    while (pending.TryDequeue(out var callback)) callback();
+    Equal(2, events.Count, "旧回调不能在重注册或捕获阶段重新触发功能");
+    Equal("新按下", events[0], "有效按下顺序不能丢失");
+    Equal("新释放", events[1], "有效释放必须跟随有效按下");
+
+    manager.QueueHookCallback(() => events.Add("退出后旧事件"));
+    manager.UnregisterAll();
+    manager.UnregisterAll();
+    while (pending.TryDequeue(out var callback)) callback();
+    Equal(2, events.Count, "连续注销同样不能恢复旧事件");
+
+    var holdRunning = false;
+    var releases = 0;
+    var holdRequest = new HotkeyRequest
+    {
+        Key = "F11",
+        DisplayName = "虚拟按住操作",
+        CheckForeground = false,
+        Mode = HotkeyMode.Hold,
+        Handler = () => holdRunning = true,
+        ReleaseHandler = () => { holdRunning = false; releases++; },
+    };
+    manager.QueueHoldCallback(holdRequest, start: true);
+    pending.Dequeue()();
+    True(holdRunning, "有效按下已经执行时必须记住待释放操作");
+    manager.QueueHoldCallback(holdRequest, start: false);
+    manager.UnregisterAll();
+    False(holdRunning, "松开已排队但尚未执行时，注销仍须同步释放实际运行操作");
+    Equal(1, releases, "注销应释放一次");
+    while (pending.TryDequeue(out var callback)) callback();
+    Equal(1, releases, "失效的松开事件不得再次释放");
+
+    manager.QueueHoldCallback(holdRequest, start: true);
+    manager.QueueHoldCallback(holdRequest, start: false);
+    while (pending.TryDequeue(out var callback)) callback();
+    False(holdRunning, "同一批次有效按下与松开必须依次执行");
+    Equal(2, releases, "新批次有效松开应保留");
+}
+
 static void RuntimeFailuresReachTopmostNotification()
 {
     var messages = new List<string>();
@@ -920,6 +1318,95 @@ static void SettingsDetectsSemanticHotkeyConflicts()
         "连点器 Hold 应允许独立修饰键");
 }
 
+static void NewHotkeyClearsSemanticConflicts()
+{
+    var requested = new HotkeySettings(
+        "Control+Alt+F5", "Alt+Ctrl+F5", "ctrl+alt+f5", "F8", "F11", "F9", "F2");
+    var result = HotkeyConflictResolver.Resolve(requested, "coordinate");
+    Equal("ctrl+alt+f5", result.Hotkeys.Coordinate, "必须保留当前录入项");
+    Equal(string.Empty, result.Hotkeys.CraftStart, "不同别名的相同触发器必须清空");
+    Equal(string.Empty, result.Hotkeys.CraftStop, "同一触发器的所有旧绑定都必须清空");
+    Equal(2, result.ClearedNames.Count, "必须反馈全部被清空的旧项");
+    True(result.ClearedNames.Contains("启动洗装") && result.ClearedNames.Contains("停止洗装"),
+        "反馈必须指出受影响功能");
+    Equal("F11", result.Hotkeys.ClickerHold, "无冲突绑定不得被清空");
+    Equal("Control+Alt+F5", requested.CraftStart, "解析候选不得修改原始快照");
+    Equal(0, SettingsValidation.ValidateHotkeys(result.Hotkeys).Count, "清空后必须是合法热键集合");
+}
+
+static void HotkeysSupportReassignmentAndClearing()
+{
+    var defaults = new HotkeySettings("F5", "F6", "F7", "F8", "F11", "F9", "F2");
+    foreach (var target in defaults.GetEntries())
+    {
+        foreach (var owner in defaults.GetEntries().Where(entry => entry.Id != target.Id))
+        {
+            var result = HotkeyConflictResolver.Resolve(defaults.WithKey(target.Id, owner.Key), target.Id);
+            Equal(owner.Key, result.Hotkeys.GetEntries().Single(entry => entry.Id == target.Id).Key,
+                $"{target.Name}应取得{owner.Name}原有按键");
+            Equal(string.Empty, result.Hotkeys.GetEntries().Single(entry => entry.Id == owner.Id).Key,
+                $"{owner.Name}旧绑定必须清空");
+            Equal(1, result.ClearedNames.Count, "一次普通覆盖应只清空一个旧项");
+            foreach (var unchanged in defaults.GetEntries().Where(entry => entry.Id != target.Id && entry.Id != owner.Id))
+                Equal(unchanged.Key, result.Hotkeys.GetEntries().Single(entry => entry.Id == unchanged.Id).Key,
+                    $"{unchanged.Name}必须保持不变");
+            Equal(0, SettingsValidation.ValidateHotkeys(result.Hotkeys).Count, "Toggle 与 Hold 覆盖后都应合法");
+        }
+
+        var cleared = HotkeyConflictResolver.Resolve(defaults.WithKey(target.Id, string.Empty), target.Id);
+        Equal(0, cleared.ClearedNames.Count, "主动清空不得影响其他绑定");
+        Equal(defaults.WithKey(target.Id, string.Empty), cleared.Hotkeys, "主动清空只能改变当前项");
+    }
+}
+
+static void EmptyHotkeysRoundTrip()
+{
+    RunInSta(() =>
+    {
+        var source = CreateSettingsFixture();
+        source.Settings.LoadSettings(JsonSerializer.SerializeToElement(new
+        {
+            hotkeys = new { start = "", stop = "  ", coordinate = "" },
+        }));
+        source.Clicker.LoadSettings(JsonSerializer.SerializeToElement(new { hotkey = "", hold_hotkey = "  " }));
+        source.KeyLoop.LoadSettings(JsonSerializer.SerializeToElement(new { hotkey = "" }));
+        source.Hideout.ApplySharedSettings(true, "", "/menagerie");
+        var empty = new HotkeySettings("", "", "", "", "", "", "");
+        Equal(empty, source.Settings.CaptureDraft().Hotkeys, "运行时必须接受全部显式空绑定");
+        Equal(0, SettingsValidation.ValidateHotkeys(empty).Count, "空值不是非法热键或重复触发器");
+        True(SettingsValidation.ValidateHotkeys(empty with { CraftStart = "not-a-key" }).Count > 0,
+            "允许空值后仍须拒绝无法识别的非空按键");
+
+        var restored = CreateSettingsFixture();
+        restored.Settings.LoadSettings(SerializeToolSettings(source.Settings));
+        restored.Clicker.LoadSettings(SerializeToolSettings(source.Clicker));
+        restored.KeyLoop.LoadSettings(SerializeToolSettings(source.KeyLoop));
+        restored.Hideout.LoadSettings(SerializeToolSettings(source.Hideout));
+        Equal(empty, restored.Settings.CaptureDraft().Hotkeys, "模拟重启后七项都不得恢复默认热键");
+        Equal("/menagerie", restored.Hideout.Command, "空热键不能改变回城命令");
+        True(restored.Hideout.IsEnabled, "空热键不能改变工具启用状态");
+
+        using var invalid = JsonDocument.Parse("{\"missing_type\":null}");
+        Equal("F5", HotkeySetting.Read(invalid.RootElement, "missing", "F5"), "缺少字段仍需默认值");
+        Equal("F6", HotkeySetting.Read(invalid.RootElement, "missing_type", "F6"), "非法字段类型仍需默认值");
+    });
+}
+
+static void CraftRequiresValidStopHotkey()
+{
+    var craft = new CraftTool();
+    foreach (var key in new[] { "", "  ", "Ctrl", "not-a-key" })
+    {
+        craft.HotkeyStop = key;
+        True(craft.ValidateStartHotkeys() is not null, "停止键缺失或非法时启动检查必须失败");
+    }
+    foreach (var key in new[] { "F6", "Ctrl+F6" })
+    {
+        craft.HotkeyStop = key;
+        True(craft.ValidateStartHotkeys() is null, "有效停止键应通过启动检查");
+    }
+}
+
 static void SettingsRejectsUnsafeValues()
 {
     var draft = new SettingsDraft(
@@ -966,7 +1453,7 @@ static void CtrlHoldClickerConflictsWithCraft()
 static void HotkeyTransactionRollsBackOnFailure()
 {
     var old = new HotkeySettings("F5", "F6", "F7", "F8", "F11", "F9", "F2");
-    var candidate = old with { CraftStart = "F10" };
+    var candidate = HotkeyConflictResolver.Resolve(old with { KeyLoop = "F6" }, "keyloop").Hotkeys;
     var current = old;
     var attempts = 0;
     var result = HotkeySettingsTransaction.TryApply(
@@ -976,12 +1463,178 @@ static void HotkeyTransactionRollsBackOnFailure()
         () =>
         {
             attempts++;
-            return current == candidate ? ["F10 被其他程序占用"] : [];
+            return current == candidate ? ["F6 被其他程序占用"] : [];
         });
 
     False(result.Success, "候选热键注册失败时事务不得成功");
     Equal(old, current, "注册失败后必须恢复全部旧热键字段");
     Equal(2, attempts, "失败后必须再次注册恢复的旧热键集合");
+}
+
+static void SettingsSaveFailureRestoresFullDraft()
+{
+    RunInSta(() =>
+    {
+        var fixture = CreateSettingsFixture();
+        var previous = fixture.Settings.CaptureDraft();
+        var resolution = HotkeyConflictResolver.Resolve(previous.Hotkeys with { KeyLoop = "F6" }, "keyloop");
+        var candidate = previous with
+        {
+            Hotkeys = resolution.Hotkeys,
+            TargetProcess = "PathOfExile_x64.exe",
+            CraftSoundEnabled = false,
+            HideoutCommand = "/menagerie",
+        };
+        var registerAttempts = 0;
+        var saveAttempts = 0;
+        SettingsDraft? persisted = null;
+        var result = fixture.Settings.ApplyDraft(candidate,
+            () => { registerAttempts++; return []; },
+            () =>
+            {
+                saveAttempts++;
+                if (saveAttempts == 1) throw new IOException("模拟新配置写入失败");
+                persisted = fixture.Settings.CaptureDraft();
+            });
+
+        False(result.Success, "保存失败不得返回成功");
+        Equal(previous, fixture.Settings.CaptureDraft(), "必须恢复包括被清空项在内的完整运行时设置");
+        Equal(previous, persisted!, "恢复写入必须使用完整旧配置");
+        Equal(2, registerAttempts, "保存失败后必须恢复旧热键注册");
+        Equal(2, saveAttempts, "保存失败后必须尝试回写旧设置");
+    });
+}
+
+static void SettingsRollbackFailureIsReported()
+{
+    RunInSta(() =>
+    {
+        var fixture = CreateSettingsFixture();
+        var previous = fixture.Settings.CaptureDraft();
+        var candidate = previous with { Hotkeys = previous.Hotkeys with { CraftStart = "F10" } };
+        var registerAttempts = 0;
+        var result = fixture.Settings.ApplyDraft(candidate,
+            () =>
+            {
+                if (++registerAttempts > 1) throw new InvalidOperationException("模拟旧热键恢复异常");
+                return [];
+            },
+            () => throw new IOException("模拟持续写入失败"));
+
+        False(result.Success, "恢复异常必须作为设置失败返回");
+        Equal(previous, fixture.Settings.CaptureDraft(), "注册和保存异常不能妨碍恢复旧字段");
+        True(result.Message.Contains("旧热键恢复异常", StringComparison.Ordinal), "必须报告热键恢复异常");
+        True(result.Message.Contains("旧设置回写失败", StringComparison.Ordinal), "必须报告持久化恢复失败");
+    });
+}
+
+static void ToolEnablementSaveFailureRollsBack()
+{
+    foreach (var previous in new[] { false, true })
+    {
+        WithTempDirectory(directory =>
+        {
+            var tool = new ClickerTool();
+            void Apply(bool value) => tool.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = value }));
+            Apply(previous);
+            var storage = new StorageService(directory);
+            void Save() => storage.UpdateSettings(root => root["clicker"] = new JsonObject { ["enabled"] = tool.IsEnabled });
+            Save();
+            var path = Path.Combine(directory, "settings.json");
+            var original = File.ReadAllText(path);
+            var attributes = File.GetAttributes(path);
+            var registered = previous;
+            var registrationCalls = 0;
+            var stopped = 0;
+            IReadOnlyList<string> Register() { registered = tool.IsEnabled; registrationCalls++; return []; }
+            try
+            {
+                File.SetAttributes(path, attributes | FileAttributes.ReadOnly);
+                var result = ToolEnablement.TryApply(tool, !previous, Apply, () => stopped++, Save, () => null, Register);
+                False(result.Success, "只读保存失败不能报告开关修改成功");
+                Equal(previous, tool.IsEnabled, "保存失败必须恢复原启用状态");
+                Equal(previous, registered, "恢复热键必须使用原启用状态");
+                Equal(2, registrationCalls, "保存失败必须恢复旧热键集合");
+                Equal(original, File.ReadAllText(path), "只读原文件必须保持原内容");
+                Equal(previous ? 1 : 0, stopped, "已执行的停用不得自动恢复运行");
+            }
+            finally { File.SetAttributes(path, attributes); }
+            var retry = ToolEnablement.TryApply(tool, !previous, Apply, () => stopped++, Save, () => null, Register);
+            True(retry.Success, "解除只读后必须能再次保存开关");
+            Equal(!previous, storage.LoadSettings()["clicker"]!["enabled"]!.GetValue<bool>(), "重试结果必须真实落盘");
+        });
+    }
+}
+
+static void ToolEnablementFailuresDoNotPersist()
+{
+    foreach (var stage in new[] { "compatibility", "registration", "stop" })
+    {
+        var tool = new ClickerTool();
+        var previous = stage == "stop";
+        void Apply(bool value) => tool.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = value }));
+        Apply(previous);
+        var registrations = 0;
+        var saves = 0;
+        var result = ToolEnablement.TryApply(tool, !previous, Apply,
+            () => throw new InvalidOperationException("模拟停止失败"),
+            () => saves++,
+            () => stage == "compatibility" ? "模拟安全冲突" : null,
+            () => ++registrations == 1 && stage == "registration" ? ["模拟系统占用"] : []);
+        False(result.Success, $"{stage}失败不得返回成功");
+        Equal(previous, tool.IsEnabled, $"{stage}失败必须恢复原开关");
+        Equal(0, saves, "前置操作失败不能写入新设置");
+        Equal(stage == "compatibility" ? 0 : 2, registrations, "只恢复已尝试变更的热键注册");
+    }
+}
+
+static void ToolEnablementRollbackFailureIsReported()
+{
+    var tool = new ClickerTool();
+    var registrations = 0;
+    var result = ToolEnablement.TryApply(tool, true,
+        value => tool.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = value })),
+        () => { }, () => throw new IOException("模拟保存失败"), () => null,
+        () => ++registrations > 1 ? ["模拟旧热键恢复失败"] : []);
+    False(result.Success, "恢复失败不能返回成功");
+    False(tool.IsEnabled, "恢复注册失败仍须恢复运行时开关字段");
+    True(result.Message.Contains("已尝试恢复", StringComparison.Ordinal) &&
+         result.Message.Contains("旧热键恢复失败", StringComparison.Ordinal), "必须明确恢复失败");
+    False(result.Message.Contains("已恢复原启用配置", StringComparison.Ordinal), "不能误报完整恢复成功");
+}
+
+static void HideoutCommandFailuresPreservePrevious()
+{
+    var tool = new HideoutTool();
+    tool.SetCommand("/menagerie");
+    var saves = 0;
+    foreach (var invalid in new[] { "/hideout\n/exit", "/hideout\t", new string('a', 201) })
+    {
+        Throws<ArgumentException>(() => tool.SetCommand(invalid, () => saves++), "非法命令必须在持久化前拒绝");
+        Equal("/menagerie", tool.Command, "非法输入不能污染运行时命令");
+    }
+    Equal(0, saves, "非法命令不得执行任何保存");
+    Throws<IOException>(() => tool.SetCommand("/hideout", () => throw new IOException("模拟保存失败")),
+        "保存失败须交给页面显示");
+    Equal("/menagerie", tool.Command, "持久化失败必须恢复原命令");
+    tool.SetCommand(" /hideout ", () => saves++);
+    Equal("/hideout", tool.Command, "合法命令仍按原约定去除首尾空格");
+    Equal(1, saves, "合法重试应能保存一次");
+}
+
+static void AutoDetectedTargetSaveFailureRollsBack()
+{
+    RunInSta(() =>
+    {
+        var fixture = CreateSettingsFixture();
+        var previous = fixture.Settings.CaptureDraft().TargetProcess;
+        Throws<IOException>(() => fixture.Settings.ApplyDetectedTarget("PathOfExile_x64.exe",
+            () => throw new IOException("模拟自动检测保存失败")), "保存失败必须上报");
+        Equal(previous, fixture.Settings.CaptureDraft().TargetProcess, "保存失败不能提前改变前台目标");
+        string? persisted = null;
+        fixture.Settings.ApplyDetectedTarget("PathOfExile_x64.exe", () => persisted = fixture.Settings.CaptureDraft().TargetProcess);
+        Equal("PathOfExile_x64.exe", persisted!, "合法重试应同步目标设置");
+    });
 }
 
 static void SettingsToolHostSectionRoundTrip()
@@ -1060,6 +1713,51 @@ static void ToolHostBuildsEnabledHotkeySet()
     });
 }
 
+static void ToolHostSkipsUnassignedHotkeys()
+{
+    RunInSta(() =>
+    {
+        var fixture = CreateSettingsFixture();
+        fixture.Settings.LoadSettings(JsonSerializer.SerializeToElement(new
+        {
+            hotkeys = new { start = "", stop = "", coordinate = "" },
+        }));
+        fixture.Clicker.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true, hotkey = "", hold_hotkey = "" }));
+        fixture.KeyLoop.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true, hotkey = "" }));
+        fixture.Hideout.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true, hotkey = "" }));
+        Equal(0, fixture.Host.BuildHotkeyRequests().Count, "已启用工具的空热键也必须被过滤");
+
+        fixture.Host.CoordinateHotkey = "F12";
+        var request = fixture.Host.BuildHotkeyRequests().Single();
+        Equal("坐标录制", request.DisplayName, "非空宿主热键不得被空工具热键过滤");
+        Equal("F12", request.Key, "必须保留当前有效绑定");
+    });
+}
+
+static (SettingsTool Settings, CraftTool Craft, ClickerTool Clicker, KeyLoopTool KeyLoop,
+    HideoutTool Hideout, ToolHost Host) CreateSettingsFixture()
+{
+    var craft = new CraftTool();
+    var clicker = new ClickerTool();
+    var keyLoop = new KeyLoopTool();
+    var hideout = new HideoutTool();
+    var settings = new SettingsTool(craft, clicker, keyLoop, hideout);
+    var registry = new ToolRegistry();
+    foreach (var tool in new ITool[] { craft, clicker, keyLoop, hideout, settings }) registry.Register(tool);
+    var host = new ToolHost(registry);
+    settings.Initialize(host);
+    // 不初始化各工具引擎，避免测试启动后台任务、读取用户规则或发送输入。
+    return (settings, craft, clicker, keyLoop, hideout, host);
+}
+
+static JsonElement SerializeToolSettings(ITool tool)
+{
+    using var stream = new MemoryStream();
+    using (var writer = new Utf8JsonWriter(stream)) tool.SaveSettings(writer);
+    using var document = JsonDocument.Parse(stream.ToArray());
+    return document.RootElement.Clone();
+}
+
 static void SoundFilesStayInsideSoundDirectory()
 {
     WithTempDirectory(directory =>
@@ -1107,6 +1805,96 @@ static void PingPayloadContainsOnlyFixedFields()
     False(payload.ContainsKey("rules"), "不得上传词缀规则");
 }
 
+static void BrowserLinksRequireWebAddresses()
+{
+    foreach (var url in new[] { "https://example.com/download", "http://example.com/path?a=1", " https://example.com " })
+        True(BrowserLauncher.TryNormalize(url, out _), "普通网页地址必须支持");
+    foreach (var url in new[] { "", "file:///C:/Windows/notepad.exe", "javascript:alert(1)", "example.com", "https://user:secret@example.com", "https://example.com\n" })
+        False(BrowserLauncher.TryNormalize(url, out _), "无效或非网页地址必须被拒绝");
+}
+
+static void NetworkValidatesVersionData()
+{
+    foreach (var body in new[] { "[]", "{\"latest\":42}", "{\"latest\":\"bad\"}", "{\"latest\":\"99.0\",\"url\":null}", "{\"latest\":\"99.0\",\"url\":\"file:///C:/x.exe\"}" })
+    {
+        var logs = new List<string>();
+        using var service = new NetworkService(new StubHttpMessageHandler((_, _) => Task.FromResult(JsonReply(body))), logs.Add);
+        True(service.CheckVersionAsync().GetAwaiter().GetResult() is null, "无效新版信息不能触发强制退出");
+        Equal(1, logs.Count, "无效信息必须有可诊断日志");
+    }
+    using var valid = new NetworkService(new StubHttpMessageHandler((_, _) => Task.FromResult(JsonReply("{\"latest\":\"99.0\",\"url\":\"https://example.com/new\"}"))), _ => { });
+    var result = valid.CheckVersionAsync().GetAwaiter().GetResult();
+    True(result is not null, "有效新版必须保持更新能力");
+    Equal("https://example.com/new", result!.DownloadUrl, "下载地址错误");
+}
+
+static void NetworkKeepsValidAds()
+{
+    var logs = new List<string>();
+    const string body = "{\"ads\":[null,{\"location\":\"top\",\"type\":\"text\",\"text\":\"保留\",\"link\":\"file:///C:/x.exe\"},{\"location\":\"bottom\",\"type\":\"text\",\"text\":\"正常\",\"link\":\"https://example.com/\"},{\"location\":\"top\",\"type\":42,\"text\":\"忽略\"}]}";
+    using var service = new NetworkService(new StubHttpMessageHandler((_, _) => Task.FromResult(JsonReply(body))), logs.Add);
+    var ads = service.FetchAdsAsync().GetAwaiter().GetResult();
+    Equal(2, ads.Count, "坏条目不能丢掉全部广告");
+    Equal("保留", ads[0].Text, "无效链接不能删除有效文案");
+    True(ads[0].Link is null, "非网页链接不得进入界面");
+    Equal("https://example.com/", ads[1].Link!, "正常链接须保留");
+    Equal(1, logs.Count, "无效部分汇总记录一次");
+}
+
+static void NetworkFailuresAreDiagnosable()
+{
+    var logs = new List<string>();
+    using (var failed = new NetworkService(new StubHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable))), logs.Add))
+        True(failed.CheckVersionAsync().GetAwaiter().GetResult() is null, "HTTP 失败应保留静默跳过");
+    True(logs.Any(line => line.Contains("HttpRequestException", StringComparison.Ordinal)), "HTTP 失败缺少日志");
+    logs.Clear();
+    using var oversized = new NetworkService(new StubHttpMessageHandler((_, _) => Task.FromResult(JsonReply(new string(' ', NetworkService.MaxResponseBytes + 1)))), logs.Add);
+    Equal(0, oversized.FetchAdsAsync().GetAwaiter().GetResult().Count, "过大响应应使用缺省广告");
+    True(logs.Any(line => line.Contains("超过 1MB", StringComparison.Ordinal)), "响应大小保护未留下原因");
+}
+
+static void NetworkCancellationIsRespected()
+{
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var logs = new List<string>();
+    using var cancellation = new CancellationTokenSource();
+    using var service = new NetworkService(new StubHttpMessageHandler(async (_, token) =>
+    {
+        entered.TrySetResult();
+        await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        return JsonReply("{}");
+    }), logs.Add);
+    var pending = service.CheckVersionAsync(cancellation.Token);
+    True(entered.Task.Wait(TimeSpan.FromSeconds(1)), "虚拟请求未开始");
+    cancellation.Cancel();
+    Throws<OperationCanceledException>(() => pending.GetAwaiter().GetResult(), "退出取消应传播到请求调用方");
+    Throws<OperationCanceledException>(() => service.SendPingAsync(cancellation.Token).GetAwaiter().GetResult(), "取消后不能继续统计请求");
+    Throws<OperationCanceledException>(() => service.FetchAdsAsync(cancellation.Token).GetAwaiter().GetResult(), "取消后不能继续广告请求");
+    Equal(0, logs.Count, "正常退出取消不应记录为联网故障");
+}
+
+static void NetworkPingUsesFixedPayload()
+{
+    string? body = null;
+    string? agent = null;
+    using var service = new NetworkService(new StubHttpMessageHandler(async (request, token) =>
+    {
+        Equal(HttpMethod.Post, request.Method, "统计必须保持 POST");
+        Equal("/api/send", request.RequestUri!.AbsolutePath, "统计端点错误");
+        body = await request.Content!.ReadAsStringAsync(token);
+        agent = request.Headers.UserAgent.ToString();
+        return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+    }), _ => { });
+    service.SendPingAsync().GetAwaiter().GetResult();
+    True(JsonNode.DeepEquals(NetworkService.CreatePingPayload(), JsonNode.Parse(body!)), "请求不能增加机器或游戏数据");
+    True(agent!.Contains(NetworkService.CurrentVersion.ToString(3), StringComparison.Ordinal), "请求头版本必须来自当前程序集");
+}
+
+static HttpResponseMessage JsonReply(string body) => new(System.Net.HttpStatusCode.OK)
+{
+    Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+};
+
 static void PublishProfileKeepsSafeWpfOptions()
 {
     var root = FindProjectRoot();
@@ -1128,7 +1916,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(27, version.Build, "程序集 Build 必须为本次 1.0.27");
+    Equal(33, version.Build, "程序集 Build 必须为本次 1.0.33");
 }
 
 static void CraftEngineCanShutdownWhileIdle()
@@ -1342,6 +2130,19 @@ static void Throws<TException>(Action action, string message) where TException :
         return;
     }
     throw new InvalidOperationException(message);
+}
+
+static void ExpectStorageFailure(Action action, StorageFailureKind kind, string path)
+{
+    try { action(); }
+    catch (StorageException error)
+    {
+        Equal(kind, error.Kind, "存储异常分类错误");
+        Equal(path, error.FilePath, "存储异常应保留实际路径");
+        True(error.InnerException is not null, "必须保留原始错误供诊断");
+        return;
+    }
+    throw new InvalidOperationException("预期存储失败，但操作成功");
 }
 
 static void WithTempDirectory(Action<string> action)

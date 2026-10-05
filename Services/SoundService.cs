@@ -10,13 +10,14 @@ public sealed record SoundPlaybackStatus(bool Success, string Message);
 /// <summary>
 /// 音效服务（对齐 Python 版 auto_operator.py _play_sound）。
 /// 查找顺序：原名精确 → stem 同名不同后缀（.wav/.mp3/.ogg/.flac）→ 放弃。
-/// MediaPlayer 必须在 UI 线程创建和调用。通过 Dispatcher.Invoke 同步执行。
+/// MediaPlayer 必须在 UI 线程创建和调用；后台只排队提交，不等待 UI 线程。
 /// </summary>
-public sealed class SoundService
+public sealed class SoundService : IDisposable
 {
     private readonly string _soundDir;
     private MediaPlayer? _player; // 延迟到 UI 线程创建
     private string? _pendingFile;
+    private volatile bool _disposed;
 
     private static readonly string[] AudioExts = [".wav", ".mp3", ".ogg", ".flac"];
 
@@ -28,18 +29,20 @@ public sealed class SoundService
     public string SoundDirectory => _soundDir;
     public event Action<SoundPlaybackStatus>? PlaybackStatusChanged;
 
-    /// <summary>播放音效文件（任意线程可调，通过 Dispatcher.Invoke 同步在 UI 线程执行）。</summary>
+    /// <summary>播放音效文件（后台调用排队交给 UI，不阻塞工具停止或退出）。</summary>
     public void Play(string? soundFileName)
     {
         _ = TryPlay(soundFileName);
     }
 
     /// <summary>
-    /// 校验并提交播放请求。Accepted 只表示请求已交给 MediaPlayer；真实打开成功或失败由
+    /// 校验并提交播放请求。Accepted 只表示请求已被接受或排队；真实打开成功或失败由
     /// PlaybackStatusChanged 反馈，不能在 Open() 返回时提前记录“播放成功”。
     /// </summary>
     public SoundPlayRequestResult TryPlay(string? soundFileName)
     {
+        if (_disposed)
+            return new SoundPlayRequestResult(false, "音效服务已关闭");
         if (!TryResolveSoundFile(soundFileName, out var file, out var resolveError))
         {
             Diag.Log($"[音效] {resolveError}");
@@ -47,7 +50,7 @@ public sealed class SoundService
         }
 
         var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is null)
+        if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
         {
             const string message = "音效播放环境尚未就绪";
             Diag.Log($"[音效] {message}");
@@ -58,14 +61,17 @@ public sealed class SoundService
         {
             if (dispatcher.CheckAccess())
             {
-                PlayCore(file);
+                return PlayCore(file);
             }
             else
             {
-                // 同步调用：阻塞引擎线程直到 UI 线程完成播放启动
-                dispatcher.Invoke(() => PlayCore(file));
+                dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (!_disposed && !dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished)
+                        _ = PlayCore(file);
+                }));
             }
-            return new SoundPlayRequestResult(true, $"正在打开音效：{Path.GetFileName(file)}");
+            return new SoundPlayRequestResult(true, $"已提交音效：{Path.GetFileName(file)}");
         }
         catch (Exception ex)
         {
@@ -74,8 +80,10 @@ public sealed class SoundService
         }
     }
 
-    private void PlayCore(string file)
+    private SoundPlayRequestResult PlayCore(string file)
     {
+        if (_disposed)
+            return new SoundPlayRequestResult(false, "音效服务已关闭");
         try
         {
             if (_player is null)
@@ -88,16 +96,20 @@ public sealed class SoundService
             _player.Close();
             _pendingFile = file;
             _player.Open(new Uri(file, UriKind.Absolute));
+            return new SoundPlayRequestResult(true, $"正在打开音效：{Path.GetFileName(file)}");
         }
         catch (Exception ex)
         {
             Diag.Log($"[音效] PlayCore 异常: {ex.Message}");
-            PublishPlaybackStatus(false, $"音效打开失败：{ex.Message}");
+            var message = $"音效打开失败：{ex.Message}";
+            PublishPlaybackStatus(false, message);
+            return new SoundPlayRequestResult(false, message);
         }
     }
 
     private void Player_MediaOpened(object? sender, EventArgs e)
     {
+        if (_disposed) return;
         var name = Path.GetFileName(_pendingFile ?? string.Empty);
         try
         {
@@ -114,6 +126,7 @@ public sealed class SoundService
 
     private void Player_MediaFailed(object? sender, ExceptionEventArgs e)
     {
+        if (_disposed) return;
         var name = Path.GetFileName(_pendingFile ?? string.Empty);
         var detail = e.ErrorException?.Message ?? "系统无法解码该音频";
         Diag.Log($"[音效] MediaFailed: {name}: {detail}");
@@ -124,6 +137,30 @@ public sealed class SoundService
     {
         try { PlaybackStatusChanged?.Invoke(new SoundPlaybackStatus(success, message)); }
         catch (Exception ex) { Diag.Log($"[音效] 状态回调失败: {ex.Message}"); }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+            DisposeCore();
+        else if (!dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished)
+            dispatcher.BeginInvoke(new Action(DisposeCore));
+    }
+
+    private void DisposeCore()
+    {
+        var player = _player;
+        _player = null;
+        _pendingFile = null;
+        PlaybackStatusChanged = null;
+        if (player is null) return;
+        player.MediaOpened -= Player_MediaOpened;
+        player.MediaFailed -= Player_MediaFailed;
+        try { player.Stop(); }
+        finally { player.Close(); }
     }
 
     /// <summary>扫描 sounds/ 目录音频文件（设置页下拉用，返回文件名）。</summary>

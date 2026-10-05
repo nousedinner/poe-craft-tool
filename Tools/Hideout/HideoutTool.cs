@@ -91,6 +91,12 @@ public sealed class HideoutTool : ITool, IEnableableTool
             return;
         }
 
+        // 旧文件或外部编辑可能绕过设置页校验；发送输入前再次检查命令。
+        if (ValidateCommand(_command) is { } commandError)
+        {
+            _host.Notification.ShowError(commandError);
+            return;
+        }
         Diag.Log("[回城] OnHotkey: 执行回城");
         lock (_operationGate)
         {
@@ -100,16 +106,20 @@ public sealed class HideoutTool : ITool, IEnableableTool
                 return;
             }
             _operationCts?.Dispose();
+            if (_host.EmergencyCts.IsCancellationRequested)
+                _host.ResetEmergencyStop(); // 与其他工具一致：紧急停止后，下一次合法触发可重新运行。
             _operationCts = CancellationTokenSource.CreateLinkedTokenSource(_host.EmergencyCts.Token);
             _operationTask = ExecuteHideoutAsync(_command, _operationCts.Token);
         }
     }
 
-    /// <summary>执行一键回城：Enter → 0.1s → /hideout → Enter（对齐 Python _execute_hideout，静默失败）。</summary>
+    /// <summary>执行一键回城：Enter → 0.1s → 命令 → Enter；取消静默，真实输入错误置顶提示。</summary>
     private async Task ExecuteHideoutAsync(string command, CancellationToken token)
     {
+        var finalStatus = "回城命令已发送";
         try
         {
+            _host!.Statuses.Report(Id, "正在输入回城命令", true);
             var input = _host!.Input;
             token.ThrowIfCancellationRequested();
             input.PressAndRelease("enter"); // 打开聊天框
@@ -120,23 +130,25 @@ public sealed class HideoutTool : ITool, IEnableableTool
         }
         catch (OperationCanceledException)
         {
+            finalStatus = "回城已取消";
             Diag.Log("[回城] ExecuteHideout: 已取消");
         }
         catch (Exception ex)
         {
+            finalStatus = "回城输入失败";
             Diag.Log($"[回城] ExecuteHideout 失败: {ex.GetType().Name}: {ex.Message}");
             _host?.Notification.ShowError($"一键回城执行失败：{ex.Message}");
         }
+        finally { _host?.Statuses.Report(Id, finalStatus, false); }
     }
 
     /// <summary>页面开关调用：更新启用状态并立即保存。</summary>
     public ToolEnablementResult SetEnabled(bool enabled)
     {
         if (_host is null) return ToolEnablementResult.Fail("一键回城尚未初始化");
-        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, CancelCurrentOperation);
+        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, CancelCurrentOperation, SaveNow);
         if (result.Success)
         {
-            SaveNow();
             _page?.RefreshFromTool();
         }
         return result;
@@ -148,16 +160,31 @@ public sealed class HideoutTool : ITool, IEnableableTool
     }
 
     public void SetCommand(string command)
+        => SetCommand(command, SaveNow);
+
+    internal void SetCommand(string command, Action saveSettings)
     {
+        var validationError = ValidateCommand(command);
+        if (validationError is not null) throw new ArgumentException(validationError, nameof(command));
+        var previous = _command;
         _command = string.IsNullOrWhiteSpace(command) ? SettingsDefaults.HideoutCommand : command.Trim();
-        SaveNow();
+        try { saveSettings(); }
+        catch
+        {
+            _command = previous;
+            throw;
+        }
     }
+
+    internal static string? ValidateCommand(string command)
+        => command.Any(char.IsControl) ? "回城命令不能包含换行或其他控制字符"
+            : command.Length > 200 ? "回城命令不能超过 200 个字符" : null;
 
     /// <summary>Settings 页批量应用时使用；持久化由 SettingsTool 统一原子完成。</summary>
     internal void ApplySharedSettings(bool enabled, string hotkey, string command)
     {
         _enabled = enabled;
-        _hotkey = string.IsNullOrWhiteSpace(hotkey) ? SettingsDefaults.HideoutHotkey : hotkey.Trim();
+        _hotkey = hotkey.Trim();
         _command = string.IsNullOrWhiteSpace(command) ? SettingsDefaults.HideoutCommand : command.Trim();
         _page?.RefreshFromTool();
     }
@@ -178,12 +205,7 @@ public sealed class HideoutTool : ITool, IEnableableTool
         if (section.TryGetProperty("enabled", out var e) &&
             (e.ValueKind == JsonValueKind.True || e.ValueKind == JsonValueKind.False))
             _enabled = e.GetBoolean();
-        if (section.TryGetProperty("hotkey", out var h) && h.ValueKind == JsonValueKind.String)
-        {
-            var hk = h.GetString();
-            if (!string.IsNullOrWhiteSpace(hk))
-                _hotkey = hk;
-        }
+        _hotkey = HotkeySetting.Read(section, "hotkey", _hotkey);
         if (section.TryGetProperty("command", out var command) && command.ValueKind == JsonValueKind.String &&
             !string.IsNullOrWhiteSpace(command.GetString()))
             _command = command.GetString()!.Trim();

@@ -111,9 +111,34 @@ public sealed class SettingsTool : ITool
             _keyLoop.IsEnabled);
     }
 
+    public SettingsApplyResult ApplyHotkey(string id, string key)
+    {
+        var current = CaptureDraft();
+        var resolution = HotkeyConflictResolver.Resolve(current.Hotkeys.WithKey(id, key), id);
+        var result = ApplyDraft(current with { Hotkeys = resolution.Hotkeys });
+        if (!result.Success) return result;
+
+        var entry = resolution.Hotkeys.GetEntries().Single(entry => entry.Id == id);
+        var message = string.IsNullOrEmpty(entry.Key)
+            ? $"{entry.Name}热键已清空"
+            : $"{entry.Name}热键已设为 {entry.Key}";
+        if (resolution.ClearedNames.Count > 0)
+            message += $"；已自动清空冲突项：{string.Join("、", resolution.ClearedNames)}";
+        if (string.IsNullOrEmpty(resolution.Hotkeys.CraftStop))
+            message += "\n洗装停止热键未绑定，重新绑定前无法启动洗装";
+        return SettingsApplyResult.Ok(message);
+    }
+
     public SettingsApplyResult ApplyDraft(SettingsDraft requested)
     {
         var host = _host ?? throw new InvalidOperationException("SettingsTool 尚未初始化");
+        return ApplyDraft(requested, () => host.Hotkeys.ReRegister(host.BuildHotkeyRequests()), SaveAllSections);
+    }
+
+    // 注册与持久化可在内部验证中替换，验证失败回滚时不调用 Win32 或用户数据目录。
+    internal SettingsApplyResult ApplyDraft(SettingsDraft requested,
+        Func<IReadOnlyList<string>> registerCurrent, Action saveSections)
+    {
         var candidate = requested.Normalize();
         var validationErrors = SettingsValidation.Validate(candidate);
         if (validationErrors.Count > 0)
@@ -132,7 +157,7 @@ public sealed class SettingsTool : ITool
                 previous.Hotkeys,
                 candidate.Hotkeys,
                 ApplyHotkeys,
-                () => host.Hotkeys.ReRegister(host.BuildHotkeyRequests()));
+                registerCurrent);
             if (!hotkeyResult.Success)
             {
                 RefreshPresentations();
@@ -143,24 +168,30 @@ public sealed class SettingsTool : ITool
         try
         {
             ApplyRuntime(candidate);
-            SaveAllSections();
+            saveSections();
             RefreshPresentations();
             return SettingsApplyResult.Ok();
         }
         catch (Exception ex)
         {
             Diag.Log($"[设置页] 保存失败，恢复旧配置: {ex.GetType().Name}: {ex.Message}");
-            ApplyRuntime(previous);
+            var rollbackIssues = new List<string>();
+            try { ApplyRuntime(previous); }
+            catch (Exception rollbackEx) { rollbackIssues.Add($"恢复旧字段失败：{rollbackEx.Message}"); }
             if (hotkeysChanged)
             {
-                var rollback = host.Hotkeys.ReRegister(host.BuildHotkeyRequests());
-                if (rollback.Count > 0)
-                    Diag.Log("[设置页] 保存失败后的热键恢复异常: " + string.Join(" | ", rollback));
+                try { rollbackIssues.AddRange(registerCurrent()); }
+                catch (Exception rollbackEx) { rollbackIssues.Add($"恢复旧热键失败：{rollbackEx.Message}"); }
             }
-            try { SaveAllSections(); }
-            catch (Exception rollbackEx) { Diag.Log($"[设置页] 旧设置回写失败: {rollbackEx.Message}"); }
+            try { saveSections(); }
+            catch (Exception rollbackEx) { rollbackIssues.Add($"旧设置回写失败：{rollbackEx.Message}"); }
             RefreshPresentations();
-            return SettingsApplyResult.Fail($"设置保存失败，已恢复修改前配置：{ex.Message}");
+            var message = rollbackIssues.Count == 0
+                ? $"设置保存失败，已恢复修改前配置：{ex.Message}"
+                : $"设置保存失败，已尝试恢复修改前配置：{ex.Message}\n\n警告：恢复时也遇到问题：\n{string.Join("\n", rollbackIssues)}";
+            if (rollbackIssues.Count > 0)
+                Diag.Log("[设置页] 保存失败后的恢复异常: " + string.Join(" | ", rollbackIssues));
+            return SettingsApplyResult.Fail(message);
         }
     }
 
@@ -186,10 +217,20 @@ public sealed class SettingsTool : ITool
 
     /// <summary>启动自动检测成功后同步运行状态、Settings 页面和 host 分节。</summary>
     public void ApplyDetectedTarget(string targetProcess)
+        => ApplyDetectedTarget(targetProcess, SaveHostSection);
+
+    internal void ApplyDetectedTarget(string targetProcess, Action saveSettings)
     {
         if (_host is null || string.IsNullOrWhiteSpace(targetProcess)) return;
+        var previous = _host.Foreground.TargetProcess;
         _host.Foreground.TargetProcess = targetProcess.Trim();
-        SaveHostSection();
+        try { saveSettings(); }
+        catch
+        {
+            _host.Foreground.TargetProcess = previous;
+            _page?.RefreshFromTool(refreshLists: false);
+            throw;
+        }
         _page?.RefreshFromTool(refreshLists: false);
     }
 
@@ -232,34 +273,12 @@ public sealed class SettingsTool : ITool
 
     private void SaveAllSections()
     {
-        var host = _host!;
-        var hostSection = CreateHostSection();
-        var craftSection = SerializeTool(_craft);
-        var clickerSection = SerializeTool(_clicker);
-        var keyLoopSection = SerializeTool(_keyLoop);
-        var hideoutSection = SerializeTool(_hideout);
-        host.Storage.UpdateSettings(root =>
-        {
-            root["host"] = hostSection;
-            root["craft"] = craftSection;
-            root["clicker"] = clickerSection;
-            root["keyloop"] = keyLoopSection;
-            root["hideout"] = hideoutSection;
-        });
+        ToolSettingsPersistence.SaveSections(_host!.Storage, [this, _craft, _clicker, _keyLoop, _hideout]);
     }
 
     private void SaveHostSection()
     {
-        var section = CreateHostSection();
-        _host!.Storage.UpdateSettings(root => root["host"] = section);
-    }
-
-    private static JsonObject SerializeTool(ITool tool)
-    {
-        using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(stream))
-            tool.SaveSettings(writer);
-        return JsonNode.Parse(stream.ToArray()) as JsonObject ?? [];
+        ToolSettingsPersistence.SaveSections(_host!.Storage, [this]);
     }
 
     private JsonObject CreateHostSection() => new()
@@ -284,16 +303,10 @@ public sealed class SettingsTool : ITool
             _host.AutoDetectPoe = autoDetect.GetBoolean();
         if (!section.TryGetProperty("hotkeys", out var hotkeys) || hotkeys.ValueKind != JsonValueKind.Object) return;
 
-        _craft.HotkeyStart = ReadHotkey(hotkeys, "start", SettingsDefaults.HotkeyStart);
-        _craft.HotkeyStop = ReadHotkey(hotkeys, "stop", SettingsDefaults.HotkeyStop);
-        _host.CoordinateHotkey = ReadHotkey(hotkeys, "coordinate", SettingsDefaults.HotkeySetCoord);
+        _craft.HotkeyStart = HotkeySetting.Read(hotkeys, "start", SettingsDefaults.HotkeyStart);
+        _craft.HotkeyStop = HotkeySetting.Read(hotkeys, "stop", SettingsDefaults.HotkeyStop);
+        _host.CoordinateHotkey = HotkeySetting.Read(hotkeys, "coordinate", SettingsDefaults.HotkeySetCoord);
     }
-
-    private static string ReadHotkey(JsonElement section, string key, string fallback)
-        => section.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String &&
-           !string.IsNullOrWhiteSpace(value.GetString())
-            ? value.GetString()!.Trim()
-            : fallback;
 
     public void SaveSettings(Utf8JsonWriter writer) => CreateHostSection().WriteTo(writer);
 }

@@ -131,6 +131,9 @@
                                   SelectionChanged="PresetCombo_SelectionChanged"/>
                         <Button x:Name="SavePresetButton" Content="💾 保存" Style="{StaticResource CardButton}"
                                 Margin="8,0,0,0" Click="SavePresetButton_Click"/>
+                        <Button x:Name="DeletePresetButton" Content="删除" Style="{StaticResource CardButton}"
+                                Foreground="#C0392B" IsEnabled="False" Margin="4,0,0,0"
+                                Click="DeletePresetButton_Click" ToolTip="删除选中预设，当前词缀设置保留"/>
                         <Button x:Name="OpenPresetsButton" Content="📁" Width="28" Margin="4,0,0,0"
                                 Click="OpenPresetsButton_Click" Style="{StaticResource CardButton}" FontSize="14"/>
                     </StackPanel>

@@ -47,17 +47,20 @@
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Foreground" Value="#445566"/>
         <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalAlignment" Value="Left"/>
         <Setter Property="HorizontalContentAlignment" Value="Left"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ToggleButton">
-                    <Grid Background="Transparent">
+                    <!-- 只有绘制出的轨道参与命中；标签和剩余行宽不接收鼠标点击。 -->
+                    <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <ContentPresenter Grid.Column="0" Margin="0,0,10,0"
                                           VerticalAlignment="Center"
+                                          IsHitTestVisible="False"
                                           RecognizesAccessKey="True"/>
                         <Border x:Name="Track" Grid.Column="1" Width="42" Height="23"
                                 Background="#B7C4CE" CornerRadius="12"

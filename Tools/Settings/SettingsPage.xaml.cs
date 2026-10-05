@@ -127,7 +127,28 @@ public partial class SettingsPage : UserControl
     private void SetHotkey(string id, string value)
     {
         _hotkeyValues[id] = value;
-        _hotkeyButtons[id].Content = value;
+        _hotkeyButtons[id].Content = HotkeySetting.Display(value);
+    }
+
+    private void ClearHotkey_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.Tag is not string id) return;
+        var restoreIssues = CancelCapture();
+        if (restoreIssues.Count > 0)
+        {
+            var message = "结束捕获后恢复热键失败：\n" + string.Join("\n", restoreIssues);
+            ShowResult(message, success: false);
+            ShowFailureDialog(message);
+            return;
+        }
+
+        var result = _tool.ApplyHotkey(id, string.Empty);
+        ShowResult(result.Message, result.Success);
+        if (!result.Success)
+        {
+            RefreshFromTool(refreshLists: false);
+            ShowFailureDialog(result.Message);
+        }
     }
 
     private void BeginHotkeyCapture_Click(object sender, RoutedEventArgs e)
@@ -208,13 +229,13 @@ public partial class SettingsPage : UserControl
         var valueChanged = !string.Equals(previousValue, value, StringComparison.OrdinalIgnoreCase);
         _capturing = null;
         _hotkeyValues[id] = value;
-        _hotkeyButtons[id].Content = value;
+        _hotkeyButtons[id].Content = HotkeySetting.Display(value);
         _hotkeyButtons[id].BorderBrush = new SolidColorBrush(Color.FromRgb(0xB9, 0xD0, 0xE2));
 
         SettingsApplyResult result;
         try
         {
-            result = _tool.ApplyDraft(BuildDraft());
+            result = _tool.ApplyHotkey(id, value);
         }
         catch (Exception ex)
         {
@@ -239,7 +260,7 @@ public partial class SettingsPage : UserControl
         var wasCapturing = _capturing is not null;
         if (wasCapturing && _hotkeyButtons.TryGetValue(_capturing!, out var button))
         {
-            button.Content = _hotkeyValues.GetValueOrDefault(_capturing!, "未设置");
+            button.Content = HotkeySetting.Display(_hotkeyValues.GetValueOrDefault(_capturing!, string.Empty));
             button.BorderBrush = new SolidColorBrush(Color.FromRgb(0xB9, 0xD0, 0xE2));
         }
         _capturing = null;
@@ -340,14 +361,8 @@ public partial class SettingsPage : UserControl
 
     private void OpenStatistics_Click(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            Process.Start(new ProcessStartInfo(StatisticsUrl) { UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            ShowResult($"无法打开统计页面：{ex.Message}", success: false);
-        }
+        if (!BrowserLauncher.TryOpen(StatisticsUrl, out var error))
+            ShowResult(error, success: false);
     }
 
     private void PopulateProcesses(string selected)

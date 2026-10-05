@@ -37,8 +37,7 @@ public sealed class ToolHost
     /// <summary>
     /// 重置紧急停止令牌。CTS 一旦 Cancel 不可恢复（Python Event.clear() 可重置），
     /// 每次运行前检查并重置，避免"误触一次紧急停止 → 之后所有启动立即失效"。
-    /// 注：InputSimulator 持有旧引用，其 CheckEmergencyStop 的 Cancel 仅对旧令牌生效（无害），
-    /// 但抛出的 OperationCanceledException 仍会取消当前运行——紧急停止功能不受影响。
+    /// InputSimulator 每次操作动态获取当前 CTS；已运行工具仍持有本轮链接的取消令牌。
     /// </summary>
     public void ResetEmergencyStop()
     {
@@ -54,12 +53,10 @@ public sealed class ToolHost
     public SoundService Sound { get; }
     public CoordinateRecorder Coordinates { get; }
     public NetworkService Network { get; }
+    public ToolStatusStore Statuses { get; } = new();
 
     /// <summary>已注册的全部抽屉。</summary>
     public IReadOnlyList<ITool> RegisteredTools => _registry.Tools;
-
-    /// <summary>洗装是否运行中（关闭窗口时判断是否拦截到托盘）。阶段3由 CraftTool 设置。</summary>
-    public Func<bool> IsCraftRunning { get; set; } = () => false;
 
     /// <summary>触发全局紧急停止（所有链接此 token 的后台 Task 自动停止）。</summary>
     public void TriggerEmergencyStop() => EmergencyCts.Cancel();
@@ -85,6 +82,6 @@ public sealed class ToolHost
                 Handler = Coordinates.OnRecordHotkey,
             });
         }
-        return requests;
+        return requests.Where(request => !string.IsNullOrWhiteSpace(request.Key)).ToList();
     }
 }

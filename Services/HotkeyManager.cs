@@ -33,14 +33,17 @@ public sealed class HotkeyManager
 
     private readonly Dictionary<ushort, List<HoldBinding>> _holdByVk = []; // 主 vk → Hold 请求
     private readonly HashSet<HoldBinding> _activeHoldBindings = [];
+    private readonly HashSet<HotkeyRequest> _startedHoldRequests = [];
     private readonly HashSet<ushort> _keysDown = [];
     private readonly LowLevelKeyboardProc _hookProc;
     private readonly Func<bool> _isTargetForeground;
+    private readonly Action<Action> _queueOnUi;
 
     private HwndSource? _source;
     private nint _hwnd;
     private int _nextId = 0xC001;
     private nint _hookHandle;
+    private int _registrationGeneration;
 
     /// <summary>
     /// 游戏内热键回调或前台检测发生未预料异常时上报。宿主统一接到置顶错误提示；
@@ -48,10 +51,14 @@ public sealed class HotkeyManager
     /// </summary>
     public event Action<string>? RuntimeErrorOccurred;
 
-    public HotkeyManager(Func<bool> isTargetForeground)
+    public HotkeyManager(Func<bool> isTargetForeground) : this(isTargetForeground, QueueOnDispatcher) { }
+
+    internal HotkeyManager(Func<bool> isTargetForeground, Action<Action> queueOnUi)
     {
         ArgumentNullException.ThrowIfNull(isTargetForeground);
+        ArgumentNullException.ThrowIfNull(queueOnUi);
         _isTargetForeground = isTargetForeground;
+        _queueOnUi = queueOnUi;
         _hookProc = HookCallback; // 实例方法委托，防止回调被 GC
     }
 
@@ -88,7 +95,7 @@ public sealed class HotkeyManager
 
     /// <summary>
     /// 注册全部热键。返回冲突/失败描述列表（空 = 全部成功）。
-    /// 冲突规则（对齐 Python _check_conflicts）：键名大小写不敏感查重，重复键跳过注册。
+    /// 空绑定跳过；按修饰键和主键检测冲突，重复触发器跳过注册。
     /// </summary>
     public List<string> RegisterAll(IReadOnlyList<HotkeyRequest> requests)
     {
@@ -100,7 +107,7 @@ public sealed class HotkeyManager
         }
 
         // 1. 语义级重复检测：Ctrl+Alt+F5 与 Alt+Ctrl+F5 也属于同一个热键。
-        var parsedRequests = requests.Select(request =>
+        var parsedRequests = requests.Where(request => !string.IsNullOrWhiteSpace(request.Key)).Select(request =>
         {
             var parsed = request.Mode == HotkeyMode.Hold
                 ? HotkeyParser.ParseHold(request.Key)
@@ -171,11 +178,13 @@ public sealed class HotkeyManager
     /// <summary>注销全部（Toggle 与 Hold 两类分开清理，对应 Python 坑 #2）。</summary>
     public void UnregisterAll()
     {
+        // 排队的旧按下/松开/拒绝提示同时失效，不能在设置捕获或重注册完成后再执行。
+        Interlocked.Increment(ref _registrationGeneration);
         // 运行时修改热键可能发生在 Hold 正处于按下状态。注销钩子前必须先执行释放回调，
         // 否则连点器会失去 key-up 事件而继续保持运行。
-        foreach (var binding in _activeHoldBindings.ToList())
+        foreach (var request in _activeHoldBindings.Select(binding => binding.Request).Concat(_startedHoldRequests).Distinct().ToList())
         {
-            try { binding.Request.ReleaseHandler?.Invoke(); }
+            try { request.ReleaseHandler?.Invoke(); }
             catch (Exception ex) { Diag.Log($"[热键] 注销 Hold 时释放失败: {ex.Message}"); }
         }
 
@@ -190,6 +199,7 @@ public sealed class HotkeyManager
         }
         _holdByVk.Clear();
         _activeHoldBindings.Clear();
+        _startedHoldRequests.Clear();
         _keysDown.Clear();
     }
 
@@ -268,6 +278,43 @@ public sealed class HotkeyManager
     }
 
     // ── WH_KEYBOARD_LL（钩子线程，经 Dispatcher 回 UI 线程）──
+
+    internal void QueueHookCallback(Action callback)
+    {
+        var generation = Volatile.Read(ref _registrationGeneration);
+        try
+        {
+            _queueOnUi(() =>
+            {
+                if (generation == Volatile.Read(ref _registrationGeneration)) callback();
+            });
+        }
+        catch (Exception error) { Diag.Log($"[热键] 钩子回调提交失败: {error}"); }
+    }
+
+    internal void QueueHoldCallback(HotkeyRequest request, bool start)
+        => QueueHookCallback(() =>
+        {
+            if (start)
+            {
+                // 物理松开可能先移出 active 集合；直到释放回调真正执行前，注销仍须停止它。
+                _startedHoldRequests.Add(request);
+                InvokeSafely(request, request.Handler, "执行");
+            }
+            else if (InvokeSafely(request, request.ReleaseHandler, "释放"))
+                _startedHoldRequests.Remove(request);
+        });
+
+    private static void QueueOnDispatcher(Action callback)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+        dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished) callback();
+        }));
+    }
+
     private nint HookCallback(int nCode, nint wParam, nint lParam)
     {
         if (nCode >= 0)
@@ -277,7 +324,6 @@ public sealed class HotkeyManager
             var down = msg is WM_KEYDOWN or WM_SYSKEYDOWN;
             var up = msg is WM_KEYUP or WM_SYSKEYUP;
             var normalizedVk = HotkeyParser.NormalizeModifierVk(vk);
-            var dispatcher = System.Windows.Application.Current?.Dispatcher;
 
             if (down) _keysDown.Add(vk);
             if (up) _keysDown.Remove(vk);
@@ -294,7 +340,7 @@ public sealed class HotkeyManager
                     // 松开时都必须调用 ReleaseHandler，防止残留鼠标/按键状态。
                     if (!CanDispatch(binding.Request, out var foregroundError))
                     {
-                        dispatcher?.BeginInvoke(() =>
+                        QueueHookCallback(() =>
                         {
                             if (foregroundError is not null)
                                 ReportRuntimeError(binding.Request, "前台检查", foregroundError);
@@ -304,7 +350,7 @@ public sealed class HotkeyManager
                         continue;
                     }
                     _activeHoldBindings.Add(binding);
-                    dispatcher?.BeginInvoke(() => InvokeSafely(binding.Request, binding.Request.Handler, "执行"));
+                    QueueHoldCallback(binding.Request, start: true);
                 }
             }
 
@@ -316,7 +362,7 @@ public sealed class HotkeyManager
                         HotkeyParser.AreModifiersPressed(binding.Hotkey.Modifiers, key => _keysDown.Contains(key)))
                         continue;
                     _activeHoldBindings.Remove(binding);
-                    dispatcher?.BeginInvoke(() => InvokeSafely(binding.Request, binding.Request.ReleaseHandler, "释放"));
+                    QueueHoldCallback(binding.Request, start: false);
                 }
             }
         }

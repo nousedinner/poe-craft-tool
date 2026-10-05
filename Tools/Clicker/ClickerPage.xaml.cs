@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using ShiKe.Services;
 
 namespace ShiKe.Tools.Clicker;
 
@@ -20,7 +21,7 @@ public partial class ClickerPage : UserControl
         RightButtonRadio.IsChecked = tool.MouseButton == ClickerMouseButton.Right;
         IntervalSlider.Value = tool.IntervalMs;
         IntervalValue.Text = $"{tool.IntervalMs} ms";
-        HotkeyHint.Text = $"切换热键：{tool.Hotkey}    按住热键：{tool.HoldHotkey}";
+        RefreshSettingsPresentation();
         ApplyStatus(new ClickerStatus(tool.IsRunning, tool.ClickCount,
             tool.IsRunning ? "连点中..." : "连点器就绪"));
         _loading = false;
@@ -39,7 +40,7 @@ public partial class ClickerPage : UserControl
 
     internal void RefreshSettingsPresentation()
     {
-        HotkeyHint.Text = $"切换热键：{_tool.Hotkey}    按住热键：{_tool.HoldHotkey}";
+        HotkeyHint.Text = $"切换热键：{HotkeySetting.Display(_tool.Hotkey)}    按住热键：{HotkeySetting.Display(_tool.HoldHotkey)}";
     }
 
     internal void RefreshEnabledPresentation()

@@ -1,4 +1,5 @@
 using System.Windows.Controls;
+using ShiKe.Services;
 
 namespace ShiKe.Tools.Hideout;
 
@@ -21,8 +22,10 @@ public partial class HideoutPage : UserControl
         try
         {
             EnableCheck.IsChecked = _tool.IsEnabled;
-            HotkeyLabel.Text = $"（热键 {_tool.Hotkey}）";
-            InstructionHotkeyRun.Text = $"游戏内按 {_tool.Hotkey}：自动打开聊天框输入 ";
+            HotkeyLabel.Text = $"（热键 {HotkeySetting.Display(_tool.Hotkey)}）";
+            InstructionHotkeyRun.Text = string.IsNullOrWhiteSpace(_tool.Hotkey)
+                ? "热键未绑定，请先在设置中绑定；回城命令："
+                : $"游戏内按 {_tool.Hotkey}：自动打开聊天框输入 ";
             CommandText.Text = _tool.Command;
         }
         finally
@@ -46,14 +49,26 @@ public partial class HideoutPage : UserControl
 
     private void CommandText_Commit(object sender, System.Windows.RoutedEventArgs e)
     {
-        _tool.SetCommand(CommandText.Text);
-        CommandText.Text = _tool.Command;
+        SaveCommand();
     }
 
     private void CommandText_Changed(object sender, TextChangedEventArgs e)
     {
         if (_refreshing || string.IsNullOrWhiteSpace(CommandText.Text)) return;
-        _tool.SetCommand(CommandText.Text);
+        SaveCommand();
+    }
+
+    private void SaveCommand()
+    {
+        try { _tool.SetCommand(CommandText.Text); }
+        catch (Exception error) when (error is StorageException or ArgumentException)
+        {
+            RefreshFromTool();
+            NotificationService.ShowConfigurationError(error.Message, System.Windows.Window.GetWindow(this));
+            return;
+        }
+        // TextChanged 时允许继续输入；提交时才将默认值/首尾空格同步回文本框。
+        if (!CommandText.IsKeyboardFocusWithin) RefreshFromTool();
     }
 
     private void CommandText_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)

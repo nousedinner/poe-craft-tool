@@ -34,9 +34,9 @@ public partial class CraftPage : UserControl
     private readonly List<AffixTagUi> _primaryTags = [];
     private readonly List<AffixTagUi> _secondaryTags = [];
     private readonly List<AffixTagUi> _excludeTags = [];
+    private bool _refreshingPresets;
 
     private string _selectedCurrency = Currency.Alteration;
-    private string _coordHotkey = "F7";
     private bool _dirty;
     private bool _initialized;   // Loaded 防重复（WPF Loaded 在每次进入可视树时触发，卡片会翻倍）
     private bool _restoringHitCount;
@@ -49,7 +49,7 @@ public partial class CraftPage : UserControl
         InitializeComponent();
         _host = host;
         _tool = tool;
-        CraftHotkeyHint.Text = $"⚡ 游戏内按 {tool.HotkeyStart} 启动 / {tool.HotkeyStop} 停止";
+        RefreshHotkeyHints(tool.HotkeyStart, tool.HotkeyStop, host.CoordinateHotkey);
 
         Loaded += (_, _) => OnLoaded();
     }
@@ -57,8 +57,17 @@ public partial class CraftPage : UserControl
     /// <summary>由 SettingsTool 在热键成功重注册后调用；不收集或改写页面业务配置。</summary>
     internal void RefreshHotkeyHints(string startHotkey, string stopHotkey, string coordinateHotkey)
     {
-        _coordHotkey = coordinateHotkey;
-        CraftHotkeyHint.Text = $"⚡ 游戏内按 {startHotkey} 启动 / {stopHotkey} 停止";
+        CraftHotkeyHint.Text = $"⚡ 游戏内启动：{HotkeySetting.Display(startHotkey)} / 停止：{HotkeySetting.Display(stopHotkey)}";
+        if (_host.Coordinates.ActiveSlot is not { } slot) return;
+        if (string.IsNullOrWhiteSpace(coordinateHotkey))
+        {
+            _host.Coordinates.CancelRecording();
+            UpdateCoordButton(slot.SlotId, _host.Coordinates.GetCoordinate(slot.SlotId));
+        }
+        else if (slot.SlotId == "item")
+            ItemCoordButton.Content = $"移动鼠标后按 {coordinateHotkey}...";
+        else if (_cards.TryGetValue(slot.SlotId, out var card))
+            card.CoordButton.Content = $"移动鼠标后按 {coordinateHotkey}...";
     }
 
     internal void RefreshEnabledPresentation()
@@ -83,15 +92,6 @@ public partial class CraftPage : UserControl
         if (_initialized) return; // 防重复：切走再切回不重建
         _initialized = true;
         var startupTimer = Stopwatch.StartNew();
-
-        // 坐标热键显示名（host 节，默认 F7）
-        try
-        {
-            var settings = _host.Storage.LoadSettings();
-            if (settings["host"] is JsonObject h && h["hotkeys"] is JsonObject hk && hk["coordinate"] is JsonValue v)
-                _coordHotkey = v.GetValue<string>() ?? "F7";
-        }
-        catch (Exception) { }
 
         BuildCurrencyCards();
 
@@ -244,8 +244,13 @@ public partial class CraftPage : UserControl
 
     private void StartRecordSlot(string slotId, string displayName, Button btn)
     {
+        if (string.IsNullOrWhiteSpace(_host.CoordinateHotkey))
+        {
+            CraftStatusText.Text = "坐标录制热键未绑定，请先在设置中绑定";
+            return;
+        }
         _host.Coordinates.StartRecording(new CoordinateSlot { SlotId = slotId, DisplayName = displayName });
-        btn.Content = $"移动鼠标后按 {_coordHotkey}...";
+        btn.Content = $"移动鼠标后按 {_host.CoordinateHotkey}...";
         btn.Background = new SolidColorBrush(Color.FromArgb(0x1F, 0x1A, 0x6F, 0xB5));
         btn.BorderBrush = new SolidColorBrush(Color.FromRgb(0x1A, 0x6F, 0xB5));
         btn.BorderThickness = new Thickness(1.5);
@@ -262,9 +267,10 @@ public partial class CraftPage : UserControl
 
     private void UpdateAllCoordButtons()
     {
+        var coordinates = _host.Coordinates.GetCoordinates();
         foreach (var key in _cards.Keys)
-            UpdateCoordButton(key, _host.Coordinates.GetCoordinate(key));
-        UpdateCoordButton("item", _host.Coordinates.GetCoordinate("item"));
+            UpdateCoordButton(key, coordinates.TryGetValue(key, out var pt) ? pt : null);
+        UpdateCoordButton("item", coordinates.TryGetValue("item", out var item) ? item : null);
     }
 
     private void UpdateCoordButton(string slotId, Point? pt)
@@ -305,13 +311,7 @@ public partial class CraftPage : UserControl
 
     private void ItemCoordButton_Click(object sender, RoutedEventArgs e)
     {
-        _host.Coordinates.StartRecording(new CoordinateSlot { SlotId = "item", DisplayName = "装备位置" });
-        ItemCoordButton.Content = $"移动鼠标后按 {_coordHotkey}...";
-        ItemCoordButton.Background = new SolidColorBrush(Color.FromArgb(0x1F, 0x1A, 0x6F, 0xB5));
-        ItemCoordButton.BorderBrush = new SolidColorBrush(Color.FromRgb(0x1A, 0x6F, 0xB5));
-        ItemCoordButton.BorderThickness = new Thickness(1.5);
-        ItemCoordButton.Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x6F, 0xB5));
-        ItemCoordButton.FontWeight = FontWeights.Bold;
+        StartRecordSlot("item", "装备位置", ItemCoordButton);
     }
 
     private void ItemClearButton_Click(object sender, RoutedEventArgs e)
@@ -323,15 +323,13 @@ public partial class CraftPage : UserControl
 
     private void ClearAllCoordsButton_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var key in _cards.Keys)
+        var ids = _cards.Keys.Append("item").ToArray();
+        _host.Coordinates.ClearCoordinates(ids);
+        foreach (var key in ids)
         {
-            _host.Coordinates.ClearCoordinate(key);
             _tool.Coordinates.Remove(key);
             UpdateCoordButton(key, null);
         }
-        _host.Coordinates.ClearCoordinate("item");
-        _tool.Coordinates.Remove("item");
-        UpdateCoordButton("item", null);
     }
 
     // ── 词缀池 ──
@@ -567,17 +565,30 @@ public partial class CraftPage : UserControl
     private void RefreshPresetCombo()
     {
         var current = PresetCombo.SelectedItem as string;
-        PresetCombo.Items.Clear();
-        PresetCombo.Items.Add("无");
-        foreach (var name in _host.Storage.ListPresets())
-            PresetCombo.Items.Add(name);
-        if (current is not null)
-            PresetCombo.SelectedItem = current;
+        _refreshingPresets = true;
+        try
+        {
+            PresetCombo.Items.Clear();
+            PresetCombo.Items.Add("无");
+            foreach (var name in _host.Storage.ListPresets()) PresetCombo.Items.Add(name);
+        }
+        catch (StorageException error)
+        {
+            NotificationService.ShowConfigurationError(error.Message, Window.GetWindow(this));
+        }
+        finally
+        {
+            PresetCombo.SelectedItem = current is not null && PresetCombo.Items.Contains(current) ? current : "无";
+            _refreshingPresets = false;
+            DeletePresetButton.IsEnabled = PresetCombo.SelectedItem is string selected && selected != "无";
+        }
     }
 
     private void PresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!IsLoaded || PresetCombo.SelectedItem is not string name || name == "无")
+        if (DeletePresetButton is not null)
+            DeletePresetButton.IsEnabled = PresetCombo.SelectedItem is string selected && selected != "无";
+        if (_refreshingPresets || !IsLoaded || PresetCombo.SelectedItem is not string name || name == "无")
             return;
 
         // 未保存修改确认（Python _on_preset_selected）
@@ -594,11 +605,24 @@ public partial class CraftPage : UserControl
             }
         }
 
-        var data = _host.Storage.LoadPreset(name);
+        JsonObject? data;
+        try { data = _host.Storage.LoadPreset(name); }
+        catch (StorageException error)
+        {
+            NotificationService.ShowConfigurationError(error.Message, Window.GetWindow(this));
+            PresetCombo.SelectedItem = "无";
+            return;
+        }
         if (data is not null)
         {
             ApplyPreset(data);
             _dirty = false;
+        }
+        else
+        {
+            MessageBox.Show(Window.GetWindow(this), $"预设「{name}」已不存在，当前词缀设置保留。",
+                "预设不存在", MessageBoxButton.OK, MessageBoxImage.Information);
+            RefreshPresetCombo();
         }
     }
 
@@ -620,8 +644,15 @@ public partial class CraftPage : UserControl
     {
         if (obj[key] is not JsonArray arr) yield break;
         foreach (var item in arr)
-            if (item is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s))
-                yield return s;
+        {
+            var text = item switch
+            {
+                JsonValue v when v.TryGetValue<string>(out var s) => s,
+                JsonObject o when o["text"] is JsonValue v && v.TryGetValue<string>(out var s) => s,
+                _ => null,
+            };
+            if (!string.IsNullOrWhiteSpace(text)) yield return text;
+        }
     }
 
     private static int ReadInt(JsonObject obj, string key, int fallback)
@@ -683,6 +714,21 @@ public partial class CraftPage : UserControl
         _dirty = false;
         RefreshPresetCombo();
         PresetCombo.SelectedItem = name;
+    }
+
+    private void DeletePresetButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (PresetCombo.SelectedItem is not string name || name == "无") return;
+        var owner = Window.GetWindow(this);
+        var reply = MessageBox.Show(owner, $"确定删除预设「{name}」？\n\n当前词缀设置会保留。",
+            "删除预设", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+        if (reply != MessageBoxResult.Yes) return;
+        try
+        {
+            _host.Storage.DeletePreset(name);
+            RefreshPresetCombo();
+        }
+        catch (StorageException error) { NotificationService.ShowConfigurationError(error.Message, owner); }
     }
 
     private void OpenPresetsButton_Click(object sender, RoutedEventArgs e)

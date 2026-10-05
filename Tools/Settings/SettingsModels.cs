@@ -1,5 +1,6 @@
 using ShiKe.Host;
 using ShiKe.Services;
+using ShiKe.Tools.Hideout;
 
 namespace ShiKe.Tools.Settings;
 
@@ -22,6 +23,57 @@ public sealed record HotkeySettings(
         KeyLoop = KeyLoop.Trim(),
         Hideout = Hideout.Trim(),
     };
+
+    internal IReadOnlyList<(string Id, string Name, string Key, HotkeyMode Mode)> GetEntries() =>
+    [
+        ("craft_start", "启动洗装", CraftStart, HotkeyMode.Toggle),
+        ("craft_stop", "停止洗装", CraftStop, HotkeyMode.Toggle),
+        ("coordinate", "坐标录制", Coordinate, HotkeyMode.Toggle),
+        ("clicker_toggle", "连点器切换", ClickerToggle, HotkeyMode.Toggle),
+        ("clicker_hold", "连点器按住", ClickerHold, HotkeyMode.Hold),
+        ("keyloop", "按键循环", KeyLoop, HotkeyMode.Toggle),
+        ("hideout", "一键回城", Hideout, HotkeyMode.Toggle),
+    ];
+
+    internal HotkeySettings WithKey(string id, string key) => id switch
+    {
+        "craft_start" => this with { CraftStart = key },
+        "craft_stop" => this with { CraftStop = key },
+        "coordinate" => this with { Coordinate = key },
+        "clicker_toggle" => this with { ClickerToggle = key },
+        "clicker_hold" => this with { ClickerHold = key },
+        "keyloop" => this with { KeyLoop = key },
+        "hideout" => this with { Hideout = key },
+        _ => throw new ArgumentException("未知的热键项", nameof(id)),
+    };
+}
+
+/// <summary>当前修改项优先，按真实触发器清空其他冲突绑定，包括尚未启用的工具。</summary>
+internal static class HotkeyConflictResolver
+{
+    public static (HotkeySettings Hotkeys, IReadOnlyList<string> ClearedNames) Resolve(
+        HotkeySettings requested, string preferredId)
+    {
+        var candidate = requested.Normalize();
+        var entries = candidate.GetEntries();
+        var preferred = entries.Single(entry => entry.Id == preferredId);
+        var trigger = preferred.Mode == HotkeyMode.Hold
+            ? HotkeyParser.ParseHold(preferred.Key)
+            : HotkeyParser.Parse(preferred.Key);
+        var clearedNames = new List<string>();
+        if (trigger is null) return (candidate, clearedNames);
+
+        foreach (var entry in entries.Where(entry => entry.Id != preferredId))
+        {
+            var other = entry.Mode == HotkeyMode.Hold
+                ? HotkeyParser.ParseHold(entry.Key)
+                : HotkeyParser.Parse(entry.Key);
+            if (other != trigger) continue;
+            candidate = candidate.WithKey(entry.Id, string.Empty);
+            clearedNames.Add(entry.Name);
+        }
+        return (candidate, clearedNames);
+    }
 }
 
 public sealed record SettingsDraft(
@@ -69,10 +121,8 @@ public static class SettingsValidation
             errors.Add("目标进程只能填写进程文件名，不能包含路径");
         if (!IsSingleFileName(draft.SelectedSound))
             errors.Add("音效只能选择 sounds 目录中的文件名");
-        if (draft.HideoutCommand.Any(char.IsControl))
-            errors.Add("回城命令不能包含换行或其他控制字符");
-        if (draft.HideoutCommand.Length > 200)
-            errors.Add("回城命令不能超过 200 个字符");
+        if (HideoutTool.ValidateCommand(draft.HideoutCommand) is { } commandError)
+            errors.Add(commandError);
         if (draft.CraftEnabled && draft.ClickerEnabled &&
             HotkeyParser.ParseHold(draft.Hotkeys.ClickerHold) is { Modifiers: 0, Vk: KeyCode.Control })
             errors.Add("连点器按住热键为 Ctrl 时，连点器与洗词缀不能同时启用");
@@ -82,21 +132,11 @@ public static class SettingsValidation
 
     public static IReadOnlyList<string> ValidateHotkeys(HotkeySettings hotkeys)
     {
-        var entries = new (string Name, string Key, HotkeyMode Mode)[]
-        {
-            ("启动洗装", hotkeys.CraftStart, HotkeyMode.Toggle),
-            ("停止洗装", hotkeys.CraftStop, HotkeyMode.Toggle),
-            ("坐标录制", hotkeys.Coordinate, HotkeyMode.Toggle),
-            ("连点器切换", hotkeys.ClickerToggle, HotkeyMode.Toggle),
-            ("连点器按住", hotkeys.ClickerHold, HotkeyMode.Hold),
-            ("按键循环", hotkeys.KeyLoop, HotkeyMode.Toggle),
-            ("一键回城", hotkeys.Hideout, HotkeyMode.Toggle),
-        };
-
         var parsed = new List<(string Name, string Key, ParsedHotkey Trigger)>();
         var errors = new List<string>();
-        foreach (var entry in entries)
+        foreach (var entry in hotkeys.GetEntries())
         {
+            if (string.IsNullOrWhiteSpace(entry.Key)) continue;
             var trigger = entry.Mode == HotkeyMode.Hold
                 ? HotkeyParser.ParseHold(entry.Key)
                 : HotkeyParser.Parse(entry.Key);
@@ -136,10 +176,10 @@ internal static class HotkeySettingsTransaction
         Action<HotkeySettings> apply,
         Func<IReadOnlyList<string>> registerCurrent)
     {
-        apply(candidate);
         IReadOnlyList<string> issues;
         try
         {
+            apply(candidate);
             issues = registerCurrent();
         }
         catch (Exception ex)
@@ -150,10 +190,10 @@ internal static class HotkeySettingsTransaction
         if (issues.Count == 0)
             return SettingsApplyResult.Ok("热键已重新注册");
 
-        apply(previous);
         IReadOnlyList<string> rollbackIssues;
         try
         {
+            apply(previous);
             rollbackIssues = registerCurrent();
         }
         catch (Exception ex)
@@ -161,7 +201,9 @@ internal static class HotkeySettingsTransaction
             rollbackIssues = [$"恢复旧热键时发生异常：{ex.Message}"];
         }
 
-        var message = "新热键未生效，已恢复修改前配置：\n" + string.Join("\n", issues);
+        var message = (rollbackIssues.Count == 0
+            ? "新热键未生效，已恢复修改前配置：\n"
+            : "新热键未生效，已尝试恢复修改前配置：\n") + string.Join("\n", issues);
         if (rollbackIssues.Count > 0)
             message += "\n\n警告：旧热键恢复也遇到问题：\n" + string.Join("\n", rollbackIssues);
         return SettingsApplyResult.Fail(message);

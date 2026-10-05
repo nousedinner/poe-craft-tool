@@ -51,6 +51,7 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
     {
         _host = host;
         _engine = new CraftEngine(host);
+        _engine.StatusUpdated += status => host.Statuses.Report(Id, status.Text, status.Running, status.UseCount);
 
         // 全局错误兜底：洗词缀页未打开时也能看到启动错误（坐标缺失/验证失败等）
         _engine.ErrorOccurred += msg => host.Notification.ShowError(msg);
@@ -58,6 +59,7 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
         // 成功/耗尽/错误由引擎各自通知；只有普通用户停止在这里补一次提示，避免覆盖最终结果。
         _engine.Stopped += reason =>
         {
+            host.Statuses.Report(Id, reason, false, _engine.UseCount);
             if (PopupEnabled && reason == "已停止") host.Notification.Show("⏹ 已停止");
         };
 
@@ -181,12 +183,23 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
         _host.Storage.SaveRules(obj);
     }
 
+    internal string? ValidateStartHotkeys()
+        => HotkeyParser.Parse(HotkeyStop) is null
+            ? "洗装停止热键未绑定或无法识别，请先在设置中绑定有效停止热键"
+            : null;
+
     public void Start()
     {
         if (_host is null || _engine is null) return;
         if (!_enabled)
         {
             _host.Notification.ShowError("洗词缀当前未启用，请先在洗词缀页面打开功能开关");
+            return;
+        }
+        var hotkeyError = ValidateStartHotkeys();
+        if (hotkeyError is not null)
+        {
+            _host.Notification.ShowError(hotkeyError);
             return;
         }
         if (string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess))
@@ -261,10 +274,9 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
     public ToolEnablementResult SetEnabled(bool enabled)
     {
         if (_host is null) return ToolEnablementResult.Fail("洗词缀尚未初始化");
-        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, Stop);
+        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, Stop, SaveSettingsToStorage);
         if (result.Success)
         {
-            SaveSettingsToStorage();
             _page?.RefreshEnabledPresentation();
         }
         return result;
@@ -281,9 +293,12 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
     public void OnShutdown()
     {
         // 退出前收集页面最新值；CollectRulesFromUi 只更新/保存配置，不会启动输入。
-        _page?.CollectRulesFromUi();
-        if (_engine is not null && !_engine.Shutdown(TimeSpan.FromSeconds(2)))
-            Diag.Log("[引擎] Shutdown: 2 秒内未完成关闭");
+        try { _page?.CollectRulesFromUi(); }
+        finally
+        {
+            if (_engine is not null && !_engine.Shutdown(TimeSpan.FromSeconds(2)))
+                Diag.Log("[引擎] Shutdown: 2 秒内未完成关闭");
+        }
     }
 
     // ── 存储（craft 节）──

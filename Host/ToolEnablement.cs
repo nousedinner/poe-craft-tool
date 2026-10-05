@@ -9,7 +9,7 @@ public sealed record ToolEnablementResult(bool Success, string Message)
 }
 
 /// <summary>
-/// 工具启用状态的轻量事务：先验证跨工具安全约束，再统一重注册热键；失败时恢复旧状态。
+/// 工具启用事务：安全校验、热键注册和原子保存全部成功后才报告成功；失败恢复旧启用配置。
 /// </summary>
 public static class ToolEnablement
 {
@@ -18,7 +18,21 @@ public static class ToolEnablement
         ITool tool,
         bool enabled,
         Action<bool> applyState,
-        Action stopWhenDisabled)
+        Action stopWhenDisabled,
+        Action saveSettings)
+        => TryApply(tool, enabled, applyState, stopWhenDisabled, saveSettings,
+            () => ValidateCompatibility(host.RegisteredTools),
+            () => host.Hotkeys.ReRegister(host.BuildHotkeyRequests()));
+
+    // 内部回归替换注册/保存操作，不创建宿主或发送真实输入。
+    internal static ToolEnablementResult TryApply(
+        ITool tool,
+        bool enabled,
+        Action<bool> applyState,
+        Action stopWhenDisabled,
+        Action saveSettings,
+        Func<string?> validateCompatibility,
+        Func<IReadOnlyList<string>> registerCurrent)
     {
         if (tool is not IEnableableTool enableable)
             return ToolEnablementResult.Fail($"{tool.Name}不支持启用状态");
@@ -26,45 +40,60 @@ public static class ToolEnablement
             return ToolEnablementResult.Ok(enabled ? $"已启用{tool.Name}" : $"已停用{tool.Name}");
 
         var previous = enableable.IsEnabled;
-        applyState(enabled);
-
-        var compatibilityError = ValidateCompatibility(host.RegisteredTools);
-        if (compatibilityError is not null)
-        {
-            applyState(previous);
-            return ToolEnablementResult.Fail(compatibilityError);
-        }
-
-        IReadOnlyList<string> issues;
+        var registrationAttempted = false;
+        var stopped = false;
+        string failure;
         try
         {
-            issues = host.Hotkeys.ReRegister(host.BuildHotkeyRequests());
+            applyState(enabled);
+            var compatibilityError = validateCompatibility();
+            if (compatibilityError is not null)
+            {
+                failure = compatibilityError;
+            }
+            else
+            {
+                registrationAttempted = true;
+                var issues = registerCurrent();
+                if (issues.Count > 0)
+                {
+                    failure = string.Join("\n", issues);
+                }
+                else
+                {
+                    if (!enabled)
+                    {
+                        stopWhenDisabled();
+                        stopped = true;
+                    }
+                    saveSettings();
+                    return ToolEnablementResult.Ok(enabled ? $"已启用{tool.Name}" : $"已停用{tool.Name}");
+                }
+            }
         }
         catch (Exception ex)
         {
-            issues = [$"热键重新注册发生异常：{ex.Message}"];
-        }
-        if (issues.Count > 0)
-        {
-            applyState(previous);
-            IReadOnlyList<string> rollbackIssues;
-            try
-            {
-                rollbackIssues = host.Hotkeys.ReRegister(host.BuildHotkeyRequests());
-            }
-            catch (Exception ex)
-            {
-                rollbackIssues = [$"恢复原热键时发生异常：{ex.Message}"];
-            }
-            var message = $"无法{(enabled ? "启用" : "停用")}{tool.Name}，已恢复原状态：\n" +
-                          string.Join("\n", issues);
-            if (rollbackIssues.Count > 0)
-                message += "\n\n恢复原热键时也遇到问题：\n" + string.Join("\n", rollbackIssues);
-            return ToolEnablementResult.Fail(message);
+            failure = ex.Message;
+            Diag.Log($"[启用状态] {tool.Name}应用失败: {ex}");
         }
 
-        if (!enabled) stopWhenDisabled();
-        return ToolEnablementResult.Ok(enabled ? $"已启用{tool.Name}" : $"已停用{tool.Name}");
+        var rollbackIssues = new List<string>();
+        try { applyState(previous); }
+        catch (Exception ex) { rollbackIssues.Add($"恢复原启用状态失败：{ex.Message}"); }
+        if (registrationAttempted)
+        {
+            try { rollbackIssues.AddRange(registerCurrent()); }
+            catch (Exception ex) { rollbackIssues.Add($"恢复原热键时发生异常：{ex.Message}"); }
+        }
+        var recovery = rollbackIssues.Count == 0 ? "已恢复原启用配置" : "已尝试恢复原启用配置";
+        var message = $"无法{(enabled ? "启用" : "停用")}{tool.Name}，{recovery}：\n{failure}";
+        if (stopped) message += "\n本次已停止的操作不会自动重新启动。";
+        if (rollbackIssues.Count > 0)
+        {
+            message += "\n\n恢复时也遇到问题：\n" + string.Join("\n", rollbackIssues);
+            Diag.Log($"[启用状态] {tool.Name}恢复失败: {string.Join(" | ", rollbackIssues)}");
+        }
+        return ToolEnablementResult.Fail(message);
     }
 
     /// <summary>

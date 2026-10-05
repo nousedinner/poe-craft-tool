@@ -34,6 +34,7 @@ public sealed class KeyLoopTool : ITool, IEnableableTool
         _engine = new KeyLoopEngine(host);
         _engine.StatusUpdated += status =>
         {
+            host.Statuses.Report(Id, status.Text, status.Running);
             StatusUpdated?.Invoke(status);
             var stateChanged = _lastReportedRunning != status.Running;
             _lastReportedRunning = status.Running;
@@ -126,10 +127,9 @@ public sealed class KeyLoopTool : ITool, IEnableableTool
     public ToolEnablementResult SetEnabled(bool enabled)
     {
         if (_host is null) return ToolEnablementResult.Fail("按键循环尚未初始化");
-        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, Stop);
+        var result = ToolEnablement.TryApply(_host, this, enabled, value => _enabled = value, Stop, SaveSettingsToStorage);
         if (result.Success)
         {
-            SaveSettingsToStorage();
             _page?.RefreshEnabledPresentation();
         }
         return result;
@@ -185,9 +185,7 @@ public sealed class KeyLoopTool : ITool, IEnableableTool
         if (section.TryGetProperty("enabled", out var toolEnabled) &&
             toolEnabled.ValueKind is JsonValueKind.True or JsonValueKind.False)
             _enabled = toolEnabled.GetBoolean();
-        if (section.TryGetProperty("hotkey", out var hotkey) && hotkey.ValueKind == JsonValueKind.String &&
-            !string.IsNullOrWhiteSpace(hotkey.GetString()))
-            Hotkey = hotkey.GetString()!;
+        Hotkey = HotkeySetting.Read(section, "hotkey", Hotkey);
         if (section.TryGetProperty("notifications_enabled", out var notifications) &&
             notifications.ValueKind is JsonValueKind.True or JsonValueKind.False)
             NotificationsEnabled = notifications.GetBoolean();
@@ -216,8 +214,10 @@ public sealed class KeyLoopTool : ITool, IEnableableTool
 
     private static bool TryReadDelay(JsonElement item, out double delay)
     {
-        if (item.TryGetProperty("delay_s", out var current) && current.TryGetDouble(out delay)) return true;
-        if (item.TryGetProperty("delay", out var legacy) && legacy.TryGetDouble(out delay)) return true;
+        if (item.TryGetProperty("delay_s", out var current) && current.ValueKind == JsonValueKind.Number &&
+            current.TryGetDouble(out delay)) return true;
+        if (item.TryGetProperty("delay", out var legacy) && legacy.ValueKind == JsonValueKind.Number &&
+            legacy.TryGetDouble(out delay)) return true;
         delay = 1.0;
         return false;
     }
