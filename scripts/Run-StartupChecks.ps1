@@ -60,7 +60,7 @@ $summary = [ordered]@{
     lifecycleRuns = $lifecycle.count
     originalUserDataFiles = $before.Count
     originalUserDataUnchanged = $true
-    scope = '已交付 EXE 的隔离 WPF 首帧、首帧前关闭、恢复和重复关闭、正常退出；不注册热键、不联网、不发送输入，冷启动/托盘鼠标/真实游戏仍需人工'
+    scope = '已交付 EXE 的隔离 WPF 首帧后关闭七次、首帧前关闭三次与完整退出；不注册热键、不联网、不发送输入；真实桌面 X 与运行中输入释放日常观察'
 }
 [IO.File]::WriteAllText((Join-Path $profileRoot 'startup-check-result.json'), ($summary | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($true))
-Write-Host '启动与托盘关闭检查通过；原用户数据保持。'
+Write-Host '启动与主窗口关闭退出检查通过；原用户数据保持。'

@@ -751,6 +751,8 @@ public partial class CraftPage : UserControl
     /// </summary>
     public void CollectRulesFromUi()
     {
+        // 窗口首帧前关闭时 Loaded 尚未把已有规则填入控件，不能用空标签/默认值覆盖。
+        if (!_initialized) return;
         UpdateRulesFromUi();
         _tool.SaveRulesToStorage();
         _tool.SaveSettingsToStorage();

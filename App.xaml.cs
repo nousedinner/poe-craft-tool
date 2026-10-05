@@ -106,19 +106,20 @@ public partial class App : Application
         MainWindow = _mainWindow;
         MarkStartup("主窗口构造与事件连接完成");
 
-        // 用户关闭主窗口始终隐藏到托盘；真正退出只走 RequestShutdown。
+        // X / Alt+F4 关闭主窗口后由 OnMainWindowClose 正式退出；先取消后台任务。
         _mainWindow.Closing += (_, e) =>
         {
-            if (!_isShuttingDown)
-                EnsureTray().OnWindowClosing(e);
+            _startup.Mark("主窗口关闭退出请求");
+            _isShuttingDown = true;
+            _backgroundCts.Cancel();
         };
 
-        // 专用副本自动验证：窗口尚未显示时关闭，仍必须保留可用托盘与窗口。
+        // 专用副本自动验证：首帧前关闭也必须正式退出，不恢复或重建窗口。
         if (_startupLifecycleCheck)
         {
+            MarkStartup("首帧前关闭请求");
             _mainWindow.Close();
-            if (_tray is null || _mainWindow.IsVisible) { Shutdown(2); return; }
-            MarkStartup("首帧前关闭被托盘接管");
+            return;
         }
         _mainWindow.Show();
         MarkStartup("Show 返回");
@@ -154,19 +155,7 @@ public partial class App : Application
             _startup.Mark("首帧后消息队列空闲");
             _startup.WriteLog();
             if (!_startupProfile) return;
-            if (_startupLifecycleCheck)
-            {
-                _mainWindow.Close();
-                if (_mainWindow.IsVisible) { Shutdown(2); return; }
-                _mainWindow.Show();
-                if (!_mainWindow.IsVisible) { Shutdown(2); return; }
-                _mainWindow.Close();
-                if (_mainWindow.IsVisible) { Shutdown(2); return; }
-                _startup.Mark("恢复窗口与重复关闭验证完成");
-            }
-            try { _startup.WriteProfile(); }
-            catch (Exception error) { Diag.Log($"[启动测量] 报告保存失败: {error}"); Shutdown(1); return; }
-            RequestShutdown();
+            _mainWindow.Close(); // 与用户 X 共用真正的关闭路径，不直接调用 Shutdown 代替验证。
         }));
     }
 
@@ -388,16 +377,23 @@ public partial class App : Application
             Cleanup("单实例句柄", () => _singleInstanceMutex?.Dispose());
             _singleInstanceMutex = null;
             Cleanup("后台任务令牌", _backgroundCts.Dispose);
+            if (_startupProfile)
+            {
+                _startup.Mark("关闭流程清理完成");
+                try { _startup.WriteProfile(); }
+                catch (Exception error) { Diag.Log($"[启动测量] 报告保存失败: {error}"); e.ApplicationExitCode = 1; }
+                if (saveErrors.Count > 0) e.ApplicationExitCode = 2;
+            }
             base.OnExit(e);
         }
-        if (_settingsLoadedSuccessfully && saveErrors.Count > 0)
+        if (!_startupProfile && _settingsLoadedSuccessfully && saveErrors.Count > 0)
             NotificationService.ShowConfigurationError("退出时部分配置未能保存或清理，请保留 data/debug.log。\n\n" +
                                                        string.Join("\n\n", saveErrors.Distinct()));
     }
 
     protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
     {
-        // Windows 注销/关机必须放行真实关闭，不能被“隐藏到托盘”逻辑拦截。
+        // Windows 注销/关机与主窗口关闭一样，正式停止并退出。
         _isShuttingDown = true;
         _backgroundCts.Cancel();
         base.OnSessionEnding(e);

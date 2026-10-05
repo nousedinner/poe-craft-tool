@@ -34,6 +34,22 @@ for ($iteration = 1; $iteration -le $Count; $iteration++) {
     Assert-GeneratedDirectory $artifactRoot $candidate '启动性能副本'
     if (Test-Path -LiteralPath $dataDirectory) { Remove-Item -LiteralPath $dataDirectory -Recurse -Force }
     Copy-Item -LiteralPath $sourceData -Destination $dataDirectory -Recurse
+    $beforeRulesHash = $null
+    if ($CheckLifecycle) {
+        # 只修改隔离副本：用明确的非默认配置证明首帧前关闭不会把空 UI 写回。
+        $settingsPath = Join-Path $dataDirectory 'settings.json'
+        $settingsProbe = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $settingsProbe.craft | Add-Member -NotePropertyName delay_ms -NotePropertyValue 47 -Force
+        $settingsProbe.craft | Add-Member -NotePropertyName mode2_scour_alch -NotePropertyValue $true -Force
+        $settingsProbe.craft | Add-Member -NotePropertyName use_exalt -NotePropertyValue $true -Force
+        [IO.File]::WriteAllText($settingsPath, ($settingsProbe | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($true))
+        $rulesPath = Join-Path $dataDirectory 'rules.json'
+        $rulesProbe = Get-Content -LiteralPath $rulesPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $rulesProbe | Add-Member -NotePropertyName primary_affixes -NotePropertyValue @('关闭前保留的主词缀') -Force
+        $rulesProbe | Add-Member -NotePropertyName primary_hit_count -NotePropertyValue 1 -Force
+        [IO.File]::WriteAllText($rulesPath, ($rulesProbe | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($true))
+        $beforeRulesHash = (Get-FileHash -LiteralPath $rulesPath).Hash
+    }
     $reportPath = Assert-ArtifactPath $candidate (Join-Path $candidate 'startup-profile.json')
     if (Test-Path -LiteralPath $reportPath) { Remove-Item -LiteralPath $reportPath }
 
@@ -53,26 +69,36 @@ for ($iteration = 1; $iteration -le $Count; $iteration++) {
         $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($report.processId -ne $process.Id) { throw '报告不属于本次测量子进程' }
         $firstFrame = @($report.stages | Where-Object { $_.Name -eq '主窗口首帧完成' })
-        if ($firstFrame.Count -ne 1) { throw '缺少唯一首帧时间，拒绝计入结果' }
+        $firstFrameMilliseconds = $null
+        if (-not $CheckLifecycle) {
+            if ($firstFrame.Count -ne 1) { throw '缺少唯一首帧时间，拒绝计入结果' }
+            $firstFrameMilliseconds = $firstFrame[0].ProcessMilliseconds
+        }
+        foreach ($stage in @('主窗口关闭退出请求', '关闭流程清理完成')) {
+            if (@($report.stages | Where-Object { $_.Name -eq $stage }).Count -ne 1) { throw "关闭退出检查未通过：$stage" }
+        }
         if ($CheckLifecycle) {
-            foreach ($stage in @('首帧前关闭被托盘接管', '恢复窗口与重复关闭验证完成')) {
-                if (@($report.stages | Where-Object { $_.Name -eq $stage }).Count -ne 1) { throw "生命周期检查未通过：$stage" }
-            }
+            if (@($report.stages | Where-Object { $_.Name -eq '首帧前关闭请求' }).Count -ne 1 -or $firstFrame.Count -ne 0) { throw '没有在首帧前完成关闭退出' }
+            if ((Get-FileHash -LiteralPath $rulesPath).Hash -ne $beforeRulesHash) { throw '首帧前关闭覆盖了已有规则' }
+            $saved = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($saved.craft.delay_ms -ne 47 -or $saved.craft.mode2_scour_alch -ne $true -or $saved.craft.use_exalt -ne $true) { throw '首帧前关闭覆盖了已加载的洗装设置' }
         }
         $reports.Add([ordered]@{
             iteration = $iteration
             launchThroughExitMilliseconds = [Math]::Round($launchTimer.Elapsed.TotalMilliseconds, 2)
-            firstFrameMilliseconds = $firstFrame[0].ProcessMilliseconds
+            firstFrameMilliseconds = $firstFrameMilliseconds
+            earlyCloseRulesAndSettingsPreserved = if ($CheckLifecycle) { $true } else { $null }
             report = $report
         })
-        Write-Host ("{0} 第 {1}/{2} 次：进程到首帧 {3:N0}ms" -f $Name, $iteration, $Count, $firstFrame[0].ProcessMilliseconds)
+        if ($CheckLifecycle) { Write-Host ("{0} 第 {1}/{2} 次：首帧前关闭退出通过" -f $Name, $iteration, $Count) }
+        else { Write-Host ("{0} 第 {1}/{2} 次：进程到首帧 {3:N0}ms，关闭退出通过" -f $Name, $iteration, $Count, $firstFrameMilliseconds) }
     }
     finally { $process.Dispose() }
 }
 
-$times = @($reports | ForEach-Object { [double]$_.firstFrameMilliseconds } | Sort-Object)
+$times = @($reports | Where-Object { $null -ne $_.firstFrameMilliseconds } | ForEach-Object { [double]$_.firstFrameMilliseconds } | Sort-Object)
 $middle = [int][Math]::Floor($times.Count / 2)
-$median = if ($times.Count % 2 -eq 0) { ($times[$middle - 1] + $times[$middle]) / 2 } else { $times[$middle] }
+$median = if ($times.Count -eq 0) { $null } elseif ($times.Count % 2 -eq 0) { ($times[$middle - 1] + $times[$middle]) / 2 } else { $times[$middle] }
 $summary = [ordered]@{
     schemaVersion = 1
     candidate = $Name
@@ -82,10 +108,11 @@ $summary = [ordered]@{
     count = $Count
     lifecycleChecks = [bool]$CheckLifecycle
     medianFirstFrameMilliseconds = $median
-    minFirstFrameMilliseconds = $times[0]
-    maxFirstFrameMilliseconds = $times[-1]
-    scope = '实际 WPF 首帧；跳过热键与网络；数据为隔离副本；文件缓存不受控，不能代表重启后的冷启动或双击全链路'
+    minFirstFrameMilliseconds = if ($times.Count -gt 0) { $times[0] } else { $null }
+    maxFirstFrameMilliseconds = if ($times.Count -gt 0) { $times[-1] } else { $null }
+    scope = '实际 WPF 关闭退出与清理；普通模式含首帧时间，生命周期模式为首帧前关闭；跳过热键、网络与真实输入；文件缓存不受控'
     runs = $reports.ToArray()
 }
 [IO.File]::WriteAllText($resultPath, ($summary | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($true))
-Write-Host ("{0} 首帧中位数 {1:N0}ms，最短 {2:N0}ms，最长 {3:N0}ms" -f $Name, $median, $times[0], $times[-1])
+if ($times.Count -gt 0) { Write-Host ("{0} 首帧中位数 {1:N0}ms，最短 {2:N0}ms，最长 {3:N0}ms" -f $Name, $median, $times[0], $times[-1]) }
+else { Write-Host ("{0} 首帧前关闭退出 {1} 次通过" -f $Name, $Count) }

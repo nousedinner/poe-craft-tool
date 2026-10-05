@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Drawing;
 using System.Windows;
 using System.Windows.Forms;
@@ -9,7 +8,7 @@ namespace ShiKe.Services;
 /// 系统托盘（对齐 Python 版 main_window.py _setup_tray / closeEvent）：
 /// - NotifyIcon（WinForms 互操作）+ poe.ico
 /// - 右键菜单：显示 / 退出；双击：显示窗口
-/// - 主窗口关闭按钮始终隐藏到托盘；只有 App 明确 Shutdown 时才真正关闭
+/// - 托盘仅在程序运行期间可用；主窗口 X 直接退出，不拦截关闭
 /// </summary>
 public sealed class TrayService : IDisposable
 {
@@ -67,16 +66,6 @@ public sealed class TrayService : IDisposable
                 Diag.Log($"[托盘] 恢复窗口失败，窗口已关闭或正在退出: {ex.Message}");
             }
         });
-    }
-
-    /// <summary>
-    /// 用户点击主窗口关闭按钮时隐藏到托盘。
-    /// App 明确退出时不会调用本方法，由 App 放行窗口关闭并执行统一清理。
-    /// </summary>
-    public void OnWindowClosing(CancelEventArgs e)
-    {
-        e.Cancel = true;
-        _window.Hide();
     }
 
     public void Dispose()
