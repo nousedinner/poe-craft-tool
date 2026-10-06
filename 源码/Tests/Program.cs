@@ -108,6 +108,7 @@ var tests = new (string Name, Action Run)[]
     ("Clicker 常驻任务可暂停停止并关闭", ClickerEngineLifecycleIsSafe),
     ("KeyLoop 独立槽位可暂停停止并关闭", KeyLoopEngineLifecycleIsSafe),
     ("Craft 运行配置使用深拷贝快照", CraftRulesSnapshotIsIndependent),
+    ("T11 实际窗口布局、切页保存与渐变生命周期", AppearanceChecks.Run),
 };
 
 var failed = 0;
@@ -1916,7 +1917,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(34, version.Build, "程序集 Build 必须为本次 1.0.34");
+    Equal(35, version.Build, "程序集 Build 必须为本次 1.0.35");
 }
 
 static void CraftEngineCanShutdownWhileIdle()

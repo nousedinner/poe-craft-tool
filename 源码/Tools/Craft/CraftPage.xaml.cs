@@ -10,7 +10,7 @@ namespace ShiKe.Tools.Craft;
 
 /// <summary>
 /// 洗装页面（对齐 Python config_tab.py 全部交互逻辑）。
-/// 模式选择 / Mode2 子模式 / Mode3 崇高 / 洗装点击间隔 / 通货网格(4列,按模式显示子集) /
+/// 三栏：模式与延迟 / 通货网格(2列,按模式显示子集)与坐标 / 词缀及预设。
 /// 三态坐标录制（信号分离坑#10）/ 词缀池(主/次/排除+命中数实时验证) / 预设管理 / 启停。
 /// </summary>
 public partial class CraftPage : UserControl
@@ -157,6 +157,7 @@ public partial class CraftPage : UserControl
             {
                 Content = "✕",
                 Width = 26,
+                Padding = new Thickness(2),
                 Visibility = Visibility.Collapsed,
                 Cursor = System.Windows.Input.Cursors.Hand,
                 FontSize = 10,
@@ -171,20 +172,23 @@ public partial class CraftPage : UserControl
                 Text = Currency.Label(key),
                 FontSize = 13,
                 FontWeight = FontWeights.Bold,
-                Foreground = new SolidColorBrush(Color.FromRgb(0x1E, 0x2A, 0x3A)),
+                Foreground = (Brush)FindResource("TextPrimary"),
                 Cursor = System.Windows.Input.Cursors.Hand,
                 HorizontalAlignment = HorizontalAlignment.Center,
             };
             nameLabel.MouseLeftButtonUp += (_, _) => SelectCurrency(key);
 
-            var coordRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+            var coordRow = new Grid { Margin = new Thickness(0, 8, 0, 0) };
+            coordRow.ColumnDefinitions.Add(new ColumnDefinition());
+            coordRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(clearBtn, 1);
             coordRow.Children.Add(coordBtn);
             coordRow.Children.Add(clearBtn);
 
             var root = new Border
             {
-                Background = new SolidColorBrush(Color.FromArgb(0x73, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x1A, 0x00, 0x50, 0xA0)),
+                Background = (Brush)FindResource("CardBackground"),
+                BorderBrush = (Brush)FindResource("CardBorder"),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(8, 6, 8, 6),
@@ -231,11 +235,11 @@ public partial class CraftPage : UserControl
         {
             var root = (Border)CurrencyGrid.Items[Array.IndexOf(Currency.All, key)];
             root.Background = key == _selectedCurrency
-                ? new SolidColorBrush(Color.FromArgb(0x14, 0x1A, 0x6F, 0xB5))   // 选中：淡蓝底
-                : new SolidColorBrush(Color.FromArgb(0x73, 0xFF, 0xFF, 0xFF));
+                ? (Brush)FindResource("AccentSoft")
+                : (Brush)FindResource("CardBackground");
             root.BorderBrush = key == _selectedCurrency
-                ? new SolidColorBrush(Color.FromRgb(0x1A, 0x6F, 0xB5))
-                : new SolidColorBrush(Color.FromArgb(0x1A, 0x00, 0x50, 0xA0));
+                ? (Brush)FindResource("AccentBrush")
+                : (Brush)FindResource("CardBorder");
             root.BorderThickness = key == _selectedCurrency ? new Thickness(2) : new Thickness(1);
         }
     }
@@ -251,10 +255,10 @@ public partial class CraftPage : UserControl
         }
         _host.Coordinates.StartRecording(new CoordinateSlot { SlotId = slotId, DisplayName = displayName });
         btn.Content = $"移动鼠标后按 {_host.CoordinateHotkey}...";
-        btn.Background = new SolidColorBrush(Color.FromArgb(0x1F, 0x1A, 0x6F, 0xB5));
-        btn.BorderBrush = new SolidColorBrush(Color.FromRgb(0x1A, 0x6F, 0xB5));
+        btn.Background = (Brush)FindResource("AccentSoft");
+        btn.BorderBrush = (Brush)FindResource("AccentBrush");
         btn.BorderThickness = new Thickness(1.5);
-        btn.Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x6F, 0xB5));
+        btn.Foreground = (Brush)FindResource("AccentBrush");
         btn.FontWeight = FontWeights.Bold;
     }
 
@@ -285,7 +289,7 @@ public partial class CraftPage : UserControl
         }
     }
 
-    private static void SetCoordButtonState(Button coordBtn, Button clearBtn, Point? pt)
+    private void SetCoordButtonState(Button coordBtn, Button clearBtn, Point? pt)
     {
         if (pt is { } p)
         {
@@ -300,10 +304,10 @@ public partial class CraftPage : UserControl
         else
         {
             coordBtn.Content = "设定坐标";
-            coordBtn.Background = new SolidColorBrush(Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF));
-            coordBtn.BorderBrush = new SolidColorBrush(Color.FromArgb(0x26, 0x00, 0x50, 0xA0));
+            coordBtn.Background = (Brush)FindResource("CardBackground");
+            coordBtn.BorderBrush = (Brush)FindResource("CardBorder");
             coordBtn.BorderThickness = new Thickness(1);
-            coordBtn.Foreground = new SolidColorBrush(Color.FromArgb(0x55, 0x66, 0x66, 0x66));
+            coordBtn.Foreground = (Brush)FindResource("TextSecondary");
             coordBtn.FontWeight = FontWeights.Normal;
             clearBtn.Visibility = Visibility.Collapsed;
         }
@@ -398,9 +402,9 @@ public partial class CraftPage : UserControl
     {
         var (bg, border, target) = type switch
         {
-            "primary" => ((Color)ColorConverter.ConvertFromString("#1F1B8A3E"), (Color)ColorConverter.ConvertFromString("#4D1B8A3E"), _primaryTags),
-            "secondary" => ((Color)ColorConverter.ConvertFromString("#1F1A6FB5"), (Color)ColorConverter.ConvertFromString("#4D1A6FB5"), _secondaryTags),
-            _ => ((Color)ColorConverter.ConvertFromString("#1FC0392B"), (Color)ColorConverter.ConvertFromString("#4DC0392B"), _excludeTags),
+            "primary" => ((Color)ColorConverter.ConvertFromString("#E9F7F3"), (Color)ColorConverter.ConvertFromString("#C4E4DB"), _primaryTags),
+            "secondary" => ((Color)ColorConverter.ConvertFromString("#EAF5FC"), (Color)ColorConverter.ConvertFromString("#D4E6F0"), _secondaryTags),
+            _ => ((Color)ColorConverter.ConvertFromString("#FCF0F2"), (Color)ColorConverter.ConvertFromString("#EED4DA"), _excludeTags),
         };
         var panel = type switch
         {
@@ -412,8 +416,10 @@ public partial class CraftPage : UserControl
         var label = new TextBlock
         {
             Text = text,
-            FontSize = 11,
-            Foreground = new SolidColorBrush(Color.FromRgb(0x1E, 0x2A, 0x3A)),
+            FontSize = 12,
+            Foreground = (Brush)FindResource("TextPrimary"),
+            MaxWidth = 190,
+            TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center,
         };
         var removeBtn = new TextBlock

@@ -57,10 +57,11 @@ public partial class KeyLoopPage : UserControl
                 Content = string.IsNullOrWhiteSpace(slot.Key) ? "点击设置" : slot.Key,
                 Width = 92,
                 Height = 27,
+                Padding = new Thickness(5, 2, 5, 2),
                 Margin = new Thickness(10, 0, 8, 0),
-                Background = new SolidColorBrush(Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x26, 0x00, 0x50, 0xA0)),
-                Foreground = new SolidColorBrush(Color.FromRgb(0x1A, 0x6F, 0xB5)),
+                Background = (Brush)FindResource("CardBackground"),
+                BorderBrush = (Brush)FindResource("CardBorder"),
+                Foreground = (Brush)FindResource("AccentBrush"),
                 Cursor = Cursors.Hand,
             };
             var clearButton = new Button
@@ -68,6 +69,7 @@ public partial class KeyLoopPage : UserControl
                 Content = "×",
                 Width = 25,
                 Height = 25,
+                Padding = new Thickness(2),
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
                 Foreground = new SolidColorBrush(Color.FromRgb(0xC0, 0x39, 0x2B)),
@@ -110,8 +112,8 @@ public partial class KeyLoopPage : UserControl
             var root = new Border
             {
                 Child = row,
-                Background = new SolidColorBrush(Color.FromArgb(0x73, 0xFF, 0xFF, 0xFF)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x1A, 0x00, 0x50, 0xA0)),
+                Background = (Brush)FindResource("CardBackground"),
+                BorderBrush = (Brush)FindResource("CardBorder"),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
                 Padding = new Thickness(10, 6, 10, 6),

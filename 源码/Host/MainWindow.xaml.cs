@@ -23,6 +23,12 @@ public partial class MainWindow : Window
     public MainWindow(ToolRegistry registry, ToolHost host)
     {
         InitializeComponent();
+        // 高 DPI / 小工作区时缩到可见范围；三栏各自滚动，避免窗口底部落到屏幕外。
+        var workArea = SystemParameters.WorkArea;
+        MinWidth = Math.Min(MinWidth, workArea.Width);
+        MinHeight = Math.Min(MinHeight, workArea.Height);
+        Width = Math.Min(Width, workArea.Width);
+        Height = Math.Min(Height, workArea.Height);
         _registry = registry;
         _host = host;
         _host.Statuses.Changed += ScheduleStatusRefresh;
@@ -122,8 +128,8 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// 应用广告数据（对齐 Python _update_ads）：
-    /// 顶部：全部 top 广告（多条），无则"广告位招租"占位；点击带 link 的用浏览器打开。
-    /// 底部：第一条 bottom 广告，无则占位。
+    /// 内容下方横幅：全部 top 广告（多条），无则"广告位招租"占位。
+    /// 横幅右侧：第一条 bottom 广告。服务端字段和链接行为保持。
     /// 注：服务器 style 是 Qt CSS，WPF 不兼容，统一用默认链接样式。
     /// </summary>
     public void ApplyAds(List<AdItem> ads)
@@ -146,6 +152,7 @@ public partial class MainWindow : Window
                     Content = ad.Text,
                     Style = (Style)FindResource("LinkButton"),
                     FontSize = 12,
+                    MaxWidth = 500,
                     Margin = new Thickness(0, 0, 16, 0),
                     VerticalAlignment = VerticalAlignment.Center,
                 };
@@ -173,14 +180,14 @@ public partial class MainWindow : Window
         }
     }
 
-    private static Border MakeAdPlaceholder() => new()
+    private Border MakeAdPlaceholder() => new()
     {
-        BorderBrush = System.Windows.Media.Brushes.LightGray,
+        BorderBrush = (Brush)FindResource("CardBorder"),
         BorderThickness = new Thickness(1),
         CornerRadius = new CornerRadius(4),
         Padding = new Thickness(6, 2, 6, 2),
         VerticalAlignment = VerticalAlignment.Center,
-        Child = new TextBlock { Text = "广告位招租", Foreground = System.Windows.Media.Brushes.LightGray, FontSize = 11 },
+        Child = new TextBlock { Text = "广告位招租", Foreground = (Brush)FindResource("TextSecondary"), FontSize = 12 },
     };
 
     private void BottomAdButton_Click(object sender, RoutedEventArgs e)

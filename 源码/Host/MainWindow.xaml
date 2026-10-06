@@ -1,95 +1,68 @@
 <Window x:Class="ShiKe.Host.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="拾刻"
-        Icon="pack://application:,,,/poe.ico"
-        Width="720" Height="660"
-        MinWidth="720" MinHeight="660"
-        Background="{StaticResource WindowBackground}"
+        xmlns:theme="clr-namespace:ShiKe.Themes"
+        Title="拾刻" Icon="pack://application:,,,/拾刻;component/poe.ico"
+        Width="1100" Height="800" MinWidth="930" MinHeight="620"
+        FontFamily="Microsoft YaHei UI" FontSize="13"
+        Foreground="{StaticResource TextPrimary}" Background="{StaticResource WindowBackground}"
+        theme:FlowingGradient.Enabled="{Binding IsChecked, ElementName=GradientSwitch}"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
-        <!-- 链接式按钮样式（使用说明/反馈/广告） -->
-        <Style x:Key="LinkButton" TargetType="Button">
-            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+        <DataTemplate x:Key="LinkText"><TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" ToolTip="{Binding}"/></DataTemplate>
+        <Style x:Key="LinkButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
-            <Setter Property="FontSize" Value="11"/>
-            <Setter Property="Padding" Value="4,2"/>
-            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="ContentTemplate" Value="{StaticResource LinkText}"/>
             <Style.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
-                    <Setter Property="TextBlock.TextDecorations" Value="Underline"/>
-                </Trigger>
+                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{StaticResource AccentBrush}"/></Trigger>
             </Style.Triggers>
         </Style>
     </Window.Resources>
-
-    <Grid>
+    <Grid Background="{StaticResource WindowBackground}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="50"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="34"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="36"/>
         </Grid.RowDefinitions>
-
-        <!-- 顶部广告区（可多条，无数据时"广告位招租"占位） -->
-        <Border Grid.Row="0" Margin="8,8,8,4"
-                Background="{StaticResource CardBackground}"
-                CornerRadius="10" BorderBrush="{StaticResource CardBorder}"
-                BorderThickness="1">
-            <StackPanel x:Name="TopAdPanel" Orientation="Horizontal" Margin="12,0" VerticalAlignment="Center">
-                <Border BorderBrush="#CCC" BorderThickness="1,1,1,1" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
-                    <TextBlock Text="广告位招租" Foreground="#AAA" FontSize="11"/>
-                </Border>
-            </StackPanel>
-        </Border>
-
-        <!-- 主区：左侧导航 + 右侧内容 -->
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="180"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-
-            <!-- 左侧导航（项 = ITool.Name，自动来自注册表） -->
-            <Border Grid.Column="0" Margin="8,4,4,4"
-                    Background="{StaticResource CardBackground}"
-                    CornerRadius="10" BorderBrush="{StaticResource CardBorder}"
-                    BorderThickness="1">
-                <ListBox x:Name="ToolList"
-                         Margin="6" Background="Transparent" BorderThickness="0"
-                         SelectionChanged="ToolList_SelectionChanged">
+        <!-- 工具仍由注册表生成；横向导航保留原来的选择事件和页面缓存。 -->
+        <Border Grid.Row="0" Margin="16,12,16,8" Style="{StaticResource PanelStyle}" Padding="16,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Margin="0,0,24,0">
+                    <TextBlock Text="拾刻" FontSize="22" FontWeight="SemiBold"/>
+                    <TextBlock Text="游戏工具箱" Foreground="{StaticResource TextSecondary}" FontSize="11"/>
+                </StackPanel>
+                <ListBox x:Name="ToolList" Grid.Column="1" Background="Transparent" BorderThickness="0"
+                         VerticalAlignment="Center" SelectionChanged="ToolList_SelectionChanged"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                    <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ListBox.ItemsPanel>
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-                            <Setter Property="Padding" Value="12,10"/>
-                            <Setter Property="Margin" Value="2,2"/>
-                            <Setter Property="FontSize" Value="14"/>
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                            <Setter Property="Padding" Value="14,9"/>
+                            <Setter Property="Margin" Value="2,0"/>
+                            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="ListBoxItem">
-                                        <Border x:Name="ItemBorder"
-                                                Background="Transparent"
-                                                CornerRadius="4"
-                                                Padding="{TemplateBinding Padding}">
-                                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                                              VerticalAlignment="Center"/>
+                                        <Border x:Name="Surface" Background="Transparent" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter VerticalAlignment="Center"/>
                                         </Border>
                                         <ControlTemplate.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="ItemBorder" Property="Background" Value="#1A1A6FB5"/>
-                                            </Trigger>
+                                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="{StaticResource AccentSoft}"/></Trigger>
                                             <Trigger Property="IsSelected" Value="True">
-                                                <Setter TargetName="ItemBorder" Property="Background" Value="{StaticResource AccentBrush}"/>
+                                                <Setter TargetName="Surface" Property="Background" Value="{StaticResource AccentBrush}"/>
                                                 <Setter Property="Foreground" Value="White"/>
                                                 <Setter Property="FontWeight" Value="SemiBold"/>
                                             </Trigger>
-                                            <Trigger Property="IsEnabled" Value="False">
-                                                <Setter Property="Opacity" Value="0.45"/>
-                                            </Trigger>
+                                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource AccentBrush}"/><Setter TargetName="Surface" Property="BorderThickness" Value="1"/></Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
                                 </Setter.Value>
@@ -97,51 +70,35 @@
                         </Style>
                     </ListBox.ItemContainerStyle>
                 </ListBox>
-            </Border>
-
-            <!-- 右侧内容区（懒加载：首次选中时 CreatePage()） -->
-            <Border Grid.Column="1" Margin="4,4,8,4"
-                    Background="{StaticResource CardBackground}"
-                    CornerRadius="10" BorderBrush="{StaticResource CardBorder}"
-                    BorderThickness="1">
-                <ContentPresenter x:Name="ToolContent" Margin="12"/>
-            </Border>
-        </Grid>
-
-        <!-- 底部状态栏（对齐 Python：状态点/文本/说明/反馈/底部广告/使用次数） -->
-        <Border Grid.Row="2" Background="#E0EAF3"
-                BorderBrush="{StaticResource CardBorder}" BorderThickness="0,1,0,0">
-            <Grid Margin="12,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-
-                <TextBlock x:Name="StatusDot" Grid.Column="0" Text="●" Foreground="#AAAAAA" FontSize="12" VerticalAlignment="Center"/>
-                <TextBlock x:Name="StatusText" Grid.Column="1" Text="就绪" Foreground="#445566" FontSize="12"
-                           MaxWidth="230" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
-                           VerticalAlignment="Center" Margin="6,0,12,0"/>
-
-                <Button Grid.Column="2" Content="📖 使用说明" Style="{StaticResource LinkButton}" VerticalAlignment="Center"
-                        Click="GuideButton_Click"/>
-                <TextBlock Grid.Column="3" Text="|" Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center" Margin="4,0"/>
-                <Button Grid.Column="4" Content="📩 反馈" Style="{StaticResource LinkButton}" VerticalAlignment="Center"
-                        Click="FeedbackButton_Click"/>
-
-                <TextBlock Grid.Column="6" Text="已使用 0 次" x:Name="UseCountLabel"
-                           Foreground="{StaticResource AccentBrush}" FontSize="12" FontWeight="Bold"
-                           VerticalAlignment="Center" Margin="8,0" Visibility="Collapsed"/>
-
-                <!-- 底部广告位（取第一条 bottom 广告，无数据时"广告位招租"） -->
-                <Button Grid.Column="7" x:Name="BottomAdButton" Content="广告位招租"
-                        Style="{StaticResource LinkButton}" FontSize="10" VerticalAlignment="Center"
-                        Visibility="Collapsed"/>
+                <ToggleButton x:Name="GradientSwitch" Grid.Column="2" Content="渐变流动" IsChecked="True"
+                              Style="{StaticResource ModernSwitchStyle}" FontSize="11" Margin="16,0,0,0"
+                              VerticalAlignment="Center" ToolTip="暂停或继续背景渐变；窗口失焦、隐藏或最小化后自动暂停"/>
+            </Grid>
+        </Border>
+        <ContentPresenter x:Name="ToolContent" Grid.Row="1" Margin="16,0,16,8"/>
+        <!-- 原来的多条 top 广告统一移到内容下方；仍保留 bottom 广告及链接入口。 -->
+        <Border Grid.Row="2" Margin="16,0,16,8" Style="{StaticResource PanelStyle}" Padding="12,8" MinHeight="46">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock Text="推广" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="TopAdPanel" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="广告位招租" Foreground="{StaticResource TextSecondary}" FontSize="12" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </ScrollViewer>
+                <Button x:Name="BottomAdButton" Grid.Column="2" Content="广告位招租" Style="{StaticResource LinkButton}" Visibility="Collapsed" MaxWidth="300" Margin="12,0,0,0"/>
+            </Grid>
+        </Border>
+        <Border Grid.Row="3" Background="{StaticResource AccentSoft}" BorderBrush="{StaticResource CardBorder}" BorderThickness="0,1,0,0">
+            <Grid Margin="20,0">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusDot" Text="●" Foreground="#AAAAAA" FontSize="12" VerticalAlignment="Center"/>
+                <TextBlock x:Name="StatusText" Grid.Column="1" Text="就绪" Foreground="{StaticResource TextSecondary}" FontSize="12"
+                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" VerticalAlignment="Center" Margin="7,0,12,0"/>
+                <TextBlock x:Name="UseCountLabel" Grid.Column="2" Text="已使用 0 次" Foreground="{StaticResource AccentBrush}" FontSize="12"
+                           FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,14,0" Visibility="Collapsed"/>
+                <Button Grid.Column="3" Content="使用说明" Style="{StaticResource LinkButton}" Click="GuideButton_Click"/>
+                <Button Grid.Column="4" Content="反馈" Style="{StaticResource LinkButton}" Click="FeedbackButton_Click"/>
             </Grid>
         </Border>
     </Grid>
