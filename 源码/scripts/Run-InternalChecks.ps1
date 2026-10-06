@@ -26,7 +26,7 @@ $report = [ordered]@{
     programSha256 = $null
     testsSha256 = $null
     testSourceSha256 = $null
-    validationScope = 'internal_cases_only; game_audio_network_and_upgrade_not_accepted'
+    validationScope = 'internal_cases_only; real_game_audio_and_network_not_run'
     error = $null
 }
 
@@ -109,7 +109,7 @@ try {
         $report.passed -ne $report.total -or $report.failed -ne 0) { throw '内部用例未全部通过，请查看 tests.log' }
     $report.status = 'passed'
     $scriptExitCode = 0
-    Write-Host "内部用例通过：$($report.passed)/$($report.total)。真实游戏、音频、网络和升级仍须分别验收。" -ForegroundColor Green
+    Write-Host "内部用例通过：$($report.passed)/$($report.total)。不代表真实游戏、音频或联网验收。" -ForegroundColor Green
 }
 catch {
     $report.status = 'failed'

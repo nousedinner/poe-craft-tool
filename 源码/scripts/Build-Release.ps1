@@ -1,182 +1,114 @@
 ﻿[CmdletBinding()]
-param([switch]$NoRestore)
+param([switch]$NoRestore, [switch]$PackageOnly)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$utf8WithBom = [Text.UTF8Encoding]::new($true)
-# Git 和 dotnet 的中文输出也按 UTF-8 解码，兼容 Windows PowerShell 5.1。
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'Artifact-Paths.ps1')
 $projectPath = Join-Path $projectRoot '拾刻.csproj'
 $projectXml = [xml](Get-Content -LiteralPath $projectPath -Raw -Encoding UTF8)
-$releaseVersion = [string]$projectXml.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
-if ($releaseVersion -notmatch '^\d+\.\d+\.\d+$') { throw '项目版本格式无效' }
+$version = [string]$projectXml.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw '项目版本格式无效' }
 
-# 源码资源与日常运行 data 分开；拒绝把未入库的个人预设或音效混入交付包。
-$trackedResources = @(& git -C $projectRoot -c core.quotepath=false ls-files -- sounds data/presets)
+# 只打包版本库中的内置资源，日常 data 和个人音效不作为发布来源。
+$tracked = @(& git -C $projectRoot -c core.quotepath=false ls-files -- sounds data/presets)
 if ($LASTEXITCODE -ne 0) { throw '无法读取版本库资源清单' }
-$resourceNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-foreach ($tracked in $trackedResources) { $null = $resourceNames.Add($tracked.Replace('\', '/')) }
-$requiredResources = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'sounds') -File -Recurse)
-$requiredResources += @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'data\presets') -File -Recurse)
-foreach ($resource in $requiredResources) {
-    $relative = $resource.FullName.Substring($projectRoot.Length + 1).Replace('\', '/')
-    if (-not $resourceNames.Contains($relative)) { throw "资源尚未入库，拒绝打包个人文件：$relative" }
+$trackedNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($name in $tracked) { $null = $trackedNames.Add($name.Replace('\', '/')) }
+$resources = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'sounds') -File -Recurse)
+$resources += @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'data\presets') -File -Recurse)
+foreach ($resource in $resources) {
+    $name = $resource.FullName.Substring($projectRoot.Length + 1).Replace('\', '/')
+    if (-not $trackedNames.Contains($name)) { throw "拒绝打包未入库的个人资源：$name" }
 }
+
 $releaseRoot = Get-ArtifactRoot $projectRoot
-$publishStage = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '发布暂存')
-$publishDirectory = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '发布')
+$stage = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '发布暂存')
 $archivePath = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '拾刻-win-x64.zip')
-$archiveTemporary = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '发布暂存.zip')
-$allowedPackageNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-foreach ($name in @('.shike-output.json', '拾刻.exe', 'Upgrade-ShiKe.ps1', '升级拾刻.cmd', '使用与升级说明.txt', 'release-manifest.json') + @($requiredResources | ForEach-Object { $_.FullName.Substring($projectRoot.Length + 1).Replace('\', '/') })) { $null = $allowedPackageNames.Add($name) }
+$temporaryArchive = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '发布暂存.zip')
+$dailyProgram = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '拾刻.exe')
+$allowed = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$null = $allowed.Add('拾刻.exe')
+$null = $allowed.Add('.shike-output.json')
+foreach ($resource in $resources) { $null = $allowed.Add($resource.FullName.Substring($projectRoot.Length + 1).Replace('\', '/')) }
 
-function Assert-DisposablePackage([string]$Directory) {
-    Assert-GeneratedDirectory $releaseRoot $Directory '发布'
-    foreach ($file in @(Get-ChildItem -LiteralPath $Directory -File -Recurse -Force)) {
-        $relative = $file.FullName.Substring($Directory.Length + 1).Replace('\', '/')
-        if (-not $allowedPackageNames.Contains($relative)) { throw "发布目录含额外文件，已保留：$($file.FullName)" }
-    }
-    $oldManifest = Join-Path $Directory 'release-manifest.json'
-    if (Test-Path -LiteralPath $oldManifest -PathType Leaf) {
-        $previous = Get-Content -LiteralPath $oldManifest -Raw -Encoding UTF8 | ConvertFrom-Json
-        foreach ($entry in $previous.files) {
-            $oldFile = Assert-ArtifactPath $Directory (Join-Path $Directory ([string]$entry.path))
-            if (-not (Test-Path -LiteralPath $oldFile -PathType Leaf) -or (Get-FileHash -LiteralPath $oldFile).Hash -ne $entry.sha256) { throw "发布目录中的文件已修改，已保留：$oldFile" }
-        }
+if (Test-Path -LiteralPath $stage) {
+    Assert-GeneratedDirectory $releaseRoot $stage '发布'
+    foreach ($file in @(Get-ChildItem -LiteralPath $stage -File -Recurse -Force)) {
+        $name = $file.FullName.Substring($stage.Length + 1).Replace('\', '/')
+        if (-not $allowed.Contains($name)) { throw '发布暂存含额外文件，已保留原目录' }
     }
 }
-
-# 只复用有生成标记且未被使用者修改的发布目录；日常 data 永远不清空。
-foreach ($directory in @($publishStage, $publishDirectory)) { if (Test-Path -LiteralPath $directory) { Assert-DisposablePackage $directory } }
 $running = @(Get-Process -Name '拾刻' -ErrorAction SilentlyContinue | Where-Object {
-    [string]::Equals($_.Path, (Join-Path $releaseRoot '拾刻.exe'), [StringComparison]::OrdinalIgnoreCase) -or
-    [string]::Equals($_.Path, (Join-Path $publishDirectory '拾刻.exe'), [StringComparison]::OrdinalIgnoreCase)
+    [string]::Equals($_.Path, (Join-Path $stage '拾刻.exe'), [StringComparison]::OrdinalIgnoreCase) -or
+    (-not $PackageOnly -and [string]::Equals($_.Path, $dailyProgram, [StringComparison]::OrdinalIgnoreCase))
 })
-if ($running.Count -gt 0) { throw '请先从托盘退出指定输出目录中的拾刻，再生成新版' }
-if (Test-Path -LiteralPath $publishStage) { Remove-GeneratedDirectory $releaseRoot $publishStage '发布' }
-$null = New-GeneratedDirectory $releaseRoot $publishStage '发布'
+if ($running.Count -gt 0) { throw '请先退出正在使用的拾刻，再生成新版' }
+if (Test-Path -LiteralPath $temporaryArchive) { throw '发布暂存 ZIP 已存在，保留原文件' }
+if (Test-Path -LiteralPath $stage) { Remove-GeneratedDirectory $releaseRoot $stage '发布' }
+$null = New-GeneratedDirectory $releaseRoot $stage '发布'
 
-$publishArguments = @('publish', $projectPath, '-c', 'Release', '-p:PublishProfile=FrameworkDependent', '--output', $publishStage)
-if ($NoRestore) { $publishArguments += '--no-restore' }
-& dotnet @publishArguments
-if ($LASTEXITCODE -ne 0) { throw '发布编译失败，未生成交付包' }
-
-$executable = Join-Path $publishStage '拾刻.exe'
-if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw '缺少主程序' }
-$fileVersion = (Get-Item -LiteralPath $executable).VersionInfo.FileVersion
-if ($fileVersion -ne "$releaseVersion.0") { throw "主程序文件版本不一致：$fileVersion" }
-
-# 核对源码声明的资源，不使用开发机 bin 中的用户 data 作为发布来源。
-foreach ($resource in $requiredResources) {
-    $relative = $resource.FullName.Substring($projectRoot.Length + 1)
-    $published = Join-Path $publishStage $relative
-    if (-not (Test-Path -LiteralPath $published -PathType Leaf)) { throw "发布资源缺失：$relative" }
-    if ((Get-FileHash -LiteralPath $published -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $resource.FullName -Algorithm SHA256).Hash) {
-        throw "发布资源内容不一致：$relative"
+if ($PackageOnly) {
+    # 仅整理包时复用已交付的 EXE，不编译、不替换日常程序或用户资源。
+    if (-not (Test-Path -LiteralPath $dailyProgram -PathType Leaf)) { throw '没有可复用的日常程序' }
+    Copy-Item -LiteralPath $dailyProgram -Destination (Join-Path $stage '拾刻.exe')
+    foreach ($resource in $resources) {
+        $name = $resource.FullName.Substring($projectRoot.Length + 1)
+        $target = Assert-ArtifactPath $stage (Join-Path $stage $name)
+        $null = New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($target)) -Force
+        Copy-Item -LiteralPath $resource.FullName -Destination $target
     }
 }
-foreach ($privateName in @('settings.json', 'rules.json', 'coordinates.json', 'debug.log')) {
-    if (Test-Path -LiteralPath (Join-Path $publishStage "data\$privateName")) { throw "发布目录包含用户数据：$privateName" }
+else {
+    $arguments = @('publish', $projectPath, '-c', 'Release', '-p:PublishProfile=FrameworkDependent', '--output', $stage)
+    if ($NoRestore) { $arguments += '--no-restore' }
+    & dotnet @arguments
+    if ($LASTEXITCODE -ne 0) { throw '发布编译失败，旧发布包保持' }
 }
 
-$upgradeSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Upgrade-Release.ps1'), [Text.Encoding]::UTF8)
-[IO.File]::WriteAllText((Join-Path $publishStage 'Upgrade-ShiKe.ps1'), $upgradeSource, $utf8WithBom)
-@'
-@echo off
-setlocal
-set "PSModulePath="
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -STA -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0Upgrade-ShiKe.ps1"
-'@ | Set-Content -LiteralPath (Join-Path $publishStage '升级拾刻.cmd') -Encoding ASCII
-$instructions = @"
-拾刻 $releaseVersion（Windows x64）
-
-本包需要 x64 .NET 10 桌面运行时。首次使用可直接运行 拾刻.exe。
-升级已有版本：先退出拾刻，将本包解压到独立目录，再双击 升级拾刻.cmd，选择原程序目录。
-升级保留原 data 目录及其中的设置、规则、坐标和预设；替换前会备份程序文件，失败时尝试恢复。
-已有同名内置预设也保持原样。未自动删除旧版多余文件。
-
-点 X 或 Alt+F4 直接退出；退出时停止工具并保存设置。
-"@
-[IO.File]::WriteAllText((Join-Path $publishStage '使用与升级说明.txt'), $instructions, $utf8WithBom)
-
-$gitCommit = (& git -C $projectRoot rev-parse HEAD).Trim()
-$worktreeDirty = -not [string]::IsNullOrWhiteSpace((& git -C $projectRoot status --porcelain | Out-String))
-$entries = @(Get-ChildItem -LiteralPath $publishStage -File -Recurse | Where-Object { $_.Name -ne '.shike-output.json' } | ForEach-Object {
-    [ordered]@{
-        path = $_.FullName.Substring($publishStage.Length + 1).Replace('\', '/')
-        size = $_.Length
-        sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
-    }
-})
-$manifest = [ordered]@{
-    schemaVersion = 1
-    version = $releaseVersion
-    runtime = 'win-x64'
-    frameworkDependent = $true
-    sourceCommit = $gitCommit
-    worktreeDirty = $worktreeDirty
-    createdUtc = [DateTime]::UtcNow.ToString('o')
-    validation = 'compiled_and_resources_checked; runtime_and_upgrade_not_tested'
-    files = $entries
+$program = Join-Path $stage '拾刻.exe'
+if ((Get-Item -LiteralPath $program).VersionInfo.FileVersion -ne "$version.0") { throw '程序版本与项目不一致' }
+foreach ($resource in $resources) {
+    $name = $resource.FullName.Substring($projectRoot.Length + 1)
+    $published = Assert-ArtifactPath $stage (Join-Path $stage $name)
+    if ((Get-FileHash -LiteralPath $published -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $resource.FullName -Algorithm SHA256).Hash) { throw "发布资源不符：$name" }
 }
-[IO.File]::WriteAllText((Join-Path $publishStage 'release-manifest.json'), ($manifest | ConvertTo-Json -Depth 5), $utf8WithBom)
-# .NET Framework 的压缩模块可能写入反斜杠；逐项使用 UTF-8 和标准 ZIP 路径。
+$files = @(Get-ChildItem -LiteralPath $stage -File -Recurse -Force | Where-Object { $_.Name -ne '.shike-output.json' })
+foreach ($file in $files) {
+    $name = $file.FullName.Substring($stage.Length + 1).Replace('\', '/')
+    if (-not $allowed.Contains($name)) { throw "发布含额外文件：$name" }
+}
+if ($files.Count -ne ($resources.Count + 1)) { throw '发布文件数量不符' }
+
+# ZIP 只有 EXE、内置 sounds 与 presets；不生成安装/升级脚本、清单或额外文档。
 Add-Type -AssemblyName System.IO.Compression
-$archiveStream = [IO.File]::Open($archiveTemporary, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+$output = [IO.File]::Open($temporaryArchive, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 $zip = $null
 try {
-    $zip = [IO.Compression.ZipArchive]::new($archiveStream, [IO.Compression.ZipArchiveMode]::Create, $false, [Text.Encoding]::UTF8)
-    foreach ($entryPath in @($entries | ForEach-Object { $_.path }) + @('release-manifest.json')) {
-        $publishedPath = Join-Path $publishStage $entryPath
-        $zipEntry = $zip.CreateEntry($entryPath, [IO.Compression.CompressionLevel]::Optimal)
-        $sourceStream = [IO.File]::OpenRead($publishedPath)
-        $entryStream = $null
-        try {
-            $entryStream = $zipEntry.Open()
-            $sourceStream.CopyTo($entryStream)
-        }
-        finally {
-            if ($entryStream) { $entryStream.Dispose() }
-            $sourceStream.Dispose()
-        }
+    $zip = [IO.Compression.ZipArchive]::new($output, [IO.Compression.ZipArchiveMode]::Create, $false, [Text.Encoding]::UTF8)
+    foreach ($file in $files) {
+        $name = $file.FullName.Substring($stage.Length + 1).Replace('\', '/')
+        $entry = $zip.CreateEntry($name, [IO.Compression.CompressionLevel]::Optimal)
+        $source = [IO.File]::OpenRead($file.FullName)
+        $target = $null
+        try { $target = $entry.Open(); $source.CopyTo($target) }
+        finally { if ($target) { $target.Dispose() }; $source.Dispose() }
     }
 }
-finally {
-    if ($zip) { $zip.Dispose() }
-    $archiveStream.Dispose()
-}
-# 新包完成后再替换固定位置；同版本重打包不挤掉上一个版本的回退包。
-if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
-    $previousArchive = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '备份\上次发布.zip')
-    $null = New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($previousArchive)) -Force
-    $priorManifestPath = Join-Path $publishDirectory 'release-manifest.json'
-    $sameVersion = $false
-    if (Test-Path -LiteralPath $priorManifestPath -PathType Leaf) {
-        $priorManifest = Get-Content -LiteralPath $priorManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        $sameVersion = [string]$priorManifest.version -eq $releaseVersion
-    }
-    if (-not $sameVersion -or -not (Test-Path -LiteralPath $previousArchive -PathType Leaf)) {
-        Copy-Item -LiteralPath $archivePath -Destination $previousArchive -Force
-    }
-}
-if (Test-Path -LiteralPath $publishDirectory) { Remove-GeneratedDirectory $releaseRoot $publishDirectory '发布' }
-Move-Item -LiteralPath $publishStage -Destination $publishDirectory
-Move-Item -LiteralPath $archiveTemporary -Destination $archivePath -Force
+finally { if ($zip) { $zip.Dispose() }; $output.Dispose() }
 
-# 更新用户日常启动入口；已有整个 data 保持原样，首次生成才复制内置预设。
-Copy-Item -LiteralPath (Join-Path $publishDirectory '拾刻.exe') -Destination (Join-Path $releaseRoot '拾刻.exe') -Force
-$keepData = Test-Path -LiteralPath (Join-Path $releaseRoot 'data')
-foreach ($resource in $requiredResources) {
-    $relative = $resource.FullName.Substring($projectRoot.Length + 1)
-    if ($keepData -and $relative.StartsWith('data\', [StringComparison]::OrdinalIgnoreCase)) { continue }
-    $destination = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot $relative)
-    $null = New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($destination)) -Force
-    Copy-Item -LiteralPath (Join-Path $publishDirectory $relative) -Destination $destination -Force
+if (-not $PackageOnly) {
+    Copy-Item -LiteralPath $program -Destination $dailyProgram -Force
+    $keepData = Test-Path -LiteralPath (Join-Path $releaseRoot 'data')
+    foreach ($resource in $resources) {
+        $name = $resource.FullName.Substring($projectRoot.Length + 1)
+        if ($keepData -and $name.StartsWith('data\', [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $target = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot $name)
+        $null = New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($target)) -Force
+        Copy-Item -LiteralPath (Join-Path $stage $name) -Destination $target -Force
+    }
 }
-foreach ($oldName in @('拾刻.dll', '拾刻.pdb', '拾刻.deps.json', '拾刻.runtimeconfig.json')) {
-    $oldPath = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot $oldName)
-    if (Test-Path -LiteralPath $oldPath -PathType Leaf) { Remove-Item -LiteralPath $oldPath }
-}
-[pscustomobject]@{ Version = $releaseVersion; Directory = $publishDirectory; Program = (Join-Path $releaseRoot '拾刻.exe'); Archive = $archivePath; FileCount = $entries.Count; SizeBytes = (Get-Item -LiteralPath $archivePath).Length } | ConvertTo-Json -Compress
+Move-Item -LiteralPath $temporaryArchive -Destination $archivePath -Force
+Remove-GeneratedDirectory $releaseRoot $stage '发布'
+[pscustomobject]@{ Version = $version; Program = $dailyProgram; Archive = $archivePath; FileCount = $files.Count; SizeBytes = (Get-Item -LiteralPath $archivePath).Length; PackageOnly = [bool]$PackageOnly } | ConvertTo-Json -Compress
