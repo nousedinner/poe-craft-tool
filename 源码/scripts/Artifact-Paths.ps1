@@ -1,6 +1,8 @@
 ﻿# 开发/验收入口共用；生成物统一到用户指定的目录，不操作日常 data。
 function Get-ArtifactRoot([string]$ProjectRoot) {
-    return [IO.Path]::GetFullPath((Join-Path $ProjectRoot 'bin\Release\net10.0-windows'))
+    # 项目已集中到 源码；交付入口仍在仓库根的固定 bin 目录。
+    $workspaceRoot = [IO.Path]::GetFullPath((Join-Path $ProjectRoot '..'))
+    return [IO.Path]::GetFullPath((Join-Path $workspaceRoot 'bin\Release\net10.0-windows'))
 }
 
 function Assert-ArtifactPath([string]$Root, [string]$Path) {

@@ -97,7 +97,7 @@ $instructions = @"
 升级保留原 data 目录及其中的设置、规则、坐标和预设；替换前会备份程序文件，失败时尝试恢复。
 已有同名内置预设也保持原样。未自动删除旧版多余文件。
 
-本包只完成发布编译与资源核对，游戏输入、联网、音频、升级和干净环境启动仍待验收。
+点 X 或 Alt+F4 直接退出；退出时停止工具并保存设置。
 "@
 [IO.File]::WriteAllText((Join-Path $publishStage '使用与升级说明.txt'), $instructions, $utf8WithBom)
 

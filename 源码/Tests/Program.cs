@@ -2185,6 +2185,9 @@ static string FindProjectRoot()
     {
         if (File.Exists(Path.Combine(directory.FullName, "拾刻.csproj")))
             return directory.FullName;
+        var sourceDirectory = Path.Combine(directory.FullName, "源码");
+        if (File.Exists(Path.Combine(sourceDirectory, "拾刻.csproj")))
+            return sourceDirectory;
         directory = directory.Parent;
     }
     throw new InvalidOperationException("无法定位拾刻.csproj");
