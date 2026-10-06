@@ -109,6 +109,7 @@ var tests = new (string Name, Action Run)[]
     ("KeyLoop 独立槽位可暂停停止并关闭", KeyLoopEngineLifecycleIsSafe),
     ("Craft 运行配置使用深拷贝快照", CraftRulesSnapshotIsIndependent),
     ("T11 实际窗口布局、切页保存与渐变生命周期", AppearanceChecks.Run),
+    ("模式切换超限可逐步修正且保持启动校验", InheritedHitCountsCanBeReduced),
 };
 
 var failed = 0;
@@ -950,6 +951,34 @@ static void InvalidHitCountRestoresPreviousSelection()
         "Mode3 总数等于 3 时应接受新选择");
     Equal(3, CraftDecisions.ResolveHitCountSelection(CraftMode.Single, 1, 3, 3),
         "Mode1 不应套用 Mode2/3 总命中数限制");
+}
+
+static void InheritedHitCountsCanBeReduced()
+{
+    var defaults = new CraftRules();
+    Equal(1, defaults.PrimaryHitCount, "单通货默认主命中保持 1");
+    Equal(0, defaults.SecondaryHitCount, "单通货默认次命中保持 0");
+    var rules = new CraftRules { PrimaryHitCount = 3, SecondaryHitCount = 3 };
+    foreach (var text in new[] { "生命", "护甲", "闪避" }) rules.PrimaryAffixes.Add(new AffixRule { Text = text });
+    foreach (var text in new[] { "火抗", "冰抗", "电抗" }) rules.SecondaryAffixes.Add(new AffixRule { Text = text });
+    True(rules.Validate().Ok, "单通货高级需求应继续兼容旧规则");
+    foreach (var mode in new[] { CraftMode.AltAug, CraftMode.AltAugRegal })
+    {
+        rules.Mode = mode;
+        rules.PrimaryHitCount = 3;
+        rules.SecondaryHitCount = 3;
+        False(rules.Validate().Ok, "继承 3+3 不能绕过启动校验");
+        rules.PrimaryHitCount = CraftDecisions.ResolveHitCountSelection(mode, 3, 1, 3);
+        Equal(1, rules.PrimaryHitCount, "超限状态必须允许先减少其中一个池");
+        False(rules.Validate().Ok, "尚未降到上限仍不能启动");
+        Equal(1, CraftDecisions.ResolveHitCountSelection(mode, 1, 2, 3), "超限状态不能增加需求");
+        rules.SecondaryHitCount = CraftDecisions.ResolveHitCountSelection(mode, 3, 1, 1);
+        True(rules.Validate().Ok, "逐步改为 1+1 后应能正常通过校验");
+    }
+    rules.Mode = CraftMode.AltAugRegal;
+    rules.PrimaryHitCount = 3;
+    rules.SecondaryHitCount = 0;
+    True(rules.Validate().Ok, "Mode3 的 3+0 合法契约必须保留");
 }
 
 static void ClipboardItemHeaderValidation()
@@ -1914,10 +1943,12 @@ static void PublishProfileKeepsSafeWpfOptions()
 
 static void AssemblyVersionIsCurrent()
 {
+    var project = System.Xml.Linq.XDocument.Load(Path.Combine(FindProjectRoot(), "拾刻.csproj"));
+    var expected = Version.Parse(project.Descendants("Version").Single().Value);
     var version = NetworkService.CurrentVersion;
-    Equal(1, version.Major, "程序集 Major 错误");
-    Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(36, version.Build, "程序集 Build 必须为本次 1.0.36");
+    Equal(expected.Major, version.Major, "程序集 Major 必须与项目声明一致");
+    Equal(expected.Minor, version.Minor, "程序集 Minor 必须与项目声明一致");
+    Equal(expected.Build, version.Build, "程序集 Build 必须与项目声明一致");
 }
 
 static void CraftEngineCanShutdownWhileIdle()

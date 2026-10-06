@@ -158,7 +158,7 @@ public partial class KeyLoopPage : UserControl
 
     internal void RefreshSettingsPresentation()
     {
-        HotkeyText.Text = HotkeySetting.Display(_tool.Hotkey);
+        HotkeyText.Text = $"{HotkeySetting.Display(_tool.Hotkey)} 开始 / 停止已启用的槽位";
     }
 
     internal void RefreshEnabledPresentation()
@@ -167,7 +167,6 @@ public partial class KeyLoopPage : UserControl
         try
         {
             EnableToolSwitch.IsChecked = _tool.IsEnabled;
-            HotkeyText.Opacity = _tool.IsEnabled ? 1.0 : 0.55;
             if (!_tool.IsEnabled && !_tool.IsRunning) StatusText.Text = "功能已停用";
             else if (_tool.IsEnabled && !_tool.IsRunning && StatusText.Text == "功能已停用") StatusText.Text = "按键循环就绪";
         }

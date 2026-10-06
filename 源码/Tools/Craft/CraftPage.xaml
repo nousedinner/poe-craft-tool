@@ -37,9 +37,10 @@
     <Grid x:Name="PageRoot">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid x:Name="PageHeader" Style="{StaticResource ToolPageHeader}">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock Text="洗词缀" Style="{StaticResource ToolPageTitle}"/>
-            <ToggleButton x:Name="EnableToolSwitch" Grid.Column="1" Content="启用洗词缀" Style="{StaticResource ModernSwitchStyle}"
+            <TextBlock x:Name="CraftHotkeyHint" Grid.Column="1" Style="{StaticResource ToolPageHint}"/>
+            <ToggleButton x:Name="EnableToolSwitch" Grid.Column="2" Content="启用洗词缀" Style="{StaticResource ModernSwitchStyle}"
                           VerticalAlignment="Center" FontWeight="SemiBold" Checked="EnableToolSwitch_Changed" Unchecked="EnableToolSwitch_Changed"/>
         </Grid>
         <!-- 三栏同时可操作；滚动只影响各栏，不改变模式或任务执行顺序。 -->
@@ -59,6 +60,14 @@
                         <RadioButton x:Name="Mode3Radio" GroupName="Mode" Tag="3" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
                             <TextBlock Text="3 · 改造＋增幅＋富豪" FontSize="14"/>
                         </RadioButton>
+                        <StackPanel x:Name="SingleCurrencyFrame" Visibility="Collapsed" Margin="2,8,0,14">
+                            <TextBlock Text="使用通货" Style="{StaticResource PoolHeading}" Margin="0,0,0,8"/>
+                            <ComboBox x:Name="SingleCurrencyCombo" SelectedValuePath="Tag" SelectionChanged="SingleCurrency_Changed">
+                                <ComboBoxItem Content="改造石" Tag="alteration"/>
+                                <ComboBoxItem Content="混沌石" Tag="chaos"/>
+                                <ComboBoxItem Content="自定义通货" Tag="custom"/>
+                            </ComboBox>
+                        </StackPanel>
                         <StackPanel x:Name="Mode2Frame" Visibility="Collapsed" Margin="2,8,0,14">
                             <TextBlock Text="Mode 2 子模式" Style="{StaticResource PoolHeading}" Margin="0,0,0,8"/>
                             <RadioButton x:Name="Mode2AltAug" Content="改造＋增幅" GroupName="M2Sub" IsChecked="True" Checked="Mode2Option_Changed" Margin="0,0,0,8"/>
@@ -115,32 +124,47 @@
                                     Click="DeletePresetButton_Click" ToolTip="删除选中预设，当前词缀设置保留" Margin="0,0,6,0"/>
                             <Button x:Name="OpenPresetsButton" Content="打开文件夹" Style="{StaticResource CardButton}" Click="OpenPresetsButton_Click"/>
                         </WrapPanel>
-                        <Grid Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <Expander x:Name="HitCountEditor" Margin="0,0,0,12" HorizontalContentAlignment="Stretch">
+                            <Expander.Header>
+                                <TextBlock x:Name="HitCountSummary" Text="自定义命中 · 主 1＋次 0" Foreground="{StaticResource AccentBrush}" FontSize="13" TextWrapping="Wrap"/>
+                            </Expander.Header>
+                            <Border Background="#80FFFFFF" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="7" Padding="8" Margin="0,8,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                    <TextBlock Text="主词缀命中" Style="{StaticResource PoolHeading}"/>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                        <RadioButton x:Name="PrimaryHit0" Content="0" Style="{StaticResource HitButton}" Tag="0" GroupName="PrimaryHit" Checked="HitCount_Checked"/>
+                                        <RadioButton x:Name="PrimaryHit1" Content="1" Style="{StaticResource HitButton}" Tag="1" GroupName="PrimaryHit" Checked="HitCount_Checked"/>
+                                        <RadioButton x:Name="PrimaryHit2" Content="2" Style="{StaticResource HitButton}" Tag="2" GroupName="PrimaryHit" Checked="HitCount_Checked"/>
+                                        <RadioButton x:Name="PrimaryHit3" Content="3" Style="{StaticResource HitButton}" Tag="3" GroupName="PrimaryHit" Checked="HitCount_Checked"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Row="1" Text="次词缀命中" Style="{StaticResource PoolHeading}" Margin="0,8,0,0"/>
+                                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,8,0,0">
+                                        <RadioButton x:Name="SecondaryHit0" Content="0" Style="{StaticResource HitButton}" Tag="0" GroupName="SecondaryHit" Checked="HitCount_Checked"/>
+                                        <RadioButton x:Name="SecondaryHit1" Content="1" Style="{StaticResource HitButton}" Tag="1" GroupName="SecondaryHit" Checked="HitCount_Checked"/>
+                                        <RadioButton x:Name="SecondaryHit2" Content="2" Style="{StaticResource HitButton}" Tag="2" GroupName="SecondaryHit" Checked="HitCount_Checked"/>
+                                        <RadioButton x:Name="SecondaryHit3" Content="3" Style="{StaticResource HitButton}" Tag="3" GroupName="SecondaryHit" Checked="HitCount_Checked"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </Expander>
+                        <Border x:Name="HitCountWarning" Visibility="Collapsed" Background="#FCF0F2" BorderBrush="#EED4DA" BorderThickness="1"
+                                CornerRadius="7" Padding="8" Margin="0,0,0,12">
+                            <TextBlock x:Name="HitCountWarningText" Foreground="{StaticResource DangerRed}" FontSize="13" TextWrapping="Wrap"/>
+                        </Border>
+                        <Grid Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBlock Text="主词缀池" Style="{StaticResource PoolHeading}"/>
-                            <Button x:Name="ClearPrimaryButton" Grid.Column="2" Content="清空" Style="{StaticResource ClearPoolButton}" Click="ClearPrimaryButton_Click"/>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="4,0,4,0" ToolTip="主词缀命中数">
-                            <TextBlock Text="命中" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                            <RadioButton x:Name="PrimaryHit0" Content="0" Style="{StaticResource HitButton}" Tag="0" GroupName="PrimaryHit" Checked="HitCount_Checked"/>
-                            <RadioButton x:Name="PrimaryHit1" Content="1" Style="{StaticResource HitButton}" Tag="1" GroupName="PrimaryHit" Checked="HitCount_Checked"/>
-                            <RadioButton x:Name="PrimaryHit2" Content="2" Style="{StaticResource HitButton}" Tag="2" GroupName="PrimaryHit" Checked="HitCount_Checked"/>
-                            <RadioButton x:Name="PrimaryHit3" Content="3" Style="{StaticResource HitButton}" Tag="3" GroupName="PrimaryHit" Checked="HitCount_Checked"/>
-                        </StackPanel>
+                            <Button x:Name="ClearPrimaryButton" Grid.Column="1" Content="清空" Style="{StaticResource ClearPoolButton}" Click="ClearPrimaryButton_Click"/>
                         </Grid>
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBox x:Name="PrimaryInput" KeyDown="AffixInput_KeyDown" Tag="primary" ToolTip="输入主词缀，回车添加" FontSize="12"/>
                             <Button Grid.Column="1" Content="添加" Style="{StaticResource CardButton}" Click="AddAffixButton_Click" Tag="primary" Margin="6,0,0,0"/>
                         </Grid>
                         <WrapPanel x:Name="PrimaryTags" Margin="0,5,0,14"/>
-                        <Grid Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <Grid Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBlock Text="次词缀池" Style="{StaticResource PoolHeading}"/>
-                            <Button x:Name="ClearSecondaryButton" Grid.Column="2" Content="清空" Style="{StaticResource ClearPoolButton}" Click="ClearSecondaryButton_Click"/>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="4,0,4,0" ToolTip="次词缀命中数">
-                            <TextBlock Text="命中" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,3,0"/>
-                            <RadioButton x:Name="SecondaryHit0" Content="0" Style="{StaticResource HitButton}" Tag="0" GroupName="SecondaryHit" Checked="HitCount_Checked"/>
-                            <RadioButton x:Name="SecondaryHit1" Content="1" Style="{StaticResource HitButton}" Tag="1" GroupName="SecondaryHit" Checked="HitCount_Checked"/>
-                            <RadioButton x:Name="SecondaryHit2" Content="2" Style="{StaticResource HitButton}" Tag="2" GroupName="SecondaryHit" Checked="HitCount_Checked"/>
-                            <RadioButton x:Name="SecondaryHit3" Content="3" Style="{StaticResource HitButton}" Tag="3" GroupName="SecondaryHit" Checked="HitCount_Checked"/>
-                        </StackPanel>
+                            <Button x:Name="ClearSecondaryButton" Grid.Column="1" Content="清空" Style="{StaticResource ClearPoolButton}" Click="ClearSecondaryButton_Click"/>
                         </Grid>
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBox x:Name="SecondaryInput" KeyDown="AffixInput_KeyDown" Tag="secondary" ToolTip="输入次词缀，回车添加" FontSize="12"/>
@@ -163,7 +187,6 @@
         <Grid Grid.Row="2" Style="{StaticResource ToolPageFooter}">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock x:Name="CraftStatusText" Text="就绪" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
-            <TextBlock x:Name="CraftHotkeyHint" Grid.Column="1" Text="启动 / 停止" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" FontSize="12"/>
         </Grid>
     </Grid>
 </UserControl>

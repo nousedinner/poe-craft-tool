@@ -44,7 +44,8 @@ internal static class AppearanceChecks
         var host = new ToolHost(registry);
         Require(host.Storage.DataDir.StartsWith(AppContext.BaseDirectory, StringComparison.OrdinalIgnoreCase) &&
                 AppContext.BaseDirectory.Contains("内部用例", StringComparison.Ordinal), "界面验证必须使用内部用例目录");
-        var originals = new[] { "settings.json", "rules.json", "coordinates.json" }.ToDictionary(
+        var originals = new[] { "settings.json", "rules.json", "coordinates.json",
+            Path.Combine("presets", "appearance-check-baseline.json"), Path.Combine("presets", "appearance-check-limit.json") }.ToDictionary(
             name => Path.Combine(host.Storage.DataDir, name),
             name => File.Exists(Path.Combine(host.Storage.DataDir, name)) ? File.ReadAllBytes(Path.Combine(host.Storage.DataDir, name)) : null);
         MainWindow? window = null;
@@ -58,8 +59,16 @@ internal static class AppearanceChecks
         {
             host.Storage.SaveSettings(new JsonObject());
             host.Storage.SaveRules(JsonNode.Parse("""
-                {"mode":3,"single_currency":"alteration","primary_hit_count":2,"secondary_hit_count":1,
+                {"mode":3,"single_currency":"chaos","primary_hit_count":2,"secondary_hit_count":1,
                  "primary_affixes":["最大生命","移动速度"],"secondary_affixes":["火焰抗性"],"exclude_affixes":["反射"]}
+                """)!.AsObject());
+            host.Storage.SavePreset("appearance-check-baseline", JsonNode.Parse("""
+                {"primary_hit_count":2,"secondary_hit_count":1,"primary_affixes":["最大生命","移动速度"],
+                 "secondary_affixes":["火焰抗性"],"exclude_affixes":["反射"]}
+                """)!.AsObject());
+            host.Storage.SavePreset("appearance-check-limit", JsonNode.Parse("""
+                {"primary_hit_count":3,"secondary_hit_count":3,"primary_affixes":["生命","护甲","闪避"],
+                 "secondary_affixes":["火抗","冰抗","电抗"],"exclude_affixes":[]}
                 """)!.AsObject());
             host.Storage.SaveCoordinates(new Dictionary<string, Point>
             {
@@ -84,6 +93,8 @@ internal static class AppearanceChecks
             CheckPageFrame(page, window, expectedBody, expectedHeader, expectedTrack);
             Require(nav.Items.Count == tools.Length, "导航应包含全部注册工具");
             Require(Find<RadioButton>(page, "Mode3Radio").IsChecked == true, "原规则模式应恢复");
+            Require((string)Find<ComboBox>(page, "SingleCurrencyCombo").SelectedValue == Currency.Chaos,
+                    "持久保存的单通货必须恢复到新的下拉选项，不能重置成改造石");
             Require(Find<ToggleButton>(page, "ExaltCheck").IsChecked == true, "原崇高选项应恢复");
             Require(Find<Slider>(page, "DelaySlider").Value == 55, "原延迟应恢复");
             CheckColumns(page);
@@ -101,6 +112,17 @@ internal static class AppearanceChecks
                     "预设下拉框必须能真实展开并呈现选项");
             presets.IsDropDownOpen = false;
             Snapshot(window, "T11-WPF-Mode3.png");
+            presets.SelectedItem = "appearance-check-limit";
+            Pump();
+            Require(Find<Border>(page, "HitCountWarning").IsVisible &&
+                    Find<RadioButton>(page, "PrimaryHit3").IsChecked == true &&
+                    Find<RadioButton>(page, "SecondaryHit3").IsChecked == true,
+                    "加载 3+3 预设必须原样恢复数量并立即显示当前模式上限");
+            presets.SelectedItem = "appearance-check-baseline";
+            Pump();
+            Require(Find<Border>(page, "HitCountWarning").Visibility == Visibility.Collapsed,
+                    "切回有效预设必须清除超限提示");
+            CheckCraftSelections(page, craft, window);
 
             var panels = new[] { "ModePanel", "CurrencyPanel", "RulesPanel" }.Select(name => Find<Border>(page, name)).ToArray();
             Require(panels.All(panel => panel.Background is LinearGradientBrush { IsFrozen: false }), "面板应拥有独立可动画的画刷");
@@ -177,6 +199,14 @@ internal static class AppearanceChecks
             nav.SelectedIndex = 1;
             Pump();
             CheckPageFrame((FrameworkElement)content.Content, window, expectedBody, expectedHeader, expectedTrack);
+            var clickerPage = (ClickerPage)content.Content;
+            clicker.Hotkey = "Ctrl+F8";
+            clicker.HoldHotkey = "Alt+F11";
+            clickerPage.RefreshSettingsPresentation();
+            Require(Find<TextBlock>(clickerPage, "HotkeyHint").Text.Contains("Ctrl+F8", StringComparison.Ordinal) &&
+                    Find<TextBlock>(clickerPage, "HotkeyHint").Text.Contains("Alt+F11", StringComparison.Ordinal) &&
+                    Find<TextBlock>(clickerPage, "HotkeyHint").Text.Contains("松开停止", StringComparison.Ordinal),
+                    "页头操作提示必须解释按住行为并刷新实际热键");
             Require(panels.All(panel => !FlowingGradient.IsAnimating(panel)), "切走后缓存页面不能继续动画");
             Require(craft.Rules.PrimaryAffixes.Any(rule => rule.Text == "冰霜抗性") && craft.DelayMs == 77, "切页必须收集并保存编辑值");
             var saved = host.Storage.LoadRules()!;
@@ -190,7 +220,12 @@ internal static class AppearanceChecks
                 Pump();
                 Require(content.Content == tools[index].CreatePage(), "工具页面应复用原缓存");
                 CheckPageFrame((FrameworkElement)content.Content, window, expectedBody, expectedHeader, expectedTrack);
-                if (index == 4) CheckSettingsSwitches((FrameworkElement)content.Content);
+                if (index == 4)
+                {
+                    var settingsPage = (FrameworkElement)content.Content;
+                    CheckSettingsSwitches(settingsPage);
+                    CheckSettingsPanels(settingsPage, window);
+                }
                 if (index == 2)
                 {
                     var loopPage = (FrameworkElement)content.Content;
@@ -239,6 +274,25 @@ internal static class AppearanceChecks
                     "滚动到底部后排除词缀输入必须完整可见");
             rulesScroll.ScrollToTop(); Pump();
             Snapshot(window, "T11-WPF-Minimum.png");
+            for (var index = 1; index < tools.Length; index++)
+            {
+                nav.SelectedIndex = index;
+                Pump();
+                var smallPage = (FrameworkElement)content.Content;
+                if (index == 4)
+                {
+                    CheckSettingsPanels(smallPage, window);
+                    CheckSettingsSwitches(smallPage);
+                    var general = Find<Border>(smallPage, "GeneralSettingsPanel");
+                    var scroll = Descendants(general).OfType<ScrollViewer>().First();
+                    scroll.ScrollToBottom(); Pump();
+                    Require(Find<ToggleButton>(smallPage, "KeyLoopNotificationCheck").IsVisible,
+                            "最小窗口仍须能滚动访问右栏最后一个开关");
+                    Snapshot(window, "T11-WPF-Settings-minimum.png");
+                }
+                else CheckHeaderHint(smallPage, window);
+            }
+            nav.SelectedIndex = 0; Pump();
             window.ApplyAds([new AdItem { Location = "top", Type = "text", Text = "测试推广一" },
                              new AdItem { Location = "top", Type = "text", Text = "测试推广二" },
                              new AdItem { Location = "bottom", Type = "text", Text = "测试推广三" }]);
@@ -277,6 +331,71 @@ internal static class AppearanceChecks
                         "坐标按钮不能溢出通货卡片");
     }
 
+    private static void CheckCraftSelections(CraftPage page, CraftTool craft, Window window)
+    {
+        var editor = Find<Expander>(page, "HitCountEditor");
+        var warning = Find<Border>(page, "HitCountWarning");
+        Find<RadioButton>(page, "Mode2Radio").IsChecked = true;
+        Pump();
+        Require(warning.IsVisible && editor.IsExpanded, "切换 Mode2 必须立即提示继承的 2+1 超限");
+        Require(Find<RadioButton>(page, "PrimaryHit2").IsChecked == true &&
+                Find<RadioButton>(page, "SecondaryHit1").IsChecked == true, "切模式不能静默削减命中要求");
+        Find<RadioButton>(page, "PrimaryHit1").IsChecked = true;
+        Require(warning.Visibility == Visibility.Collapsed, "修正到 1+1 后应清除提示");
+        Find<RadioButton>(page, "PrimaryHit3").IsChecked = true;
+        Require(Find<RadioButton>(page, "PrimaryHit1").IsChecked == true && warning.Visibility == Visibility.Visible,
+                "有效模式下增加到超限必须保留旧值并给出内联提示");
+        Find<RadioButton>(page, "SecondaryHit0").IsChecked = true;
+        Find<RadioButton>(page, "Mode1Radio").IsChecked = true;
+        Pump();
+        Require(!editor.IsExpanded && Find<RadioButton>(page, "PrimaryHit1").IsChecked == true &&
+                Find<RadioButton>(page, "SecondaryHit0").IsChecked == true, "单通货常用 1+0 应以摘要呈现，按需展开");
+        Snapshot(window, "T11-WPF-Single-default.png");
+        editor.IsExpanded = true;
+        Find<RadioButton>(page, "PrimaryHit3").IsChecked = true;
+        Find<RadioButton>(page, "SecondaryHit3").IsChecked = true;
+        var currency = Find<ComboBox>(page, "SingleCurrencyCombo");
+        foreach (var key in Currency.ModeCurrencies[CraftMode.Single])
+        {
+            currency.SelectedValue = key;
+            page.CollectRulesFromUi();
+            Require(craft.Rules.SingleCurrency == key, "通货下拉框必须真正更新运行规则");
+        }
+        var cards = Find<ItemsControl>(page, "CurrencyGrid").Items.Cast<Border>().ToArray();
+        foreach (var card in cards.Where(card => card.IsVisible))
+        {
+            var name = Descendants(card).OfType<TextBlock>().First();
+            name.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+            { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+            Require(card.BorderThickness == new Thickness(1) && ReferenceEquals(card.BorderBrush, page.FindResource("CardBorder")),
+                    "通货坐标卡片不应再有选中外观");
+            Require((string)currency.SelectedValue == Currency.Custom, "点击坐标卡片标题不能改变使用通货");
+        }
+        Find<RadioButton>(page, "Mode2Radio").IsChecked = true;
+        Pump();
+        Require(warning.IsVisible && Find<TextBlock>(page, "HitCountWarningText").Text.Contains("合计 6", StringComparison.Ordinal),
+                "3+3 切 Mode2 后必须立即给出当前数量与上限");
+        Find<RadioButton>(page, "PrimaryHit1").IsChecked = true;
+        Require(warning.Visibility == Visibility.Visible, "减少为 1+3 后超限提示仍须保留");
+        Find<RadioButton>(page, "SecondaryHit1").IsChecked = true;
+        Require(warning.Visibility == Visibility.Collapsed, "逐步修正为 1+1 后应清除提示");
+        Find<RadioButton>(page, "Mode1Radio").IsChecked = true;
+        editor.IsExpanded = true;
+        Find<RadioButton>(page, "PrimaryHit3").IsChecked = true;
+        Find<RadioButton>(page, "SecondaryHit3").IsChecked = true;
+        Find<RadioButton>(page, "Mode3Radio").IsChecked = true;
+        Pump();
+        Require(warning.IsVisible && Find<TextBlock>(page, "HitCountWarningText").Text.Contains("最多 3", StringComparison.Ordinal),
+                "3+3 切 Mode3 后必须立即提示，不能只在启动时发现");
+        Snapshot(window, "T11-WPF-Mode-limit.png");
+        Find<RadioButton>(page, "PrimaryHit2").IsChecked = true;
+        Find<RadioButton>(page, "SecondaryHit1").IsChecked = true;
+        currency.SelectedValue = Currency.Alteration;
+        page.CollectRulesFromUi();
+        Require(craft.Rules.Validate().Ok && warning.Visibility == Visibility.Collapsed,
+                "Mode3 恢复 2+1 后仍须符合原运行规则");
+    }
+
     private static void CheckColumns(CraftPage page)
     {
         var panels = new[] { "ModePanel", "CurrencyPanel", "RulesPanel" }.Select(name => Find<Border>(page, name)).ToArray();
@@ -303,6 +422,32 @@ internal static class AppearanceChecks
         var track = Bounds((Border)enable.Template.FindName("Track", enable), window);
         Require(Math.Abs(track.Right - expectedTrack.Right) < 1 && Math.Abs(track.Y - expectedTrack.Y) < 1,
                 "四个工具的启用开关必须对齐到同一位置");
+        CheckHeaderHint(page, window);
+    }
+
+    private static void CheckHeaderHint(FrameworkElement page, Window window)
+    {
+        var header = Find<Grid>(page, "PageHeader");
+        var hint = header.Children.OfType<TextBlock>().Single(text => Grid.GetColumn(text) == 1);
+        var title = header.Children.OfType<TextBlock>().Single(text => Grid.GetColumn(text) == 0);
+        var enable = header.Children.OfType<ToggleButton>().Single();
+        var hintBounds = Bounds(hint, window);
+        Require(hint.IsVisible && hint.FontSize >= 14 && hint.Opacity == 1 && hint.Text.Length > 0,
+                "操作提示必须放大并保持可见");
+        Require(hintBounds.Left > Bounds(title, window).Right && hintBounds.Right < Bounds(enable, window).Left &&
+                hintBounds.Top >= Bounds(header, window).Top && hintBounds.Bottom <= Bounds(header, window).Bottom + 1,
+                "操作提示须位于标题和开关中间，不能溢出页头");
+    }
+
+    private static void CheckSettingsPanels(FrameworkElement page, Window window)
+    {
+        var left = Bounds(Find<Border>(page, "HotkeyPanel"), window);
+        var right = Bounds(Find<Border>(page, "GeneralSettingsPanel"), window);
+        Require(Math.Abs(left.Width - right.Width) < 1 && Math.Abs(left.Height - right.Height) < 1 &&
+                Math.Abs(left.Top - right.Top) < 1 && Math.Abs(left.Bottom - right.Bottom) < 1,
+                "设置左右两个模块须等宽、等高且上下对齐");
+        Require(Find<Grid>(page, "PageBody").Children.OfType<Border>().Count() == 2,
+                "设置页面只应存在两块主要模块");
     }
 
     private static void CheckSettingsSwitches(FrameworkElement page)
@@ -368,7 +513,7 @@ internal static class AppearanceChecks
         bitmap.Render(root);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using var stream = File.Create(Path.Combine(directory, name.Replace("T11-WPF", "T11-v36", StringComparison.Ordinal)));
+        using var stream = File.Create(Path.Combine(directory, name.Replace("T11-WPF", "T11-v37", StringComparison.Ordinal)));
         encoder.Save(stream);
     }
 

@@ -40,7 +40,7 @@ public partial class ClickerPage : UserControl
 
     internal void RefreshSettingsPresentation()
     {
-        HotkeyHint.Text = $"切换 {HotkeySetting.Display(_tool.Hotkey)} · 按住 {HotkeySetting.Display(_tool.HoldHotkey)}";
+        HotkeyHint.Text = $"{HotkeySetting.Display(_tool.Hotkey)} 开始 / 停止 · {HotkeySetting.Display(_tool.HoldHotkey)} 按住连点，松开停止";
     }
 
     internal void RefreshEnabledPresentation()
@@ -49,7 +49,6 @@ public partial class ClickerPage : UserControl
         try
         {
             EnableToolSwitch.IsChecked = _tool.IsEnabled;
-            HotkeyHint.Opacity = _tool.IsEnabled ? 1.0 : 0.55;
             if (!_tool.IsEnabled && !_tool.IsRunning) StatusText.Text = "功能已停用";
             else if (_tool.IsEnabled && !_tool.IsRunning && StatusText.Text == "功能已停用") StatusText.Text = "连点器就绪";
         }

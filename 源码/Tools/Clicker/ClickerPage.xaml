@@ -10,9 +10,10 @@
     <Grid x:Name="PageRoot">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid x:Name="PageHeader" Style="{StaticResource ToolPageHeader}">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock Text="连点器" Style="{StaticResource ToolPageTitle}"/>
-            <ToggleButton x:Name="EnableToolSwitch" Grid.Column="1" Content="启用连点器"
+            <TextBlock x:Name="HotkeyHint" Grid.Column="1" Style="{StaticResource ToolPageHint}"/>
+            <ToggleButton x:Name="EnableToolSwitch" Grid.Column="2" Content="启用连点器"
                           Style="{StaticResource ModernSwitchStyle}" VerticalAlignment="Center" FontWeight="SemiBold"
                           Checked="EnableToolSwitch_Changed" Unchecked="EnableToolSwitch_Changed"/>
         </Grid>
@@ -47,7 +48,6 @@
                 <TextBlock Text="已点击" Foreground="{StaticResource TextSecondary}" Margin="20,0,5,0"/>
                 <TextBlock x:Name="ClickCountText" Text="0" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"/>
             </StackPanel>
-            <TextBlock x:Name="HotkeyHint" Grid.Column="1" Foreground="{StaticResource AccentBrush}" FontSize="12" VerticalAlignment="Center"/>
         </Grid>
     </Grid>
 </UserControl>

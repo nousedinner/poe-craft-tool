@@ -5,9 +5,10 @@
     <Grid x:Name="PageRoot">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid x:Name="PageHeader" Style="{StaticResource ToolPageHeader}">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock Text="按键循环" Style="{StaticResource ToolPageTitle}"/>
-            <ToggleButton x:Name="EnableToolSwitch" Grid.Column="1" Content="启用按键循环" Style="{StaticResource ModernSwitchStyle}"
+            <TextBlock x:Name="HotkeyText" Grid.Column="1" Style="{StaticResource ToolPageHint}"/>
+            <ToggleButton x:Name="EnableToolSwitch" Grid.Column="2" Content="启用按键循环" Style="{StaticResource ModernSwitchStyle}"
                           FontWeight="SemiBold" VerticalAlignment="Center" Checked="EnableToolSwitch_Changed" Unchecked="EnableToolSwitch_Changed"/>
         </Grid>
         <Border x:Name="PageBody" Grid.Row="1" Style="{StaticResource PanelStyle}"
@@ -25,10 +26,6 @@
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <TextBlock x:Name="StatusDot" Text="●" Foreground="#AAAAAA" Margin="0,0,5,0"/>
                 <TextBlock x:Name="StatusText" Text="按键循环就绪" Foreground="{StaticResource TextSecondary}"/>
-            </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="启停" Foreground="{StaticResource AccentBrush}" FontSize="12" Margin="0,0,6,0"/>
-                <TextBlock x:Name="HotkeyText" Foreground="{StaticResource AccentBrush}" FontSize="12"/>
             </StackPanel>
         </Grid>
     </Grid>

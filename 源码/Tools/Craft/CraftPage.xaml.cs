@@ -39,10 +39,11 @@ public partial class CraftPage : UserControl
     private string _selectedCurrency = Currency.Alteration;
     private bool _dirty;
     private bool _initialized;   // Loaded 防重复（WPF Loaded 在每次进入可视树时触发，卡片会翻倍）
+    private bool _loadingState;
     private bool _restoringHitCount;
     private bool _refreshingEnabled;
-    private int _lastValidPrimaryHit;
-    private int _lastValidSecondaryHit;
+    private int _previousPrimaryHit;
+    private int _previousSecondaryHit;
 
     public CraftPage(ToolHost host, CraftTool tool)
     {
@@ -57,7 +58,7 @@ public partial class CraftPage : UserControl
     /// <summary>由 SettingsTool 在热键成功重注册后调用；不收集或改写页面业务配置。</summary>
     internal void RefreshHotkeyHints(string startHotkey, string stopHotkey, string coordinateHotkey)
     {
-        CraftHotkeyHint.Text = $"启动 {HotkeySetting.Display(startHotkey)} · 停止 {HotkeySetting.Display(stopHotkey)}";
+        CraftHotkeyHint.Text = $"{HotkeySetting.Display(startHotkey)} 启动 · {HotkeySetting.Display(stopHotkey)} 停止 · {HotkeySetting.Display(coordinateHotkey)} 录坐标";
         if (_host.Coordinates.ActiveSlot is not { } slot) return;
         if (string.IsNullOrWhiteSpace(coordinateHotkey))
         {
@@ -76,7 +77,6 @@ public partial class CraftPage : UserControl
         try
         {
             EnableToolSwitch.IsChecked = _tool.IsEnabled;
-            CraftHotkeyHint.Opacity = _tool.IsEnabled ? 1.0 : 0.55;
             CraftStatusText.Text = _tool.IsEnabled ? (CraftStatusText.Text == "功能已停用" ? "就绪" : CraftStatusText.Text) : "功能已停用";
         }
         finally
@@ -173,10 +173,8 @@ public partial class CraftPage : UserControl
                 FontSize = 13,
                 FontWeight = FontWeights.Bold,
                 Foreground = (Brush)FindResource("TextPrimary"),
-                Cursor = System.Windows.Input.Cursors.Hand,
                 HorizontalAlignment = HorizontalAlignment.Center,
             };
-            nameLabel.MouseLeftButtonUp += (_, _) => SelectCurrency(key);
 
             var coordRow = new Grid { Margin = new Thickness(0, 8, 0, 0) };
             coordRow.ColumnDefinitions.Add(new ColumnDefinition());
@@ -193,6 +191,7 @@ public partial class CraftPage : UserControl
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(8, 6, 8, 6),
                 Margin = new Thickness(3),
+                Tag = key,
                 Child = new StackPanel
                 {
                     Children = { nameLabel, coordRow },
@@ -221,27 +220,14 @@ public partial class CraftPage : UserControl
         }
         Mode2Frame.Visibility = CurrentMode == CraftMode.AltAug ? Visibility.Visible : Visibility.Collapsed;
         Mode3Frame.Visibility = CurrentMode == CraftMode.AltAugRegal ? Visibility.Visible : Visibility.Collapsed;
+        SingleCurrencyFrame.Visibility = CurrentMode == CraftMode.Single ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void SelectCurrency(string key)
+    private void SingleCurrency_Changed(object sender, SelectionChangedEventArgs e)
     {
+        if (!IsLoaded || _loadingState || SingleCurrencyCombo.SelectedValue is not string key) return;
         _selectedCurrency = key;
-        UpdateCurrencySelection();
-    }
-
-    private void UpdateCurrencySelection()
-    {
-        foreach (var (key, card) in _cards)
-        {
-            var root = (Border)CurrencyGrid.Items[Array.IndexOf(Currency.All, key)];
-            root.Background = key == _selectedCurrency
-                ? (Brush)FindResource("AccentSoft")
-                : (Brush)FindResource("CardBackground");
-            root.BorderBrush = key == _selectedCurrency
-                ? (Brush)FindResource("AccentBrush")
-                : (Brush)FindResource("CardBorder");
-            root.BorderThickness = key == _selectedCurrency ? new Thickness(2) : new Thickness(1);
-        }
+        _dirty = true;
     }
 
     // ── 坐标录制（三态按钮；信号分离坑 #10）──
@@ -473,18 +459,11 @@ public partial class CraftPage : UserControl
         var isPrimary = GroupNameOf(radio) == "PrimaryHit";
         var newVal = int.Parse((string)radio.Tag);
         var otherVal = isPrimary ? CurrentSecondaryHit : CurrentPrimaryHit;
-        var previousVal = isPrimary ? _lastValidPrimaryHit : _lastValidSecondaryHit;
+        var previousVal = isPrimary ? _previousPrimaryHit : _previousSecondaryHit;
         var resolvedVal = CraftDecisions.ResolveHitCountSelection(CurrentMode, previousVal, newVal, otherVal);
 
         if (resolvedVal != newVal)
         {
-            var owner = Window.GetWindow(this);
-            const string message = "Mode 2 总词缀命中数不能超过 2\nMode 3 总词缀命中数不能超过 3";
-            if (owner is null)
-                MessageBox.Show(message, "配置提示", MessageBoxButton.OK, MessageBoxImage.Warning);
-            else
-                MessageBox.Show(owner, message, "配置提示", MessageBoxButton.OK, MessageBoxImage.Warning);
-
             _restoringHitCount = true;
             try
             {
@@ -497,14 +476,45 @@ public partial class CraftPage : UserControl
             {
                 _restoringHitCount = false;
             }
+            RefreshHitCountPresentation();
+            if (HitCountWarning.Visibility != Visibility.Visible)
+                ShowHitCountWarning($"此模式主＋次最多 {CraftDecisions.GetHitCountLimit(CurrentMode)}，已保留主 {CurrentPrimaryHit}＋次 {CurrentSecondaryHit}。");
             return;
         }
 
         if (isPrimary)
-            _lastValidPrimaryHit = newVal;
+            _previousPrimaryHit = newVal;
         else
-            _lastValidSecondaryHit = newVal;
+            _previousSecondaryHit = newVal;
         _dirty = true;
+        RefreshHitCountPresentation();
+    }
+
+    private void RefreshHitCountPresentation(bool resetEditor = false)
+    {
+        var primary = CurrentPrimaryHit;
+        var secondary = CurrentSecondaryHit;
+        var limit = CraftDecisions.GetHitCountLimit(CurrentMode);
+        HitCountSummary.Text = $"自定义命中 · 主 {primary}＋次 {secondary}" + (limit is { } maximum ? $" · 最多 {maximum}" : "");
+        if (resetEditor)
+            HitCountEditor.IsExpanded = CurrentMode != CraftMode.Single || primary != 1 || secondary != 0;
+        if (!CraftDecisions.IsHitCountSelectionValid(CurrentMode, primary, secondary))
+        {
+            HitCountEditor.IsExpanded = true;
+            ShowHitCountWarning($"当前主 {primary}＋次 {secondary}，合计 {primary + secondary}；此模式最多 {limit}。调整后才能启动。");
+        }
+        else
+        {
+            HitCountWarning.Visibility = Visibility.Collapsed;
+            HitCountWarningText.Text = "";
+        }
+    }
+
+    private void ShowHitCountWarning(string message)
+    {
+        HitCountWarningText.Text = message;
+        HitCountWarning.Visibility = Visibility.Visible;
+        HitCountWarning.BringIntoView();
     }
 
     private static string GroupNameOf(RadioButton r) => r.GroupName;
@@ -533,16 +543,11 @@ public partial class CraftPage : UserControl
 
     private void Mode_Checked(object sender, RoutedEventArgs e)
     {
-        if (!IsLoaded) return;
+        if (!IsLoaded || _loadingState) return;
         _tool.Rules.Mode = CurrentModeFromRadio();
         ApplyModeVisibility();
-        // Mode 1 自动选通货
-        if (_tool.Rules.Mode == CraftMode.Single &&
-            !Currency.ModeCurrencies[CraftMode.Single].Contains(_selectedCurrency))
-        {
-            _selectedCurrency = Currency.Alteration;
-            UpdateCurrencySelection();
-        }
+        RefreshHitCountPresentation(resetEditor: true);
+        _dirty = true;
     }
 
     private void Mode2Option_Changed(object sender, RoutedEventArgs e)
@@ -674,13 +679,14 @@ public partial class CraftPage : UserControl
         {
             SetHitRadio(PrimaryHit0, PrimaryHit1, PrimaryHit2, PrimaryHit3, primaryHitCount);
             SetHitRadio(SecondaryHit0, SecondaryHit1, SecondaryHit2, SecondaryHit3, secondaryHitCount);
-            _lastValidPrimaryHit = CurrentPrimaryHit;
-            _lastValidSecondaryHit = CurrentSecondaryHit;
+            _previousPrimaryHit = CurrentPrimaryHit;
+            _previousSecondaryHit = CurrentSecondaryHit;
         }
         finally
         {
             _restoringHitCount = false;
         }
+        if (!_loadingState) RefreshHitCountPresentation(resetEditor: true);
     }
 
     private void SavePresetButton_Click(object sender, RoutedEventArgs e)
@@ -804,31 +810,33 @@ public partial class CraftPage : UserControl
 
     private void LoadStateIntoUi()
     {
-        // 子模式选项只在首次加载时从持久状态恢复。切换大模式仅改变可见性，
-        // 不得用旧值覆盖用户刚刚作出的、尚未落盘的选择。
-        Mode2AltAug.IsChecked = !_tool.Mode2ScourAlch;
-        Mode2ScourAlch.IsChecked = _tool.Mode2ScourAlch;
-        ExaltCheck.IsChecked = _tool.UseExalt;
-
-        // 模式
-        switch (_tool.Rules.Mode)
+        _loadingState = true;
+        try
         {
-            case CraftMode.Single: Mode1Radio.IsChecked = true; break;
-            case CraftMode.AltAug: Mode2Radio.IsChecked = true; break;
-            default: Mode3Radio.IsChecked = true; break;
+            // 子模式选项只在首次加载时从持久状态恢复，切模式不覆盖尚未落盘的选择。
+            Mode2AltAug.IsChecked = !_tool.Mode2ScourAlch;
+            Mode2ScourAlch.IsChecked = _tool.Mode2ScourAlch;
+            ExaltCheck.IsChecked = _tool.UseExalt;
+
+            switch (_tool.Rules.Mode)
+            {
+                case CraftMode.Single: Mode1Radio.IsChecked = true; break;
+                case CraftMode.AltAug: Mode2Radio.IsChecked = true; break;
+                default: Mode3Radio.IsChecked = true; break;
+            }
+            ApplyModeVisibility();
+
+            _selectedCurrency = Currency.ModeCurrencies[CraftMode.Single].Contains(_tool.Rules.SingleCurrency)
+                ? _tool.Rules.SingleCurrency : Currency.Alteration;
+            SingleCurrencyCombo.SelectedValue = _selectedCurrency;
+
+            ApplyHitCounts(_tool.Rules.PrimaryHitCount, _tool.Rules.SecondaryHitCount);
+            foreach (var r in _tool.Rules.PrimaryAffixes) AddAffixTag("primary", r.Text);
+            foreach (var r in _tool.Rules.SecondaryAffixes) AddAffixTag("secondary", r.Text);
+            foreach (var r in _tool.Rules.ExcludeAffixes) AddAffixTag("exclude", r.Text);
         }
-        ApplyModeVisibility();
-
-        // 通货选择
-        _selectedCurrency = _tool.Rules.SingleCurrency;
-        UpdateCurrencySelection();
-
-        // 词缀
-        ApplyHitCounts(_tool.Rules.PrimaryHitCount, _tool.Rules.SecondaryHitCount);
-        foreach (var r in _tool.Rules.PrimaryAffixes) AddAffixTag("primary", r.Text);
-        foreach (var r in _tool.Rules.SecondaryAffixes) AddAffixTag("secondary", r.Text);
-        foreach (var r in _tool.Rules.ExcludeAffixes) AddAffixTag("exclude", r.Text);
-
+        finally { _loadingState = false; }
+        RefreshHitCountPresentation(resetEditor: true);
         _dirty = false;
     }
 }

@@ -22,7 +22,7 @@ public partial class HideoutPage : UserControl
         try
         {
             EnableCheck.IsChecked = _tool.IsEnabled;
-            HotkeyLabel.Text = $"回城 {HotkeySetting.Display(_tool.Hotkey)}";
+            HotkeyLabel.Text = $"{HotkeySetting.Display(_tool.Hotkey)} 执行回城命令";
             CommandText.Text = _tool.Command;
         }
         finally

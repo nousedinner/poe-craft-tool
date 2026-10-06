@@ -5,9 +5,10 @@
     <Grid x:Name="PageRoot">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid x:Name="PageHeader" Style="{StaticResource ToolPageHeader}">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <TextBlock Text="一键回城" Style="{StaticResource ToolPageTitle}"/>
-            <ToggleButton x:Name="EnableCheck" Grid.Column="1" Content="启用一键回城" Style="{StaticResource ModernSwitchStyle}"
+            <TextBlock x:Name="HotkeyLabel" Grid.Column="1" Style="{StaticResource ToolPageHint}"/>
+            <ToggleButton x:Name="EnableCheck" Grid.Column="2" Content="启用一键回城" Style="{StaticResource ModernSwitchStyle}"
                           FontWeight="SemiBold" VerticalAlignment="Center" Checked="OnToggleChanged" Unchecked="OnToggleChanged"/>
         </Grid>
         <Border x:Name="PageBody" Grid.Row="1" Style="{StaticResource PanelStyle}"
@@ -24,7 +25,6 @@
             </ScrollViewer>
         </Border>
         <Grid Grid.Row="2" Style="{StaticResource ToolPageFooter}">
-            <TextBlock x:Name="HotkeyLabel" Text="回城" Foreground="{StaticResource AccentBrush}" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center"/>
         </Grid>
     </Grid>
 </UserControl>

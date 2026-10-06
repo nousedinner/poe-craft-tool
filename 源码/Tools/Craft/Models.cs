@@ -143,6 +143,13 @@ public enum Mode3StartDecision
 
 public static class CraftDecisions
 {
+    public static int? GetHitCountLimit(CraftMode mode) => mode switch
+    {
+        CraftMode.AltAug => 2,
+        CraftMode.AltAugRegal => 3,
+        _ => null,
+    };
+
     /// <summary>
     /// Mode 3 改造得到两条显式词缀但未达到魔法阶段阈值时，记录完整样本用于排查漏识别。
     /// 该策略只影响诊断文件，不改变下一步通货判定。
@@ -154,22 +161,17 @@ public static class CraftDecisions
     public static bool IsHitCountSelectionValid(CraftMode mode, int primaryHitCount, int secondaryHitCount)
     {
         var total = primaryHitCount + secondaryHitCount;
-        return mode switch
-        {
-            CraftMode.AltAug => total <= 2,
-            CraftMode.AltAugRegal => total <= 3,
-            _ => true,
-        };
+        return GetHitCountLimit(mode) is not { } limit || total <= limit;
     }
 
-    /// <summary>非法按钮选择恢复到上一次合法值，而不是意外归零。</summary>
+    /// <summary>超限增加恢复原值；切模式继承超限总数时允许逐步调低，不改写启动约束。</summary>
     public static int ResolveHitCountSelection(CraftMode mode, int previousValue, int proposedValue, int otherValue)
         => IsHitCountSelectionValid(
             mode,
             primaryHitCount: proposedValue,
             secondaryHitCount: otherValue)
             ? proposedValue
-            : previousValue;
+            : proposedValue < previousValue ? proposedValue : previousValue;
 
     /// <summary>Mode 3 每次启动都先确认底材状态；蓝/黄装先重铸，其他未知状态拒绝盲点。</summary>
     public static Mode3StartDecision BeforeMode3(ItemRarity rarity) => rarity switch
