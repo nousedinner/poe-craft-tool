@@ -76,6 +76,12 @@ internal static class AppearanceChecks
             var nav = Find<ListBox>(window, "ToolList");
             var content = Find<ContentPresenter>(window, "ToolContent");
             var page = (CraftPage)content.Content;
+            var expectedBody = Bounds(Find<FrameworkElement>(page, "PageBody"), window);
+            var expectedHeader = Bounds(Find<Grid>(page, "PageHeader"), window);
+            var firstSwitch = Find<ToggleButton>(page, "EnableToolSwitch");
+            var firstTrack = (Border)firstSwitch.Template.FindName("Track", firstSwitch);
+            var expectedTrack = Bounds(firstTrack, window);
+            CheckPageFrame(page, window, expectedBody, expectedHeader, expectedTrack);
             Require(nav.Items.Count == tools.Length, "导航应包含全部注册工具");
             Require(Find<RadioButton>(page, "Mode3Radio").IsChecked == true, "原规则模式应恢复");
             Require(Find<ToggleButton>(page, "ExaltCheck").IsChecked == true, "原崇高选项应恢复");
@@ -109,25 +115,43 @@ internal static class AppearanceChecks
                 var before = brush.StartPoint;
                 Pump(180);
                 Require(brush.StartPoint != before, "真实背景画刷应随时间缓慢移动");
-                var motionSwitch = Find<ToggleButton>(window, "GradientSwitch");
-                motionSwitch.IsChecked = false;
-                Pump();
-                Require(panels.All(panel => !FlowingGradient.IsAnimating(panel)), "暂停按钮必须暂停全部面板");
+                var speedSlider = Find<Slider>(window, "GradientSpeed");
+                speedSlider.Value = 0;
+                Pump(100);
+                Require(panels.All(panel => !FlowingGradient.IsAnimating(panel)), "速度 0 必须停止全部面板");
                 var paused = brush.StartPoint;
                 Pump(180);
                 Require(brush.StartPoint == paused, "暂停后画刷不能继续移动");
-                motionSwitch.IsChecked = true;
+                speedSlider.Value = 1;
+                Pump(100);
+                var slowBefore = brush.StartPoint;
+                Pump(180);
+                var slowTravel = (brush.StartPoint - slowBefore).Length;
+                speedSlider.Value = 5;
+                Pump(100);
+                var fastBefore = brush.StartPoint;
+                Pump(180);
+                Require((brush.StartPoint - fastBefore).Length > slowTravel * 1.2, "速度 5 应比速度 1 移动更快");
+                var visibleBefore = BackgroundPixels(panels[0]);
+                Snapshot(window, "T11-WPF-Flow-before.png");
+                Pump(1600);
+                var visibleAfter = BackgroundPixels(panels[0]);
+                Snapshot(window, "T11-WPF-Flow-after.png");
+                var pixelChange = visibleBefore.Zip(visibleAfter, (left, right) => Math.Abs(left - right)).Average();
+                Console.WriteLine($"INFO T11 实际背景采样平均色阶变化={pixelChange:0.00}");
+                Require(pixelChange > 1, "流动必须改变实际渲染背景颜色，不能只有内部坐标变化");
+                speedSlider.Value = 2;
                 Pump();
-                Require(panels.All(FlowingGradient.IsAnimating), "恢复按钮必须恢复全部面板");
+                Require(panels.All(FlowingGradient.IsAnimating), "速度恢复后应恢复全部面板");
                 var other = new Window { Width = 140, Height = 80, ShowInTaskbar = false, Title = "隔离焦点检查" };
                 try
                 {
                     other.Show(); other.Activate(); Pump();
-                    Require(!window.IsActive && panels.All(panel => !FlowingGradient.IsAnimating(panel)), "失焦后应暂停动画");
+                    Require(!window.IsActive && panels.All(FlowingGradient.IsAnimating), "可见但失焦的窗口仍应流动，便于并排观察");
                 }
                 finally { other.Close(); }
                 window.Activate(); Pump();
-                Require(panels.All(FlowingGradient.IsAnimating), "恢复窗口焦点后应恢复动画");
+                Require(panels.All(FlowingGradient.IsAnimating), "恢复窗口焦点不能中断动画");
             }
             else Require(panels.All(panel => !FlowingGradient.IsAnimating(panel)), "必须尊重系统关闭动画的偏好");
 
@@ -152,6 +176,7 @@ internal static class AppearanceChecks
             Find<Slider>(page, "DelaySlider").Value = 77;
             nav.SelectedIndex = 1;
             Pump();
+            CheckPageFrame((FrameworkElement)content.Content, window, expectedBody, expectedHeader, expectedTrack);
             Require(panels.All(panel => !FlowingGradient.IsAnimating(panel)), "切走后缓存页面不能继续动画");
             Require(craft.Rules.PrimaryAffixes.Any(rule => rule.Text == "冰霜抗性") && craft.DelayMs == 77, "切页必须收集并保存编辑值");
             var saved = host.Storage.LoadRules()!;
@@ -164,12 +189,19 @@ internal static class AppearanceChecks
                 nav.SelectedIndex = index;
                 Pump();
                 Require(content.Content == tools[index].CreatePage(), "工具页面应复用原缓存");
+                CheckPageFrame((FrameworkElement)content.Content, window, expectedBody, expectedHeader, expectedTrack);
+                if (index == 4) CheckSettingsSwitches((FrameworkElement)content.Content);
                 if (index == 2)
                 {
                     var loopPage = (FrameworkElement)content.Content;
                     Find<Button>(loopPage, "MoreButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                     Pump();
                     Require(Find<StackPanel>(loopPage, "SlotPanel").Children.Cast<Border>().All(row => row.IsVisible), "加载更多应显示十个槽位");
+                    var scroll = Descendants(loopPage).OfType<ScrollViewer>().First();
+                    var more = Find<Button>(loopPage, "MoreButton");
+                    var loopViewport = Descendants(scroll).OfType<ScrollContentPresenter>().First();
+                    Require(more.TranslatePoint(new Point(0, more.ActualHeight), loopViewport).Y <= loopViewport.ActualHeight + 1,
+                            "默认尺寸展开十槽后，收起按钮仍须完整可见");
                 }
                 Snapshot(window, $"T11-WPF-{tools[index].Id}.png");
             }
@@ -185,6 +217,20 @@ internal static class AppearanceChecks
             foreach (var input in new[] { "PrimaryInput", "SecondaryInput", "ExcludeInput" })
                 Require(Find<TextBox>(page, input).ActualWidth >= 100, "最小尺寸下词缀输入框过窄");
             var rulesScroll = Descendants(panels[2]).OfType<ScrollViewer>().First();
+            // 增加示例标签确保小窗口溢出；通过实际路由的滚轮事件访问隐藏内容。
+            for (var index = 0; index < 8; index++)
+            {
+                Find<TextBox>(page, "PrimaryInput").Text = $"额外词缀{index}";
+                Descendants(page).OfType<Button>().Single(button => (string?)button.Tag == "primary")
+                    .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            }
+            Pump();
+            rulesScroll.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120)
+            {
+                RoutedEvent = UIElement.MouseWheelEvent,
+            });
+            Pump();
+            Require(rulesScroll.VerticalOffset > 0, "隐藏滚动条后鼠标滚轮仍须可用");
             rulesScroll.ScrollToBottom(); Pump();
             Require(rulesScroll.VerticalOffset > 0, "最小窗口下规则滚动条必须可用");
             var exclude = Find<TextBox>(page, "ExcludeInput");
@@ -239,6 +285,48 @@ internal static class AppearanceChecks
         Require(panels[0].TranslatePoint(new Point(), page).Y == panels[2].TranslatePoint(new Point(), page).Y, "三栏顶部应对齐");
     }
 
+    private static Rect Bounds(FrameworkElement element, Window window)
+        => new(element.TranslatePoint(new Point(), window), new Size(element.ActualWidth, element.ActualHeight));
+
+    private static void CheckPageFrame(FrameworkElement page, Window window, Rect expectedBody, Rect expectedHeader, Rect expectedTrack)
+    {
+        var body = Bounds(Find<FrameworkElement>(page, "PageBody"), window);
+        var header = Bounds(Find<Grid>(page, "PageHeader"), window);
+        Require(Math.Abs(body.X - expectedBody.X) < 1 && Math.Abs(body.Y - expectedBody.Y) < 1 &&
+                Math.Abs(body.Width - expectedBody.Width) < 1 && Math.Abs(body.Height - expectedBody.Height) < 1,
+                "切换工具时内容区域的位置、宽高必须一致");
+        Require(header == expectedHeader, "页面标题区域必须一致");
+        Require(Descendants(page).OfType<ScrollBar>().All(bar => bar.Orientation != Orientation.Vertical || !bar.IsVisible),
+                "页面不能显示右侧滚动条");
+        var enable = page.FindName("EnableToolSwitch") as ToggleButton ?? page.FindName("EnableCheck") as ToggleButton;
+        if (enable is null) return; // 设置页不提供工具启用开关。
+        var track = Bounds((Border)enable.Template.FindName("Track", enable), window);
+        Require(Math.Abs(track.Right - expectedTrack.Right) < 1 && Math.Abs(track.Y - expectedTrack.Y) < 1,
+                "四个工具的启用开关必须对齐到同一位置");
+    }
+
+    private static void CheckSettingsSwitches(FrameworkElement page)
+    {
+        var switches = new[] { "AutoDetectCheck", "CraftSoundCheck", "CraftPopupCheck", "ClickerNotificationCheck", "KeyLoopNotificationCheck" }
+            .Select(name => Find<ToggleButton>(page, name)).ToArray();
+        var rightEdges = switches.Select(toggle =>
+        {
+            var track = (Border)toggle.Template.FindName("Track", toggle);
+            return track.TranslatePoint(new Point(track.ActualWidth, 0), page).X;
+        }).ToArray();
+        Require(rightEdges.Max() - rightEdges.Min() < 1, "设置中的全部开关必须在行尾对齐");
+    }
+
+    private static byte[] BackgroundPixels(Border panel)
+    {
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(panel.ActualWidth), (int)Math.Ceiling(panel.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(panel);
+        // 左侧空白带避开卡片和文字，采样当前渐变的有色区域。
+        var pixels = new byte[8 * 20 * 4];
+        bitmap.CopyPixels(new Int32Rect(5, (int)(panel.ActualHeight * .45), 8, 20), pixels, 8 * 4, 0);
+        return pixels;
+    }
+
     private static void CheckSwitchHitArea(ToggleButton toggle)
     {
         var track = (Border)toggle.Template.FindName("Track", toggle);
@@ -273,13 +361,14 @@ internal static class AppearanceChecks
     {
         var directory = Environment.GetEnvironmentVariable("SHIKE_UI_PREVIEW_DIR");
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return;
+        Pump(160); // 导出时让开关的短动画结束，避免把过渡态当作选中状态。
         var root = (FrameworkElement)window.Content;
         root.UpdateLayout();
         var bitmap = new RenderTargetBitmap((int)Math.Ceiling(root.ActualWidth * 1.5), (int)Math.Ceiling(root.ActualHeight * 1.5), 144, 144, PixelFormats.Pbgra32);
         bitmap.Render(root);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using var stream = File.Create(Path.Combine(directory, name));
+        using var stream = File.Create(Path.Combine(directory, name.Replace("T11-WPF", "T11-v36", StringComparison.Ordinal)));
         encoder.Save(stream);
     }
 

@@ -31,6 +31,20 @@
         <Setter Property="CornerRadius" Value="14"/>
         <Setter Property="Padding" Value="16"/>
     </Style>
+    <Style x:Key="ToolPageHeader" TargetType="Grid">
+        <Setter Property="Height" Value="40"/>
+        <Setter Property="Margin" Value="4,8,4,12"/>
+    </Style>
+    <Style x:Key="ToolPageTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="21"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style x:Key="ToolPageFooter" TargetType="Grid">
+        <Setter Property="MinHeight" Value="28"/>
+        <Setter Property="Margin" Value="4,6,4,0"/>
+    </Style>
     <Style x:Key="SectionTitle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
         <Setter Property="FontSize" Value="15"/>
@@ -282,7 +296,7 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <ContentPresenter Grid.Column="0" Margin="0,0,10,0"
+                        <ContentPresenter x:Name="SwitchLabel" Grid.Column="0" Margin="0,0,10,0"
                                           VerticalAlignment="Center"
                                           IsHitTestVisible="False"
                                           RecognizesAccessKey="True"/>
@@ -299,6 +313,9 @@
                         </Border>
                     </Grid>
                     <ControlTemplate.Triggers>
+                        <Trigger Property="Content" Value="{x:Null}">
+                            <Setter TargetName="SwitchLabel" Property="Margin" Value="0"/>
+                        </Trigger>
                         <Trigger Property="IsChecked" Value="True">
                             <Trigger.EnterActions>
                                 <BeginStoryboard HandoffBehavior="SnapshotAndReplace">

@@ -55,7 +55,7 @@ public partial class KeyLoopPage : UserControl
             var keyButton = new Button
             {
                 Content = string.IsNullOrWhiteSpace(slot.Key) ? "点击设置" : slot.Key,
-                Width = 92,
+                Width = 140,
                 Height = 27,
                 Padding = new Thickness(5, 2, 5, 2),
                 Margin = new Thickness(10, 0, 8, 0),
@@ -94,20 +94,25 @@ public partial class KeyLoopPage : UserControl
                 VerticalAlignment = VerticalAlignment.Center,
             };
 
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(new TextBlock
+            var row = new Grid();
+            foreach (var width in new[] { GridLength.Auto, GridLength.Auto, GridLength.Auto, GridLength.Auto,
+                         GridLength.Auto, GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star),
+                         GridLength.Auto, GridLength.Auto })
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
+            var indexLabel = new TextBlock
             {
                 Text = $"#{index + 1}", Width = 28, Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x9A, 0xAA)),
                 VerticalAlignment = VerticalAlignment.Center,
-            });
-            row.Children.Add(enabled);
-            row.Children.Add(keyButton);
-            row.Children.Add(clearButton);
-            row.Children.Add(new TextBlock { Text = "间隔", Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x77, 0x88)), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) });
-            row.Children.Add(delay);
-            row.Children.Add(new TextBlock { Text = "秒", Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x77, 0x88)), VerticalAlignment = VerticalAlignment.Center });
-            row.Children.Add(new TextBlock { Text = "次数", Foreground = new SolidColorBrush(Color.FromRgb(0x88, 0x99, 0xAA)), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0, 0, 0) });
-            row.Children.Add(count);
+            };
+            UIElement[] cells = [indexLabel, enabled, keyButton, clearButton,
+                new TextBlock { Text = "间隔", Foreground = (Brush)FindResource("TextSecondary"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) },
+                delay, new TextBlock { Text = "秒", Foreground = (Brush)FindResource("TextSecondary"), VerticalAlignment = VerticalAlignment.Center },
+                new Border(), new TextBlock { Text = "次数", Foreground = (Brush)FindResource("TextSecondary"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0, 0, 0) }, count];
+            for (var column = 0; column < cells.Length; column++)
+            {
+                Grid.SetColumn(cells[column], column);
+                row.Children.Add(cells[column]);
+            }
 
             var root = new Border
             {
@@ -116,8 +121,8 @@ public partial class KeyLoopPage : UserControl
                 BorderBrush = (Brush)FindResource("CardBorder"),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 6, 10, 6),
-                Margin = new Thickness(0, 0, 0, 5),
+                Padding = new Thickness(10, 2, 10, 2),
+                Margin = new Thickness(0, 0, 0, 4),
                 Visibility = index < 5 ? Visibility.Visible : Visibility.Collapsed,
             };
             SlotPanel.Children.Add(root);

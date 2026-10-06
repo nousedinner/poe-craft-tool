@@ -6,12 +6,13 @@ using System.Windows.Media.Animation;
 
 namespace ShiKe.Themes;
 
-/// <summary>只移动背景画刷；页面离开、窗口失焦/隐藏/最小化时暂停，不干扰工具任务。</summary>
+/// <summary>只移动背景画刷；0 关闭，页面离开、窗口隐藏/最小化时暂停，不干扰工具任务。</summary>
 public static class FlowingGradient
 {
-    public static readonly DependencyProperty EnabledProperty = DependencyProperty.RegisterAttached(
-        "Enabled", typeof(bool), typeof(FlowingGradient),
-        new FrameworkPropertyMetadata(true, FrameworkPropertyMetadataOptions.Inherits, OnEnabledChanged));
+    public static readonly DependencyProperty SpeedProperty = DependencyProperty.RegisterAttached(
+        "Speed", typeof(double), typeof(FlowingGradient),
+        new FrameworkPropertyMetadata(2d, FrameworkPropertyMetadataOptions.Inherits, OnSpeedChanged),
+        value => value is double speed && double.IsFinite(speed) && speed is >= 0 and <= 5);
 
     public static readonly DependencyProperty FlowProperty = DependencyProperty.RegisterAttached(
         "Flow", typeof(bool), typeof(FlowingGradient), new PropertyMetadata(false, OnFlowChanged));
@@ -19,12 +20,12 @@ public static class FlowingGradient
     private static readonly DependencyProperty StateProperty = DependencyProperty.RegisterAttached(
         "State", typeof(MotionState), typeof(FlowingGradient));
 
-    public static bool GetEnabled(DependencyObject element) => (bool)element.GetValue(EnabledProperty);
-    public static void SetEnabled(DependencyObject element, bool value) => element.SetValue(EnabledProperty, value);
+    public static double GetSpeed(DependencyObject element) => (double)element.GetValue(SpeedProperty);
+    public static void SetSpeed(DependencyObject element, double value) => element.SetValue(SpeedProperty, value);
     public static bool GetFlow(DependencyObject element) => (bool)element.GetValue(FlowProperty);
     public static void SetFlow(DependencyObject element, bool value) => element.SetValue(FlowProperty, value);
 
-    private static void OnEnabledChanged(DependencyObject element, DependencyPropertyChangedEventArgs args)
+    private static void OnSpeedChanged(DependencyObject element, DependencyPropertyChangedEventArgs args)
         => (element.GetValue(StateProperty) as MotionState)?.Update();
 
     private static void OnFlowChanged(DependencyObject element, DependencyPropertyChangedEventArgs args)
@@ -92,8 +93,8 @@ public static class FlowingGradient
                 _original = original;
                 _brush = original.Clone(); // 每块面板拥有独立画刷，不动画共享资源。
                 border.Background = _brush;
-                _start = MakeClock(_brush.StartPoint, _brush.StartPoint + new Vector(.35, .25));
-                _end = MakeClock(_brush.EndPoint, _brush.EndPoint + new Vector(.35, .25));
+                _start = MakeClock(_brush.StartPoint - new Vector(.25, .2), _brush.StartPoint + new Vector(.65, .5));
+                _end = MakeClock(_brush.EndPoint - new Vector(.25, .2), _brush.EndPoint + new Vector(.65, .5));
                 _brush.ApplyAnimationClock(LinearGradientBrush.StartPointProperty, _start);
                 _brush.ApplyAnimationClock(LinearGradientBrush.EndPointProperty, _end);
             }
@@ -104,8 +105,6 @@ public static class FlowingGradient
                 _window = window;
                 if (_window is not null)
                 {
-                    _window.Activated += OnWindowChanged;
-                    _window.Deactivated += OnWindowChanged;
                     _window.StateChanged += OnWindowChanged;
                     SystemParameters.StaticPropertyChanged += OnSystemChanged;
                 }
@@ -115,7 +114,7 @@ public static class FlowingGradient
 
         private static AnimationClock MakeClock(Point from, Point to)
         {
-            var animation = new PointAnimation(from, to, TimeSpan.FromSeconds(30))
+            var animation = new PointAnimation(from, to, TimeSpan.FromSeconds(24))
             {
                 AutoReverse = true,
                 RepeatBehavior = RepeatBehavior.Forever,
@@ -131,8 +130,6 @@ public static class FlowingGradient
         {
             Pause();
             if (_window is null) return;
-            _window.Activated -= OnWindowChanged;
-            _window.Deactivated -= OnWindowChanged;
             _window.StateChanged -= OnWindowChanged;
             SystemParameters.StaticPropertyChanged -= OnSystemChanged;
             _window = null;
@@ -140,13 +137,19 @@ public static class FlowingGradient
 
         public void Update()
         {
-            var shouldRun = border.IsLoaded && border.IsVisible && GetEnabled(border) &&
+            var speed = GetSpeed(border);
+            var shouldRun = border.IsLoaded && border.IsVisible && speed > 0 &&
                             SystemParameters.ClientAreaAnimation &&
-                            _window is { IsActive: true, IsVisible: true, WindowState: not WindowState.Minimized };
-            if (shouldRun && _start is not null && !Running)
+                            _window is { IsVisible: true, WindowState: not WindowState.Minimized };
+            if (shouldRun && _start is not null)
             {
-                _start.Controller?.Resume();
-                _end?.Controller?.Resume();
+                _start.Controller!.SpeedRatio = speed;
+                _end!.Controller!.SpeedRatio = speed;
+                if (!Running)
+                {
+                    _start.Controller.Resume();
+                    _end.Controller.Resume();
+                }
                 Running = true;
             }
             else if (!shouldRun) Pause();

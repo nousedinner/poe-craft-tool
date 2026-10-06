@@ -57,7 +57,7 @@ public partial class CraftPage : UserControl
     /// <summary>由 SettingsTool 在热键成功重注册后调用；不收集或改写页面业务配置。</summary>
     internal void RefreshHotkeyHints(string startHotkey, string stopHotkey, string coordinateHotkey)
     {
-        CraftHotkeyHint.Text = $"⚡ 游戏内启动：{HotkeySetting.Display(startHotkey)} / 停止：{HotkeySetting.Display(stopHotkey)}";
+        CraftHotkeyHint.Text = $"启动 {HotkeySetting.Display(startHotkey)} · 停止 {HotkeySetting.Display(stopHotkey)}";
         if (_host.Coordinates.ActiveSlot is not { } slot) return;
         if (string.IsNullOrWhiteSpace(coordinateHotkey))
         {

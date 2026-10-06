@@ -1,44 +1,35 @@
 <UserControl x:Class="ShiKe.Tools.KeyLoop.KeyLoopPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:theme="clr-namespace:ShiKe.Themes"
-             PreviewKeyDown="Page_PreviewKeyDown">
-    <Border Style="{StaticResource PanelStyle}" Background="{StaticResource RulesPanelBackground}" theme:FlowingGradient.Flow="True" MaxWidth="820"><ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Margin="8">
-            <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                <TextBlock Text="按键循环" FontSize="20" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
-                <ToggleButton x:Name="EnableToolSwitch" Grid.Column="1" Content="启用按键循环"
-                              Style="{StaticResource ModernSwitchStyle}"
-                              Checked="EnableToolSwitch_Changed" Unchecked="EnableToolSwitch_Changed"/>
-            </Grid>
-            <TextBlock Text="每个启用的按键按自己的间隔独立触发，离开游戏后自动暂停。"
-                       FontSize="12" Foreground="{StaticResource TextSecondary}" Margin="0,4,0,12"/>
-
-            <Border Background="{StaticResource CardBackground}" BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
-                    CornerRadius="8" Padding="12" Margin="0,0,0,10">
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="启停热键" Foreground="{StaticResource TextPrimary}" FontWeight="Bold" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="HotkeyText" Foreground="{StaticResource AccentBrush}" FontWeight="Bold"
-                               Margin="12,0,0,0" VerticalAlignment="Center"/>
-                    <TextBlock Text="按一次启动，再按一次停止" Foreground="{StaticResource TextSecondary}" FontSize="11"
-                               Margin="16,0,0,0" VerticalAlignment="Center"/>
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:theme="clr-namespace:ShiKe.Themes" PreviewKeyDown="Page_PreviewKeyDown">
+    <Grid x:Name="PageRoot">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid x:Name="PageHeader" Style="{StaticResource ToolPageHeader}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock Text="按键循环" Style="{StaticResource ToolPageTitle}"/>
+            <ToggleButton x:Name="EnableToolSwitch" Grid.Column="1" Content="启用按键循环" Style="{StaticResource ModernSwitchStyle}"
+                          FontWeight="SemiBold" VerticalAlignment="Center" Checked="EnableToolSwitch_Changed" Unchecked="EnableToolSwitch_Changed"/>
+        </Grid>
+        <Border x:Name="PageBody" Grid.Row="1" Style="{StaticResource PanelStyle}"
+                Background="{StaticResource RulesPanelBackground}" theme:FlowingGradient.Flow="True">
+            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <StackPanel x:Name="SlotPanel"/>
+                    <Button x:Name="MoreButton" Content="▼ 加载更多 (5/10)" Height="31" Margin="0,5,0,0"
+                            Background="{StaticResource CardBackground}" Click="MoreButton_Click"/>
                 </StackPanel>
-            </Border>
-
-            <StackPanel x:Name="SlotPanel"/>
-
-            <Button x:Name="MoreButton" Content="▼ 加载更多 (5/10)" Height="31" Margin="0,5,0,10"
-                    Background="{StaticResource CardBackground}" BorderBrush="{StaticResource CardBorder}" Foreground="{StaticResource TextSecondary}"
-                    Cursor="Hand" Click="MoreButton_Click"/>
-
-            <StackPanel Orientation="Horizontal">
-                <TextBlock x:Name="StatusDot" Text="●" Foreground="#AAAAAA" FontSize="15"
-                           Margin="0,0,5,0" VerticalAlignment="Center"/>
-                <TextBlock x:Name="StatusText" Text="按键循环就绪" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+            </ScrollViewer>
+        </Border>
+        <Grid Grid.Row="2" Style="{StaticResource ToolPageFooter}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock x:Name="StatusDot" Text="●" Foreground="#AAAAAA" Margin="0,0,5,0"/>
+                <TextBlock x:Name="StatusText" Text="按键循环就绪" Foreground="{StaticResource TextSecondary}"/>
             </StackPanel>
-
-            <TextBlock Text="点击某个按键框后，直接按下要循环的单个键；可设置字母、数字、功能键、方向键或单独修饰键。"
-                       Foreground="{StaticResource TextSecondary}" FontSize="11" Margin="0,10,0,0" TextWrapping="Wrap"/>
-        </StackPanel>
-    </ScrollViewer></Border>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="启停" Foreground="{StaticResource AccentBrush}" FontSize="12" Margin="0,0,6,0"/>
+                <TextBlock x:Name="HotkeyText" Foreground="{StaticResource AccentBrush}" FontSize="12"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
 </UserControl>

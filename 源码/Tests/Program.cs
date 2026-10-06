@@ -984,10 +984,10 @@ static void ToolPagesUseHotkeysForRuntimeStart()
         "Clicker 页面不应保留底部启停按钮");
     False(keyLoop.Contains("x:Name=\"ToggleButton\"", StringComparison.Ordinal),
         "KeyLoop 页面不应保留底部启停按钮");
-    True(clicker.Contains("使用连点器快捷键启动或停止", StringComparison.Ordinal),
-        "Clicker 页面必须明确使用快捷键启停");
-    True(keyLoop.Contains("按一次启动，再按一次停止", StringComparison.Ordinal),
-        "KeyLoop 页面必须保留快捷键启停说明");
+    True(clicker.Contains("x:Name=\"HotkeyHint\"", StringComparison.Ordinal),
+        "Clicker 页面必须保留当前切换/按住热键值");
+    True(keyLoop.Contains("x:Name=\"HotkeyText\"", StringComparison.Ordinal),
+        "KeyLoop 页面必须保留当前启停热键值");
 }
 
 static void SwitchStyleContainsMotionAnimation()
@@ -1917,7 +1917,7 @@ static void AssemblyVersionIsCurrent()
     var version = NetworkService.CurrentVersion;
     Equal(1, version.Major, "程序集 Major 错误");
     Equal(0, version.Minor, "程序集 Minor 错误");
-    Equal(35, version.Build, "程序集 Build 必须为本次 1.0.35");
+    Equal(36, version.Build, "程序集 Build 必须为本次 1.0.36");
 }
 
 static void CraftEngineCanShutdownWhileIdle()

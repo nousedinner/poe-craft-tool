@@ -1,36 +1,30 @@
 <UserControl x:Class="ShiKe.Tools.Hideout.HideoutPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:theme="clr-namespace:ShiKe.Themes">
-    <Border Style="{StaticResource PanelStyle}" Background="{StaticResource CurrencyPanelBackground}" theme:FlowingGradient.Flow="True" MaxWidth="760" Padding="28"><ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel>
-        <TextBlock Text="一键回城" FontSize="20" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,0,0,16"/>
-
-        <Border Background="{StaticResource CardBackground}" CornerRadius="8" Padding="16,14" BorderBrush="{StaticResource CardBorder}" BorderThickness="1">
-            <StackPanel>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <ToggleButton x:Name="EnableCheck"
-                              Content="启用一键回城"
-                              Style="{StaticResource ModernSwitchStyle}"
-                              FontSize="15"
-                              VerticalAlignment="Center"
-                              Checked="OnToggleChanged"
-                              Unchecked="OnToggleChanged"/>
-                    <TextBlock x:Name="HotkeyLabel" Text="（热键）" Foreground="{StaticResource TextSecondary}" Margin="10,0,0,0" VerticalAlignment="Center"/>
-                </StackPanel>
-                <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Foreground="{StaticResource TextPrimary}" FontSize="13" LineHeight="20">
-                    <Run x:Name="InstructionHotkeyRun" Text="游戏内按热键：自动打开聊天框输入 "/>
-                    <Run Text="/hideout" FontFamily="Consolas" Foreground="{StaticResource AccentBrush}"/>
-                    <Run Text=" 并发送，返回藏身处。"/>
-                </TextBlock>
-                <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="{StaticResource TextSecondary}" FontSize="12">
-                    <Run Text="提示：需在游戏设置中允许聊天输入；游戏为管理员运行时拾刻请同样以管理员运行。"/>
-                </TextBlock>
-                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                    <TextBlock Text="执行命令" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
-                    <TextBox x:Name="CommandText" Width="180" Margin="10,0,0,0" Padding="5,3" MaxLength="200"
-                             TextChanged="CommandText_Changed"
-                             LostFocus="CommandText_Commit" KeyDown="CommandText_KeyDown"/>
-                </StackPanel>
-            </StackPanel>
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:theme="clr-namespace:ShiKe.Themes">
+    <Grid x:Name="PageRoot">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid x:Name="PageHeader" Style="{StaticResource ToolPageHeader}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock Text="一键回城" Style="{StaticResource ToolPageTitle}"/>
+            <ToggleButton x:Name="EnableCheck" Grid.Column="1" Content="启用一键回城" Style="{StaticResource ModernSwitchStyle}"
+                          FontWeight="SemiBold" VerticalAlignment="Center" Checked="OnToggleChanged" Unchecked="OnToggleChanged"/>
+        </Grid>
+        <Border x:Name="PageBody" Grid.Row="1" Style="{StaticResource PanelStyle}"
+                Background="{StaticResource CurrencyPanelBackground}" theme:FlowingGradient.Flow="True">
+            <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
+                <Border Style="{StaticResource PanelStyle}" VerticalAlignment="Top">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="回城命令" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                        <TextBox x:Name="CommandText" Grid.Column="1" MaxLength="200" FontFamily="Consolas"
+                                 TextChanged="CommandText_Changed" LostFocus="CommandText_Commit" KeyDown="CommandText_KeyDown"/>
+                    </Grid>
+                </Border>
+            </ScrollViewer>
         </Border>
-    </StackPanel>
-</ScrollViewer></Border></UserControl>
+        <Grid Grid.Row="2" Style="{StaticResource ToolPageFooter}">
+            <TextBlock x:Name="HotkeyLabel" Text="回城" Foreground="{StaticResource AccentBrush}" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+        </Grid>
+    </Grid>
+</UserControl>

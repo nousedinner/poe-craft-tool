@@ -40,7 +40,7 @@ public partial class ClickerPage : UserControl
 
     internal void RefreshSettingsPresentation()
     {
-        HotkeyHint.Text = $"切换热键：{HotkeySetting.Display(_tool.Hotkey)}    按住热键：{HotkeySetting.Display(_tool.HoldHotkey)}";
+        HotkeyHint.Text = $"切换 {HotkeySetting.Display(_tool.Hotkey)} · 按住 {HotkeySetting.Display(_tool.HoldHotkey)}";
     }
 
     internal void RefreshEnabledPresentation()

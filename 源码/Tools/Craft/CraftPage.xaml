@@ -34,33 +34,30 @@
             <Setter Property="Padding" Value="4,2"/>
         </Style>
     </UserControl.Resources>
-    <Grid>
+    <Grid x:Name="PageRoot">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <Grid Margin="4,8,4,16">
+        <Grid x:Name="PageHeader" Style="{StaticResource ToolPageHeader}">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <StackPanel>
-                <TextBlock Text="洗词缀" FontSize="21" FontWeight="SemiBold"/>
-                <TextBlock Text="选择模式、确认坐标，再设置目标词缀" Style="{StaticResource SecondaryText}" Margin="0,4,0,0"/>
-            </StackPanel>
+            <TextBlock Text="洗词缀" Style="{StaticResource ToolPageTitle}"/>
             <ToggleButton x:Name="EnableToolSwitch" Grid.Column="1" Content="启用洗词缀" Style="{StaticResource ModernSwitchStyle}"
                           VerticalAlignment="Center" FontWeight="SemiBold" Checked="EnableToolSwitch_Changed" Unchecked="EnableToolSwitch_Changed"/>
         </Grid>
         <!-- 三栏同时可操作；滚动只影响各栏，不改变模式或任务执行顺序。 -->
-        <Grid Grid.Row="1">
+        <Grid x:Name="PageBody" Grid.Row="1">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <Border x:Name="ModePanel" Grid.Column="0" Style="{StaticResource PanelStyle}"
                     Background="{StaticResource ModePanelBackground}" theme:FlowingGradient.Flow="True">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
                         <TextBlock Text="01  工作模式" Style="{StaticResource SectionTitle}"/>
                         <RadioButton x:Name="Mode1Radio" GroupName="Mode" Tag="1" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
-                            <StackPanel><TextBlock Text="单通货" FontSize="14"/><TextBlock Text="Mode 1 · 使用选择的通货" Style="{StaticResource SecondaryText}" Margin="0,5,0,0"/></StackPanel>
+                            <TextBlock Text="1 · 单通货" FontSize="14"/>
                         </RadioButton>
                         <RadioButton x:Name="Mode2Radio" GroupName="Mode" Tag="2" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
-                            <StackPanel><TextBlock Text="改造＋增幅" FontSize="14"/><TextBlock Text="Mode 2 · 两种通货组合" Style="{StaticResource SecondaryText}" Margin="0,5,0,0"/></StackPanel>
+                            <TextBlock Text="2 · 改造＋增幅" FontSize="14"/>
                         </RadioButton>
                         <RadioButton x:Name="Mode3Radio" GroupName="Mode" Tag="3" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
-                            <StackPanel><TextBlock Text="改造＋增幅＋富豪" FontSize="14"/><TextBlock Text="Mode 3 · 魔法词缀达标后富豪" Style="{StaticResource SecondaryText}" Margin="0,5,0,0"/></StackPanel>
+                            <TextBlock Text="3 · 改造＋增幅＋富豪" FontSize="14"/>
                         </RadioButton>
                         <StackPanel x:Name="Mode2Frame" Visibility="Collapsed" Margin="2,8,0,14">
                             <TextBlock Text="Mode 2 子模式" Style="{StaticResource PoolHeading}" Margin="0,0,0,8"/>
@@ -78,7 +75,6 @@
                                     <TextBlock x:Name="DelayValue" Grid.Column="1" Text="33 ms" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"/>
                                 </Grid>
                                 <Slider x:Name="DelaySlider" Minimum="10" Maximum="200" Value="33" Margin="0,12,0,10"/>
-                                <TextBlock Text="通货点击后的服务器同步等待" Style="{StaticResource SecondaryText}"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -86,10 +82,9 @@
             </Border>
             <Border x:Name="CurrencyPanel" Grid.Column="2" Style="{StaticResource PanelStyle}"
                     Background="{StaticResource CurrencyPanelBackground}" theme:FlowingGradient.Flow="True">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
                         <TextBlock Text="02  通货与坐标" Style="{StaticResource SectionTitle}"/>
-                        <TextBlock Text="点击通货名称选择，按钮用于录制位置" Style="{StaticResource SecondaryText}" Margin="0,0,0,10"/>
                         <ItemsControl x:Name="CurrencyGrid">
                             <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="2"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                         </ItemsControl>
@@ -110,7 +105,7 @@
             </Border>
             <Border x:Name="RulesPanel" Grid.Column="4" Style="{StaticResource PanelStyle}"
                     Background="{StaticResource RulesPanelBackground}" theme:FlowingGradient.Flow="True">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
                         <TextBlock Text="03  词缀规则" Style="{StaticResource SectionTitle}"/>
                         <ComboBox x:Name="PresetCombo" SelectionChanged="PresetCombo_SelectionChanged" FontSize="12" ToolTip="选择配置预设"/>
@@ -156,7 +151,6 @@
                             <TextBlock Text="排除词缀" Style="{StaticResource PoolHeading}"/>
                             <Button x:Name="ClearExcludeButton" Grid.Column="1" Content="清空" Style="{StaticResource ClearPoolButton}" Click="ClearExcludeButton_Click"/>
                         </Grid>
-                        <TextBlock Text="改造时跳过；终检时判定失败" Style="{StaticResource SecondaryText}" Margin="0,4,0,8"/>
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBox x:Name="ExcludeInput" KeyDown="AffixInput_KeyDown" Tag="exclude" ToolTip="输入排除词缀，回车添加" FontSize="12"/>
                             <Button Grid.Column="1" Content="添加" Style="{StaticResource CardButton}" Click="AddAffixButton_Click" Tag="exclude" Margin="6,0,0,0"/>
@@ -166,9 +160,10 @@
                 </ScrollViewer>
             </Border>
         </Grid>
-        <WrapPanel Grid.Row="2" Margin="4,12,4,6">
-            <TextBlock x:Name="CraftHotkeyHint" Text="游戏内热键启动 / 停止" Foreground="{StaticResource AccentBrush}" FontSize="12" FontWeight="SemiBold" Margin="0,0,16,0"/>
-            <TextBlock x:Name="CraftStatusText" Text="就绪" Style="{StaticResource SecondaryText}"/>
-        </WrapPanel>
+        <Grid Grid.Row="2" Style="{StaticResource ToolPageFooter}">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="CraftStatusText" Text="就绪" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
+            <TextBlock x:Name="CraftHotkeyHint" Grid.Column="1" Text="启动 / 停止" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" FontSize="12"/>
+        </Grid>
     </Grid>
 </UserControl>

@@ -6,7 +6,7 @@
         Width="1100" Height="800" MinWidth="930" MinHeight="620"
         FontFamily="Microsoft YaHei UI" FontSize="13"
         Foreground="{StaticResource TextPrimary}" Background="{StaticResource WindowBackground}"
-        theme:FlowingGradient.Enabled="{Binding IsChecked, ElementName=GradientSwitch}"
+        theme:FlowingGradient.Speed="{Binding Value, ElementName=GradientSpeed}"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <DataTemplate x:Key="LinkText"><TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" ToolTip="{Binding}"/></DataTemplate>
@@ -37,7 +37,6 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel VerticalAlignment="Center" Margin="0,0,24,0">
                     <TextBlock Text="拾刻" FontSize="22" FontWeight="SemiBold"/>
-                    <TextBlock Text="游戏工具箱" Foreground="{StaticResource TextSecondary}" FontSize="11"/>
                 </StackPanel>
                 <ListBox x:Name="ToolList" Grid.Column="1" Background="Transparent" BorderThickness="0"
                          VerticalAlignment="Center" SelectionChanged="ToolList_SelectionChanged"
@@ -70,9 +69,12 @@
                         </Style>
                     </ListBox.ItemContainerStyle>
                 </ListBox>
-                <ToggleButton x:Name="GradientSwitch" Grid.Column="2" Content="渐变流动" IsChecked="True"
-                              Style="{StaticResource ModernSwitchStyle}" FontSize="11" Margin="16,0,0,0"
-                              VerticalAlignment="Center" ToolTip="暂停或继续背景渐变；窗口失焦、隐藏或最小化后自动暂停"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="流动速度" FontSize="12" VerticalAlignment="Center"/>
+                    <Slider x:Name="GradientSpeed" Minimum="0" Maximum="5" Value="2" Width="80" Margin="9,0"
+                            TickFrequency="1" SmallChange="1" LargeChange="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" ToolTip="0 关闭，1～5 由慢到快"/>
+                    <TextBlock Text="{Binding Value, ElementName=GradientSpeed, StringFormat={}{0:0}}" Width="16" VerticalAlignment="Center" Foreground="{StaticResource AccentBrush}"/>
+                </StackPanel>
             </Grid>
         </Border>
         <ContentPresenter x:Name="ToolContent" Grid.Row="1" Margin="16,0,16,8"/>

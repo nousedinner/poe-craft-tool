@@ -22,10 +22,7 @@ public partial class HideoutPage : UserControl
         try
         {
             EnableCheck.IsChecked = _tool.IsEnabled;
-            HotkeyLabel.Text = $"（热键 {HotkeySetting.Display(_tool.Hotkey)}）";
-            InstructionHotkeyRun.Text = string.IsNullOrWhiteSpace(_tool.Hotkey)
-                ? "热键未绑定，请先在设置中绑定；回城命令："
-                : $"游戏内按 {_tool.Hotkey}：自动打开聊天框输入 ";
+            HotkeyLabel.Text = $"回城 {HotkeySetting.Display(_tool.Hotkey)}";
             CommandText.Text = _tool.Command;
         }
         finally
