@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private string? _bottomAdUrl;
     private volatile bool _statusUiVisible;
     private int _statusRefreshPending;
+    private bool _restoringGradientSpeed;
     private static readonly SolidColorBrush ActiveStatusBrush = MakeStatusBrush(0x1B, 0x8A, 0x3E);
     private static readonly SolidColorBrush IdleStatusBrush = MakeStatusBrush(0xAA, 0xAA, 0xAA);
 
@@ -31,6 +32,8 @@ public partial class MainWindow : Window
         Height = Math.Min(Height, workArea.Height);
         _registry = registry;
         _host = host;
+        GradientSpeed.Value = host.GradientSpeed;
+        GradientSpeed.ValueChanged += GradientSpeed_ValueChanged;
         _host.Statuses.Changed += ScheduleStatusRefresh;
         IsVisibleChanged += (_, _) =>
         {
@@ -48,6 +51,19 @@ public partial class MainWindow : Window
         ToolList.DisplayMemberPath = nameof(ITool.Name);
         ToolList.SelectedIndex = 0; // 默认选中第一个抽屉
         BottomAdButton.Click += BottomAdButton_Click;
+    }
+
+    private void GradientSpeed_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> args)
+    {
+        if (_restoringGradientSpeed) return;
+        try { _host.SaveGradientSpeed((int)args.NewValue); }
+        catch (StorageException error)
+        {
+            _restoringGradientSpeed = true;
+            try { GradientSpeed.Value = _host.GradientSpeed; }
+            finally { _restoringGradientSpeed = false; }
+            NotificationService.ShowConfigurationError(error.Message, this);
+        }
     }
 
     // ── 导航 ──

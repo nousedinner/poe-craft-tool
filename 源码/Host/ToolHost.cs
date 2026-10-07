@@ -1,4 +1,5 @@
 using ShiKe.Services;
+using System.Text.Json.Nodes;
 
 namespace ShiKe.Host;
 
@@ -33,6 +34,26 @@ public sealed class ToolHost
 
     /// <summary>是否在启动后自动检测 PoE 进程；由 SettingsTool 读写 host.auto_detect_poe。</summary>
     public bool AutoDetectPoe { get; set; } = SettingsDefaults.AutoDetectPoe;
+
+    /// <summary>背景流动速度；由 SettingsTool 从 host.gradient_speed 恢复。</summary>
+    public int GradientSpeed { get; internal set; } = SettingsDefaults.GradientSpeed;
+
+    /// <summary>只更新外观字段；保存成功后再修改内存，避免失败时丢失原状态。</summary>
+    internal void SaveGradientSpeed(int speed)
+    {
+        if (speed is < 0 or > 5) throw new ArgumentOutOfRangeException(nameof(speed));
+        if (speed == GradientSpeed) return;
+        Storage.UpdateSettings(root =>
+        {
+            if (root["host"] is not JsonObject hostSettings)
+            {
+                hostSettings = new JsonObject();
+                root["host"] = hostSettings;
+            }
+            hostSettings["gradient_speed"] = speed;
+        });
+        GradientSpeed = speed;
+    }
 
     /// <summary>
     /// 重置紧急停止令牌。CTS 一旦 Cancel 不可恢复（Python Event.clear() 可重置），

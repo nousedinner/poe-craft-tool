@@ -50,6 +50,9 @@ public partial class CraftPage : UserControl
         InitializeComponent();
         _host = host;
         _tool = tool;
+        // 在模板首次应用前设置开关，Loaded 仍负责较重的卡片/规则初始化。
+        RefreshEnabledPresentation();
+        ExaltCheck.IsChecked = tool.UseExalt;
         RefreshHotkeyHints(tool.HotkeyStart, tool.HotkeyStop, host.CoordinateHotkey);
 
         Loaded += (_, _) => OnLoaded();

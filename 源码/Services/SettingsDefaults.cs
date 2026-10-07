@@ -41,6 +41,7 @@ public static class SettingsDefaults
     // 宿主
     public const string TargetProcess = "";
     public const bool AutoDetectPoe = true;
+    public const int GradientSpeed = 2;                      // 新版外观：0 停止，1～5 由慢到快
 
     // 坐标默认值：全部未设置（null），由抽屉声明槽位
 }

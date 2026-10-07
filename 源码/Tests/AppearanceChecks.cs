@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -57,7 +58,7 @@ internal static class AppearanceChecks
         ITool[] tools = [craft, clicker, keyLoop, hideout, settings];
         try
         {
-            host.Storage.SaveSettings(new JsonObject());
+            host.Storage.SaveSettings(new JsonObject { ["host"] = new JsonObject { ["gradient_speed"] = 3 } });
             host.Storage.SaveRules(JsonNode.Parse("""
                 {"mode":3,"single_currency":"chaos","primary_hit_count":2,"secondary_hit_count":1,
                  "primary_affixes":["最大生命","移动速度"],"secondary_affixes":["火焰抗性"],"exclude_affixes":["反射"]}
@@ -79,9 +80,14 @@ internal static class AppearanceChecks
             craft.Mode2ScourAlch = true;
             craft.UseExalt = true;
             foreach (var tool in tools) { registry.Register(tool); tool.Initialize(host); }
+            settings.LoadSettings(JsonSerializer.SerializeToElement(host.Storage.LoadSettings()["host"]));
+            hideout.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true }));
+            keyLoop.Slots[0].Enabled = true;
             window = new MainWindow(registry, host) { ShowActivated = false, ShowInTaskbar = false };
-            window.Show();
-            Pump();
+            var settingsBeforeShow = File.ReadAllBytes(Path.Combine(host.Storage.DataDir, "settings.json"));
+            CheckFirstFrameSwitches(window, window.Show);
+            Require(Find<Slider>(window, "GradientSpeed").Value == 3, "窗口首次显示必须恢复保存的速度");
+            Require(File.ReadAllBytes(Path.Combine(host.Storage.DataDir, "settings.json")).SequenceEqual(settingsBeforeShow), "初始化外观不应额外写盘");
             var nav = Find<ListBox>(window, "ToolList");
             var content = Find<ContentPresenter>(window, "ToolContent");
             var page = (CraftPage)content.Content;
@@ -112,6 +118,7 @@ internal static class AppearanceChecks
                     "预设下拉框必须能真实展开并呈现选项");
             presets.IsDropDownOpen = false;
             Snapshot(window, "T11-WPF-Mode3.png");
+            CheckInteractiveSwitchAnimation();
             presets.SelectedItem = "appearance-check-limit";
             Pump();
             Require(Find<Border>(page, "HitCountWarning").IsVisible &&
@@ -140,6 +147,7 @@ internal static class AppearanceChecks
                 var speedSlider = Find<Slider>(window, "GradientSpeed");
                 speedSlider.Value = 0;
                 Pump(100);
+                CheckRestoredSpeed(host, 0);
                 Require(panels.All(panel => !FlowingGradient.IsAnimating(panel)), "速度 0 必须停止全部面板");
                 var paused = brush.StartPoint;
                 Pump(180);
@@ -151,6 +159,7 @@ internal static class AppearanceChecks
                 var slowTravel = (brush.StartPoint - slowBefore).Length;
                 speedSlider.Value = 5;
                 Pump(100);
+                CheckRestoredSpeed(host, 5);
                 var fastBefore = brush.StartPoint;
                 Pump(180);
                 Require((brush.StartPoint - fastBefore).Length > slowTravel * 1.2, "速度 5 应比速度 1 移动更快");
@@ -196,8 +205,7 @@ internal static class AppearanceChecks
             Descendants(page).OfType<Button>().Single(button => (string?)button.Tag == "primary")
                 .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Find<Slider>(page, "DelaySlider").Value = 77;
-            nav.SelectedIndex = 1;
-            Pump();
+            CheckFirstFrameSwitches(window, () => nav.SelectedIndex = 1);
             CheckPageFrame((FrameworkElement)content.Content, window, expectedBody, expectedHeader, expectedTrack);
             var clickerPage = (ClickerPage)content.Content;
             clicker.Hotkey = "Ctrl+F8";
@@ -216,8 +224,7 @@ internal static class AppearanceChecks
             Snapshot(window, "T11-WPF-Clicker.png");
             for (var index = 2; index < tools.Length; index++)
             {
-                nav.SelectedIndex = index;
-                Pump();
+                CheckFirstFrameSwitches(window, () => nav.SelectedIndex = index);
                 Require(content.Content == tools[index].CreatePage(), "工具页面应复用原缓存");
                 CheckPageFrame((FrameworkElement)content.Content, window, expectedBody, expectedHeader, expectedTrack);
                 if (index == 4)
@@ -240,8 +247,7 @@ internal static class AppearanceChecks
                 }
                 Snapshot(window, $"T11-WPF-{tools[index].Id}.png");
             }
-            nav.SelectedIndex = 0;
-            Pump();
+            CheckFirstFrameSwitches(window, () => nav.SelectedIndex = 0);
             Require(ReferenceEquals(content.Content, page), "切回洗装页应复用同一实例");
             Require(Find<WrapPanel>(page, "PrimaryTags").Children.Count == 3, "切回不能重建或重复添加词缀");
             Require(Find<ItemsControl>(page, "CurrencyGrid").Items.Count == Currency.All.Length, "切回不能重复添加通货");
@@ -318,6 +324,90 @@ internal static class AppearanceChecks
                 else File.WriteAllBytes(path, bytes);
             }
             app.Shutdown();
+        }
+    }
+
+    private static void CheckFirstFrameSwitches(Window window, Action display)
+    {
+        var observed = false;
+        Exception? failure = null;
+        EventHandler? inspect = null;
+        inspect = (_, _) =>
+        {
+            // Rendering 为应用全局事件；忽略其他测试窗口和本窗口尚未显示控件的帧。
+            if (!window.IsVisible || !window.IsLoaded) return;
+            try
+            {
+                var switches = Descendants(window).OfType<ToggleButton>()
+                    .Where(toggle => toggle.IsVisible && toggle.Template?.FindName("Track", toggle) is Border).ToArray();
+                if (switches.Length == 0) return;
+                CompositionTarget.Rendering -= inspect;
+                observed = true;
+                foreach (var toggle in switches) CheckSwitchPose(toggle);
+            }
+            catch (Exception error) { failure = error; }
+        };
+        CompositionTarget.Rendering += inspect;
+        try { display(); Pump(80); }
+        finally { CompositionTarget.Rendering -= inspect; }
+        Require(observed, "未观察到切页后的真实渲染帧");
+        if (failure is not null) throw new InvalidOperationException("开关首次显示不应补播状态动画", failure);
+    }
+
+    private static void CheckSwitchPose(ToggleButton toggle)
+    {
+        var transform = (TranslateTransform)((System.Windows.Shapes.Ellipse)toggle.Template.FindName("Thumb", toggle)).RenderTransform;
+        var track = (Border)toggle.Template.FindName("Track", toggle);
+        var expected = toggle.IsChecked == true ? 19 : 0;
+        var color = toggle.IsChecked == true ? Color.FromRgb(0x49, 0x90, 0xB1) : Color.FromRgb(0xB7, 0xC4, 0xCE);
+        var actualColor = ((SolidColorBrush)track.Background).Color;
+        // ColorAnimation 的 ScRGB 浮点值可能微有差异；比较实际显示的 ARGB 通道。
+        Require(Math.Abs(transform.X - expected) < .01 && actualColor.A == color.A && actualColor.R == color.R &&
+                actualColor.G == color.G && actualColor.B == color.B,
+                $"首个可见帧必须呈现保存状态：{toggle.Name}/{toggle.Content} checked={toggle.IsChecked}, X={transform.X:0.000}/{expected}, color={((SolidColorBrush)track.Background).Color}/{color}");
+    }
+
+    private static void CheckInteractiveSwitchAnimation()
+    {
+        var toggle = new ToggleButton { Content = "测试", IsChecked = true, Style = (Style)Application.Current.FindResource("ModernSwitchStyle"),
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        var probe = new Window { Width = 180, Height = 110, ShowActivated = false, ShowInTaskbar = false, Content = toggle };
+        try
+        {
+            CheckFirstFrameSwitches(probe, probe.Show);
+            double Offset() => ((TranslateTransform)((System.Windows.Shapes.Ellipse)toggle.Template.FindName("Thumb", toggle)).RenderTransform).X;
+            toggle.IsChecked = false;
+            Pump(60);
+            Require(Offset() is > 0 and < 19, $"手动关闭开关仍须有平滑过渡，实际位置={Offset():0.000}");
+            Pump(160); CheckSwitchPose(toggle);
+            toggle.IsChecked = true;
+            Pump(60);
+            Require(Offset() is > 0 and < 19, $"手动启用开关仍须有平滑过渡，实际位置={Offset():0.000}");
+            Pump(160); CheckSwitchPose(toggle);
+        }
+        finally { probe.Close(); }
+    }
+
+    private static void CheckRestoredSpeed(ToolHost current, int expected)
+    {
+        var saved = current.Storage.LoadSettings();
+        Require(saved["host"]?["gradient_speed"]?.GetValue<int>() == expected, "窗口调整速度后应立即写入配置");
+        var registry = new ToolRegistry();
+        var reopenedHost = new ToolHost(registry);
+        var settings = new SettingsTool(new CraftTool(), new ClickerTool(), new KeyLoopTool(), new HideoutTool());
+        settings.Initialize(reopenedHost);
+        settings.LoadSettings(JsonSerializer.SerializeToElement(saved["host"]));
+        var reopened = new MainWindow(registry, reopenedHost) { ShowActivated = false, ShowInTaskbar = false };
+        try
+        {
+            reopened.Show(); Pump();
+            Require(Find<Slider>(reopened, "GradientSpeed").Value == expected && FlowingGradient.GetSpeed(reopened) == expected,
+                    "重新创建窗口必须恢复实际速度绑定，包括停止档");
+        }
+        finally
+        {
+            reopened.Close();
+            reopenedHost.Hotkeys.UnregisterAll(); reopenedHost.Sound.Dispose(); reopenedHost.Notification.Dispose(); reopenedHost.Network.Dispose();
         }
     }
 
@@ -513,7 +603,7 @@ internal static class AppearanceChecks
         bitmap.Render(root);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using var stream = File.Create(Path.Combine(directory, name.Replace("T11-WPF", "T11-v37", StringComparison.Ordinal)));
+        using var stream = File.Create(Path.Combine(directory, name.Replace("T11-WPF", "T11-v38", StringComparison.Ordinal)));
         encoder.Save(stream);
     }
 

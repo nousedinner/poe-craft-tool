@@ -285,6 +285,7 @@ public sealed class SettingsTool : ITool
     {
         ["target_process"] = _host?.Foreground.TargetProcess ?? string.Empty,
         ["auto_detect_poe"] = _host?.AutoDetectPoe ?? SettingsDefaults.AutoDetectPoe,
+        ["gradient_speed"] = _host?.GradientSpeed ?? SettingsDefaults.GradientSpeed,
         ["hotkeys"] = new JsonObject
         {
             ["start"] = _craft.HotkeyStart,
@@ -296,6 +297,9 @@ public sealed class SettingsTool : ITool
     public void LoadSettings(JsonElement section)
     {
         if (_host is null) return;
+        _host.GradientSpeed = section.TryGetProperty("gradient_speed", out var speed) &&
+            speed.ValueKind == JsonValueKind.Number && speed.TryGetInt32(out var value) && value is >= 0 and <= 5
+            ? value : SettingsDefaults.GradientSpeed;
         if (section.TryGetProperty("target_process", out var process) && process.ValueKind == JsonValueKind.String)
             _host.Foreground.TargetProcess = process.GetString()?.Trim() ?? string.Empty;
         if (section.TryGetProperty("auto_detect_poe", out var autoDetect) &&

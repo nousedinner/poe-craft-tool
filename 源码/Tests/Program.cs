@@ -90,6 +90,7 @@ var tests = new (string Name, Action Run)[]
     ("回城命令拒绝控制字符且保存失败保留原命令", HideoutCommandFailuresPreservePrevious),
     ("自动检测目标保存失败恢复原前台保护", AutoDetectedTargetSaveFailureRollsBack),
     ("SettingsTool 使用 host 分节完整往返", SettingsToolHostSectionRoundTrip),
+    ("流动速度完整往返且保存失败保持原值", GradientSpeedSettingsRoundTrip),
     ("宿主只汇总已启用工具的热键", ToolHostBuildsEnabledHotkeySet),
     ("宿主跳过全部未绑定热键", ToolHostSkipsUnassignedHotkeys),
     ("音效扫描和路径解析限制在 sounds 目录", SoundFilesStayInsideSoundDirectory),
@@ -1708,6 +1709,63 @@ static void SettingsToolHostSectionRoundTrip()
         Equal("F10", saved["hotkeys"]!["coordinate"]!.GetValue<string>(), "坐标热键未保存");
 
         foreach (var tool in registry.Tools) tool.OnShutdown();
+    });
+}
+
+static void GradientSpeedSettingsRoundTrip()
+{
+    RunInSta(() =>
+    {
+        var fixture = CreateSettingsFixture();
+        var host = fixture.Host;
+        var settings = fixture.Settings;
+        True(host.Storage.DataDir.StartsWith(AppContext.BaseDirectory, StringComparison.OrdinalIgnoreCase) &&
+             AppContext.BaseDirectory.Contains("内部用例", StringComparison.Ordinal), "速度验证必须使用隔离目录");
+        var path = Path.Combine(host.Storage.DataDir, "settings.json");
+        var original = File.Exists(path) ? File.ReadAllBytes(path) : null;
+        try
+        {
+            foreach (var json in new[] { "{}", "{\"gradient_speed\":-1}", "{\"gradient_speed\":6}",
+                "{\"gradient_speed\":3.5}", "{\"gradient_speed\":true}", "{\"gradient_speed\":\"5\"}" })
+            {
+                using var invalid = JsonDocument.Parse(json);
+                settings.LoadSettings(invalid.RootElement);
+                Equal(SettingsDefaults.GradientSpeed, host.GradientSpeed, "缺失或非法速度应兼容默认值");
+            }
+            host.Storage.SaveSettings(JsonNode.Parse("""
+                {"host":{"auto_detect_poe":false,"host_marker":"保留"},
+                 "craft":{"delay_ms":77},"other_marker":"保留"}
+                """)!.AsObject());
+            foreach (var speed in new[] { 0, 5, 1 })
+            {
+                host.SaveGradientSpeed(speed);
+                var stored = host.Storage.LoadSettings();
+                Equal(speed, stored["host"]!["gradient_speed"]!.GetValue<int>(), "改动速度必须立即落盘，包括 0");
+                Equal("保留", stored["host"]!["host_marker"]!.GetValue<string>(), "速度单项保存不能覆盖宿主其他字段");
+                Equal(77, stored["craft"]!["delay_ms"]!.GetValue<int>(), "速度不能改变洗词缀设置");
+                Equal("保留", stored["other_marker"]!.GetValue<string>(), "速度不能覆盖其他配置");
+                host.GradientSpeed = SettingsDefaults.GradientSpeed;
+                settings.LoadSettings(JsonSerializer.SerializeToElement(stored["host"]));
+                Equal(speed, host.GradientSpeed, "重新加载必须恢复速度，不能重置成 2");
+                ToolSettingsPersistence.SaveSections(host.Storage, [settings]);
+                Equal(speed, host.Storage.LoadSettings()["host"]!["gradient_speed"]!.GetValue<int>(),
+                      "设置页/退出整节保存不能丢失速度");
+                // 恢复标记，继续检查下一次单项写入不会覆盖同节其他字段。
+                host.Storage.UpdateSettings(root => root["host"]!["host_marker"] = "保留");
+            }
+            using (var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                ExpectStorageFailure(() => host.SaveGradientSpeed(4), StorageFailureKind.FileAccess, path);
+                Equal(1, host.GradientSpeed, "写入失败不能改变内存中的已保存速度");
+            }
+            Equal(1, host.Storage.LoadSettings()["host"]!["gradient_speed"]!.GetValue<int>(), "失败后原文件速度必须保持");
+        }
+        finally
+        {
+            foreach (var tool in host.RegisteredTools) tool.OnShutdown();
+            host.Hotkeys.UnregisterAll(); host.Sound.Dispose(); host.Notification.Dispose(); host.Network.Dispose();
+            if (original is null) File.Delete(path); else File.WriteAllBytes(path, original);
+        }
     });
 }
 

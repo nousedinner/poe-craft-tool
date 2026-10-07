@@ -42,6 +42,7 @@ for ($iteration = 1; $iteration -le $Count; $iteration++) {
         $settingsProbe.craft | Add-Member -NotePropertyName delay_ms -NotePropertyValue 47 -Force
         $settingsProbe.craft | Add-Member -NotePropertyName mode2_scour_alch -NotePropertyValue $true -Force
         $settingsProbe.craft | Add-Member -NotePropertyName use_exalt -NotePropertyValue $true -Force
+        $settingsProbe.host | Add-Member -NotePropertyName gradient_speed -NotePropertyValue 4 -Force
         [IO.File]::WriteAllText($settingsPath, ($settingsProbe | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($true))
         $rulesPath = Join-Path $dataDirectory 'rules.json'
         $rulesProbe = Get-Content -LiteralPath $rulesPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -82,6 +83,7 @@ for ($iteration = 1; $iteration -le $Count; $iteration++) {
             if ((Get-FileHash -LiteralPath $rulesPath).Hash -ne $beforeRulesHash) { throw '首帧前关闭覆盖了已有规则' }
             $saved = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($saved.craft.delay_ms -ne 47 -or $saved.craft.mode2_scour_alch -ne $true -or $saved.craft.use_exalt -ne $true) { throw '首帧前关闭覆盖了已加载的洗装设置' }
+            if ($saved.host.gradient_speed -ne 4) { throw '首帧前关闭覆盖了已保存的流动速度' }
         }
         $reports.Add([ordered]@{
             iteration = $iteration
