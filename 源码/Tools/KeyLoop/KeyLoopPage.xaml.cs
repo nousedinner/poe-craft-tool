@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -184,9 +184,9 @@ public partial class KeyLoopPage : UserControl
         RefreshEnabledPresentation();
         var owner = Window.GetWindow(this);
         if (owner is null)
-            MessageBox.Show(result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
         else
-            MessageBox.Show(owner, result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(owner, result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private void SaveRowChange()

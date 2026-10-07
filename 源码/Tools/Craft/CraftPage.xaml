@@ -124,11 +124,8 @@
                                     Click="DeletePresetButton_Click" ToolTip="删除选中预设，当前词缀设置保留" Margin="0,0,6,0"/>
                             <Button x:Name="OpenPresetsButton" Content="打开文件夹" Style="{StaticResource CardButton}" Click="OpenPresetsButton_Click"/>
                         </WrapPanel>
-                        <Expander x:Name="HitCountEditor" Margin="0,0,0,12" HorizontalContentAlignment="Stretch">
-                            <Expander.Header>
-                                <TextBlock x:Name="HitCountSummary" Text="自定义命中 · 主 1＋次 0" Foreground="{StaticResource AccentBrush}" FontSize="13" TextWrapping="Wrap"/>
-                            </Expander.Header>
-                            <Border Background="#80FFFFFF" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="7" Padding="8" Margin="0,8,0,0">
+                        <TextBlock x:Name="SingleHitHint" Text="主词缀池任意命中 1 条即停止" Foreground="{StaticResource AccentBrush}" FontSize="13" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                        <Border x:Name="HitCountControls" Background="#80FFFFFF" BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="7" Padding="8" Margin="0,0,0,12">
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
@@ -147,11 +144,6 @@
                                         <RadioButton x:Name="SecondaryHit3" Content="3" Style="{StaticResource HitButton}" Tag="3" GroupName="SecondaryHit" Checked="HitCount_Checked"/>
                                     </StackPanel>
                                 </Grid>
-                            </Border>
-                        </Expander>
-                        <Border x:Name="HitCountWarning" Visibility="Collapsed" Background="#FCF0F2" BorderBrush="#EED4DA" BorderThickness="1"
-                                CornerRadius="7" Padding="8" Margin="0,0,0,12">
-                            <TextBlock x:Name="HitCountWarningText" Foreground="{StaticResource DangerRed}" FontSize="13" TextWrapping="Wrap"/>
                         </Border>
                         <Grid Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBlock Text="主词缀池" Style="{StaticResource PoolHeading}"/>
@@ -162,6 +154,7 @@
                             <Button Grid.Column="1" Content="添加" Style="{StaticResource CardButton}" Click="AddAffixButton_Click" Tag="primary" Margin="6,0,0,0"/>
                         </Grid>
                         <WrapPanel x:Name="PrimaryTags" Margin="0,5,0,14"/>
+                        <StackPanel x:Name="SecondaryPoolSection">
                         <Grid Margin="0,0,0,8"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBlock Text="次词缀池" Style="{StaticResource PoolHeading}"/>
                             <Button x:Name="ClearSecondaryButton" Grid.Column="1" Content="清空" Style="{StaticResource ClearPoolButton}" Click="ClearSecondaryButton_Click"/>
@@ -171,6 +164,7 @@
                             <Button Grid.Column="1" Content="添加" Style="{StaticResource CardButton}" Click="AddAffixButton_Click" Tag="secondary" Margin="6,0,0,0"/>
                         </Grid>
                         <WrapPanel x:Name="SecondaryTags" Margin="0,5,0,14"/>
+                        </StackPanel>
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                             <TextBlock Text="排除词缀" Style="{StaticResource PoolHeading}"/>
                             <Button x:Name="ClearExcludeButton" Grid.Column="1" Content="清空" Style="{StaticResource ClearPoolButton}" Click="ClearExcludeButton_Click"/>

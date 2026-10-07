@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using ShiKe.Services;
@@ -220,6 +220,6 @@ public partial class MainWindow : Window
     private void OpenBrowser(string url)
     {
         if (!BrowserLauncher.TryOpen(url, out var error))
-            MessageBox.Show(this, error, "无法打开网页", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(this, error, "无法打开网页", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 }

@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
@@ -11,7 +11,7 @@ namespace ShiKe.Tools.Craft;
 /// <summary>
 /// 洗装页面（对齐 Python config_tab.py 全部交互逻辑）。
 /// 三栏：模式与延迟 / 通货网格(2列,按模式显示子集)与坐标 / 词缀及预设。
-/// 三态坐标录制（信号分离坑#10）/ 词缀池(主/次/排除+命中数实时验证) / 预设管理 / 启停。
+/// 三态坐标录制（信号分离坑#10）/ 单通货固定一命中、多通货启动校验 / 预设管理 / 启停。
 /// </summary>
 public partial class CraftPage : UserControl
 {
@@ -42,8 +42,6 @@ public partial class CraftPage : UserControl
     private bool _loadingState;
     private bool _restoringHitCount;
     private bool _refreshingEnabled;
-    private int _previousPrimaryHit;
-    private int _previousSecondaryHit;
 
     public CraftPage(ToolHost host, CraftTool tool)
     {
@@ -138,9 +136,9 @@ public partial class CraftPage : UserControl
     {
         var owner = Window.GetWindow(this);
         if (owner is null)
-            MessageBox.Show(message, title, MessageBoxButton.OK, image);
+            ThemedMessageBox.Show(message, title, MessageBoxButton.OK, image);
         else
-            MessageBox.Show(owner, message, title, MessageBoxButton.OK, image);
+            ThemedMessageBox.Show(owner, message, title, MessageBoxButton.OK, image);
     }
 
     // ── 通货网格 ──
@@ -366,9 +364,9 @@ public partial class CraftPage : UserControl
             var owner = Window.GetWindow(this);
             var message = $"词缀「{text}」已存在于{existingPool}，不能重复加入其他词缀池。";
             if (owner is null)
-                MessageBox.Show(message, "配置提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ThemedMessageBox.Show(message, "配置提示", MessageBoxButton.OK, MessageBoxImage.Warning);
             else
-                MessageBox.Show(owner, message, "配置提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ThemedMessageBox.Show(owner, message, "配置提示", MessageBoxButton.OK, MessageBoxImage.Warning);
             return false;
         }
 
@@ -453,79 +451,27 @@ public partial class CraftPage : UserControl
         _dirty = true;
     }
 
-    // ── 命中数（实时验证，对齐 _on_hit_count_clicked）──
+    // ── 命中数：编辑时保留选择，Mode2/3 上限统一在启动前校验 ──
 
     private void HitCount_Checked(object sender, RoutedEventArgs e)
     {
-        if (!IsLoaded || _restoringHitCount) return;
-        var radio = (RadioButton)sender;
-        var isPrimary = GroupNameOf(radio) == "PrimaryHit";
-        var newVal = int.Parse((string)radio.Tag);
-        var otherVal = isPrimary ? CurrentSecondaryHit : CurrentPrimaryHit;
-        var previousVal = isPrimary ? _previousPrimaryHit : _previousSecondaryHit;
-        var resolvedVal = CraftDecisions.ResolveHitCountSelection(CurrentMode, previousVal, newVal, otherVal);
-
-        if (resolvedVal != newVal)
-        {
-            _restoringHitCount = true;
-            try
-            {
-                if (isPrimary)
-                    SetHitRadio(PrimaryHit0, PrimaryHit1, PrimaryHit2, PrimaryHit3, resolvedVal);
-                else
-                    SetHitRadio(SecondaryHit0, SecondaryHit1, SecondaryHit2, SecondaryHit3, resolvedVal);
-            }
-            finally
-            {
-                _restoringHitCount = false;
-            }
-            RefreshHitCountPresentation();
-            if (HitCountWarning.Visibility != Visibility.Visible)
-                ShowHitCountWarning($"此模式主＋次最多 {CraftDecisions.GetHitCountLimit(CurrentMode)}，已保留主 {CurrentPrimaryHit}＋次 {CurrentSecondaryHit}。");
-            return;
-        }
-
-        if (isPrimary)
-            _previousPrimaryHit = newVal;
-        else
-            _previousSecondaryHit = newVal;
+        if (!IsLoaded || _loadingState || _restoringHitCount) return;
         _dirty = true;
-        RefreshHitCountPresentation();
     }
 
-    private void RefreshHitCountPresentation(bool resetEditor = false)
+    private void RefreshHitCountPresentation()
     {
-        var primary = CurrentPrimaryHit;
-        var secondary = CurrentSecondaryHit;
-        var limit = CraftDecisions.GetHitCountLimit(CurrentMode);
-        HitCountSummary.Text = $"自定义命中 · 主 {primary}＋次 {secondary}" + (limit is { } maximum ? $" · 最多 {maximum}" : "");
-        if (resetEditor)
-            HitCountEditor.IsExpanded = CurrentMode != CraftMode.Single || primary != 1 || secondary != 0;
-        if (!CraftDecisions.IsHitCountSelectionValid(CurrentMode, primary, secondary))
-        {
-            HitCountEditor.IsExpanded = true;
-            ShowHitCountWarning($"当前主 {primary}＋次 {secondary}，合计 {primary + secondary}；此模式最多 {limit}。调整后才能启动。");
-        }
-        else
-        {
-            HitCountWarning.Visibility = Visibility.Collapsed;
-            HitCountWarningText.Text = "";
-        }
+        var single = CurrentMode == CraftMode.Single;
+        SingleHitHint.Visibility = single ? Visibility.Visible : Visibility.Collapsed;
+        HitCountControls.Visibility = single ? Visibility.Collapsed : Visibility.Visible;
+        SecondaryPoolSection.Visibility = single ? Visibility.Collapsed : Visibility.Visible;
     }
-
-    private void ShowHitCountWarning(string message)
-    {
-        HitCountWarningText.Text = message;
-        HitCountWarning.Visibility = Visibility.Visible;
-        HitCountWarning.BringIntoView();
-    }
-
-    private static string GroupNameOf(RadioButton r) => r.GroupName;
 
     private int CurrentPrimaryHit
     {
         get
         {
+            if (CurrentMode == CraftMode.Single) return 1;
             foreach (var r in new[] { PrimaryHit0, PrimaryHit1, PrimaryHit2, PrimaryHit3 })
                 if (r.IsChecked == true) return int.Parse((string)r.Tag);
             return 0;
@@ -536,6 +482,7 @@ public partial class CraftPage : UserControl
     {
         get
         {
+            if (CurrentMode == CraftMode.Single) return 0;
             foreach (var r in new[] { SecondaryHit0, SecondaryHit1, SecondaryHit2, SecondaryHit3 })
                 if (r.IsChecked == true) return int.Parse((string)r.Tag);
             return 0;
@@ -549,7 +496,7 @@ public partial class CraftPage : UserControl
         if (!IsLoaded || _loadingState) return;
         _tool.Rules.Mode = CurrentModeFromRadio();
         ApplyModeVisibility();
-        RefreshHitCountPresentation(resetEditor: true);
+        RefreshHitCountPresentation();
         _dirty = true;
     }
 
@@ -608,7 +555,7 @@ public partial class CraftPage : UserControl
         // 未保存修改确认（Python _on_preset_selected）
         if (_dirty)
         {
-            var reply = MessageBox.Show("当前词缀尚未保存，切换预设将丢失现有词缀。是否继续？",
+            var reply = ThemedMessageBox.Show("当前词缀尚未保存，切换预设将丢失现有词缀。是否继续？",
                 "未保存修改", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (reply != MessageBoxResult.Yes)
             {
@@ -634,7 +581,7 @@ public partial class CraftPage : UserControl
         }
         else
         {
-            MessageBox.Show(Window.GetWindow(this), $"预设「{name}」已不存在，当前词缀设置保留。",
+            ThemedMessageBox.Show(Window.GetWindow(this), $"预设「{name}」已不存在，当前词缀设置保留。",
                 "预设不存在", MessageBoxButton.OK, MessageBoxImage.Information);
             RefreshPresetCombo();
         }
@@ -682,14 +629,12 @@ public partial class CraftPage : UserControl
         {
             SetHitRadio(PrimaryHit0, PrimaryHit1, PrimaryHit2, PrimaryHit3, primaryHitCount);
             SetHitRadio(SecondaryHit0, SecondaryHit1, SecondaryHit2, SecondaryHit3, secondaryHitCount);
-            _previousPrimaryHit = CurrentPrimaryHit;
-            _previousSecondaryHit = CurrentSecondaryHit;
         }
         finally
         {
             _restoringHitCount = false;
         }
-        if (!_loadingState) RefreshHitCountPresentation(resetEditor: true);
+        if (!_loadingState) RefreshHitCountPresentation();
     }
 
     private void SavePresetButton_Click(object sender, RoutedEventArgs e)
@@ -704,15 +649,15 @@ public partial class CraftPage : UserControl
         if (!StorageService.TryValidatePresetName(name, out var validationError))
         {
             if (owner is not null)
-                MessageBox.Show(owner, validationError, "预设名称无效", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ThemedMessageBox.Show(owner, validationError, "预设名称无效", MessageBoxButton.OK, MessageBoxImage.Warning);
             else
-                MessageBox.Show(validationError, "预设名称无效", MessageBoxButton.OK, MessageBoxImage.Warning);
+                ThemedMessageBox.Show(validationError, "预设名称无效", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
         if (_host.Storage.ListPresets().Contains(name, StringComparer.OrdinalIgnoreCase))
         {
-            var reply = MessageBox.Show($"已存在同名预设「{name}」，是否覆盖？",
+            var reply = ThemedMessageBox.Show($"已存在同名预设「{name}」，是否覆盖？",
                 "覆盖确认", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (reply != MessageBoxResult.Yes) return;
         }
@@ -735,7 +680,7 @@ public partial class CraftPage : UserControl
     {
         if (PresetCombo.SelectedItem is not string name || name == "无") return;
         var owner = Window.GetWindow(this);
-        var reply = MessageBox.Show(owner, $"确定删除预设「{name}」？\n\n当前词缀设置会保留。",
+        var reply = ThemedMessageBox.Show(owner, $"确定删除预设「{name}」？\n\n当前词缀设置会保留。",
             "删除预设", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
         if (reply != MessageBoxResult.Yes) return;
         try
@@ -839,7 +784,7 @@ public partial class CraftPage : UserControl
             foreach (var r in _tool.Rules.ExcludeAffixes) AddAffixTag("exclude", r.Text);
         }
         finally { _loadingState = false; }
-        RefreshHitCountPresentation(resetEditor: true);
+        RefreshHitCountPresentation();
         _dirty = false;
     }
 }

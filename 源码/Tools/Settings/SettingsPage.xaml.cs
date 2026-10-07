@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -433,9 +433,9 @@ public partial class SettingsPage : UserControl
     {
         var owner = Window.GetWindow(this);
         if (owner is null)
-            MessageBox.Show(message, "设置未生效", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(message, "设置未生效", MessageBoxButton.OK, MessageBoxImage.Warning);
         else
-            MessageBox.Show(owner, message, "设置未生效", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(owner, message, "设置未生效", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private static Key ResolveKey(KeyEventArgs e) => e.Key switch

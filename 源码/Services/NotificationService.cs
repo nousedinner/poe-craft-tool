@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Threading;
 
 namespace ShiKe.Services;
@@ -26,6 +27,7 @@ public sealed class NotificationService : IDisposable
     private const int GWL_EXSTYLE = -20;
     private const int WS_EX_TRANSPARENT = 0x00000020;
     private const int WS_EX_TOOLWINDOW = 0x00000080;
+    private const int WS_EX_NOACTIVATE = 0x08000000;
     private const uint MB_OK = 0x00000000;
     private const uint MB_ICONERROR = 0x00000010;
     private const uint MB_TASKMODAL = 0x00002000;
@@ -45,22 +47,34 @@ public sealed class NotificationService : IDisposable
         if (_overlay is not null) return;
         _label = new TextBlock
         {
-            Foreground = Brushes.White,
-            FontSize = 18,
-            FontWeight = FontWeights.Bold,
+            Foreground = PromptPalette.Ink,
+            FontSize = 17,
+            FontWeight = FontWeights.SemiBold,
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0),
+            MaxWidth = Math.Max(180, Math.Min(440, SystemParameters.WorkArea.Width - 90)),
         };
+
+        var content = new StackPanel();
+        content.Children.Add(new TextBlock
+        {
+            Text = "拾刻提醒", Foreground = PromptPalette.Brush("#708898"), FontSize = 11,
+            TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 0, 0, 7),
+        });
+        content.Children.Add(_label);
 
         var container = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(217, 30, 42, 58)),
+            Background = PromptPalette.CreateSurface(),
             CornerRadius = new CornerRadius(16),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255)),
+            BorderBrush = PromptPalette.Brush("#CCDDE7"),
             BorderThickness = new Thickness(1),
-            Padding = new Thickness(32, 18, 32, 18),
-            Child = _label,
+            Padding = new Thickness(24, 18, 24, 18),
+            Margin = new Thickness(8),
+            MinWidth = 230,
+            Effect = new DropShadowEffect { Color = Color.FromRgb(71, 103, 126), BlurRadius = 12, ShadowDepth = 2, Opacity = .15 },
+            Child = content,
         };
 
         _overlay = new Window
@@ -80,7 +94,7 @@ public sealed class NotificationService : IDisposable
         {
             var hwnd = new WindowInteropHelper(_overlay).Handle;
             var exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW);
+            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
         };
         _overlay.Closed += (_, _) => _overlayClosed = true;
 
@@ -92,9 +106,9 @@ public sealed class NotificationService : IDisposable
     public static void ShowConfigurationError(string message, Window? owner = null)
     {
         if (owner is { IsVisible: true })
-            MessageBox.Show(owner, message, "配置文件错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(owner, message, "配置文件错误", MessageBoxButton.OK, MessageBoxImage.Warning);
         else
-            MessageBox.Show(message, "配置文件错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(message, "配置文件错误", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     /// <summary>显示浮层通知（新消息覆盖旧消息，2s 自动消失）。</summary>
@@ -110,6 +124,7 @@ public sealed class NotificationService : IDisposable
         _label!.Text = message;
         // 始终重新显示（覆盖旧通知或从隐藏状态恢复）
         _overlay!.Show();
+        _overlay.UpdateLayout();
         var work = SystemParameters.WorkArea;
         _overlay.Left = work.Left + (work.Width - _overlay.ActualWidth) / 2;
         _overlay.Top = work.Top + (work.Height - _overlay.ActualHeight) / 2;
@@ -130,6 +145,11 @@ public sealed class NotificationService : IDisposable
         _errorShown = true;
         try
         {
+            ThemedMessageBox.ShowRuntimeError(message);
+        }
+        catch (Exception error)
+        {
+            Diag.Log($"[通知] 淡彩错误窗口失败，回退系统置顶提示: {error.Message}");
             var result = MessageBoxW(0, message, "拾刻 - 错误",
                 MB_OK | MB_ICONERROR | MB_TASKMODAL | MB_SETFOREGROUND | MB_TOPMOST);
             if (result == 0)

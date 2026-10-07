@@ -1,4 +1,4 @@
-using ShiKe.Tools.Craft;
+﻿using ShiKe.Tools.Craft;
 using ShiKe.Tools.Clicker;
 using ShiKe.Tools.KeyLoop;
 using ShiKe.Services;
@@ -26,7 +26,7 @@ var tests = new (string Name, Action Run)[]
     ("魔法名称与显式正文不会重复计算同一词缀", MagicNameDoesNotDuplicateExplicitAffix),
     ("同一候选不能同时计入主次池", OneCandidateCannotSatisfyPrimaryAndSecondary),
     ("三个词缀池禁止重复规则", DuplicateRuleAcrossPoolsIsRejected),
-    ("未知模式与负命中数拒绝运行且保留零命中语义", CraftRejectsInvalidRuleBounds),
+    ("未知模式与负数量拒绝且单通货要求目标", CraftRejectsInvalidRuleBounds),
     ("旧设置迁移保留原始备份", LegacySettingsMigrationKeepsOriginalBackup),
     ("仅 Hideout 分节不会被误迁移", HideoutOnlySectionIsRecognized),
     ("分节更新不会丢失其他设置", SectionUpdatePreservesOtherSections),
@@ -55,7 +55,7 @@ var tests = new (string Name, Action Run)[]
     ("Mode3 增幅达标后必须进入富豪", Mode3AugmentationAlwaysProceedsToRegal),
     ("Mode3 启动稀有度判定矩阵", Mode3StartDecisionMatrix),
     ("Mode3 只记录两词缀未达阈值样本", Mode3DiagnosticCapturePolicy),
-    ("非法命中数恢复上一次合法选择", InvalidHitCountRestoresPreviousSelection),
+    ("单通货旧数量统一为主1次0且保留排除规则", SingleCurrencyUsesOnePrimaryHit),
     ("剪贴板只接受合法物品文本头", ClipboardItemHeaderValidation),
     ("输入层点击间隔计算", CraftClickIntervalSemantics),
     ("连点器左上角安全区判定", ClickerTopLeftSafetyZone),
@@ -109,8 +109,9 @@ var tests = new (string Name, Action Run)[]
     ("Clicker 常驻任务可暂停停止并关闭", ClickerEngineLifecycleIsSafe),
     ("KeyLoop 独立槽位可暂停停止并关闭", KeyLoopEngineLifecycleIsSafe),
     ("Craft 运行配置使用深拷贝快照", CraftRulesSnapshotIsIndependent),
+    ("淡彩弹窗保持按钮、模态、长文与自动消失行为", PromptChecks.Run),
     ("T11 实际窗口布局、切页保存与渐变生命周期", AppearanceChecks.Run),
-    ("模式切换超限可逐步修正且保持启动校验", InheritedHitCountsCanBeReduced),
+    ("Mode2/3 任意编辑后启动校验上限", MultiCurrencyLimitsAreCheckedAtStart),
 };
 
 var failed = 0;
@@ -214,7 +215,7 @@ static void RealMode3RareBowMatchesTwoPrimaryOneSecondary()
     Equal(ItemRarity.Rare, parsed.Rarity, "实机样本稀有度应为稀有");
     Equal(4, parsed.ExplicitAffixCount, "实机样本应有三前缀一后缀");
 
-    var rules = new CraftRules { PrimaryHitCount = 2, SecondaryHitCount = 1 };
+    var rules = new CraftRules { Mode = CraftMode.AltAugRegal, PrimaryHitCount = 2, SecondaryHitCount = 1 };
     foreach (var rule in new[] { "无情", "独裁", "迸出", "晶化", "汽化", "焦化", "基础物理", "基础火", "基础电" })
         rules.PrimaryAffixes.Add(new AffixRule { Text = rule });
     foreach (var rule in new[] { "速度", "暴", "命中", "敏捷" })
@@ -320,7 +321,7 @@ static void CraftRejectsInvalidRuleBounds()
     foreach (var mode in new[] { CraftMode.Single, CraftMode.AltAug, CraftMode.AltAugRegal })
     {
         var rules = new CraftRules { Mode = mode, PrimaryHitCount = 0, SecondaryHitCount = 0 };
-        True(rules.Validate().Ok, "既定零命中规则必须保持合法");
+        Equal(mode != CraftMode.Single, rules.Validate().Ok, "只有多通货模式保留零命中，单通货必须有主池目标");
         rules.PrimaryHitCount = -1;
         False(rules.Validate().Ok, "负主命中数不得放宽规则");
         rules.PrimaryHitCount = 0;
@@ -942,44 +943,38 @@ static void Mode3DiagnosticCapturePolicy()
         "排除词缀已有明确继续原因，不属于疑似漏判");
 }
 
-static void InvalidHitCountRestoresPreviousSelection()
+static void SingleCurrencyUsesOnePrimaryHit()
 {
-    Equal(2, CraftDecisions.ResolveHitCountSelection(CraftMode.AltAug, 2, 3, 0),
-        "Mode2 非法选择 3 时应恢复上一次合法值 2");
-    Equal(1, CraftDecisions.ResolveHitCountSelection(CraftMode.AltAugRegal, 1, 2, 2),
-        "Mode3 总数超过 3 时应恢复当前池上一次合法值");
-    Equal(2, CraftDecisions.ResolveHitCountSelection(CraftMode.AltAugRegal, 1, 2, 1),
-        "Mode3 总数等于 3 时应接受新选择");
-    Equal(3, CraftDecisions.ResolveHitCountSelection(CraftMode.Single, 1, 3, 3),
-        "Mode1 不应套用 Mode2/3 总命中数限制");
+    foreach (var (primary, secondary) in new[] { (0, 2), (3, 3), (1, 0) })
+    {
+        var rules = Rules("生命");
+        rules.PrimaryHitCount = primary; rules.SecondaryHitCount = secondary;
+        rules.SecondaryAffixes.Add(new AffixRule { Text = "抗性" });
+        True(rules.Validate().Ok, "旧单通货数量不能改变新的一命中规则");
+        var snapshot = rules.CreateSnapshot();
+        Equal(1, snapshot.PrimaryHitCount, "实际执行快照必须固定主1");
+        Equal(0, snapshot.SecondaryHitCount, "实际执行快照必须固定次0");
+        True(new AffixCheckResult { PrimaryHits = 1 }.MeetsFinalRules(rules), "主池任意一条应成功");
+        False(new AffixCheckResult { PrimaryHits = 0, SecondaryHits = 2 }.MeetsFinalRules(rules), "次池不能代替主池目标");
+        False(new AffixCheckResult { PrimaryHits = 1, HasExclude = true }.MeetsFinalRules(rules), "排除仍必须使终检失败");
+    }
 }
 
-static void InheritedHitCountsCanBeReduced()
+static void MultiCurrencyLimitsAreCheckedAtStart()
 {
-    var defaults = new CraftRules();
-    Equal(1, defaults.PrimaryHitCount, "单通货默认主命中保持 1");
-    Equal(0, defaults.SecondaryHitCount, "单通货默认次命中保持 0");
-    var rules = new CraftRules { PrimaryHitCount = 3, SecondaryHitCount = 3 };
+    var rules = new CraftRules();
     foreach (var text in new[] { "生命", "护甲", "闪避" }) rules.PrimaryAffixes.Add(new AffixRule { Text = text });
     foreach (var text in new[] { "火抗", "冰抗", "电抗" }) rules.SecondaryAffixes.Add(new AffixRule { Text = text });
-    True(rules.Validate().Ok, "单通货高级需求应继续兼容旧规则");
     foreach (var mode in new[] { CraftMode.AltAug, CraftMode.AltAugRegal })
     {
         rules.Mode = mode;
-        rules.PrimaryHitCount = 3;
-        rules.SecondaryHitCount = 3;
-        False(rules.Validate().Ok, "继承 3+3 不能绕过启动校验");
-        rules.PrimaryHitCount = CraftDecisions.ResolveHitCountSelection(mode, 3, 1, 3);
-        Equal(1, rules.PrimaryHitCount, "超限状态必须允许先减少其中一个池");
-        False(rules.Validate().Ok, "尚未降到上限仍不能启动");
-        Equal(1, CraftDecisions.ResolveHitCountSelection(mode, 1, 2, 3), "超限状态不能增加需求");
-        rules.SecondaryHitCount = CraftDecisions.ResolveHitCountSelection(mode, 3, 1, 1);
-        True(rules.Validate().Ok, "逐步改为 1+1 后应能正常通过校验");
+        rules.PrimaryHitCount = 3; rules.SecondaryHitCount = 3;
+        False(rules.Validate().Ok, "3+3 必须在启动校验拒绝");
+        rules.PrimaryHitCount = 1; rules.SecondaryHitCount = 1;
+        True(rules.Validate().Ok, "1+1 仍能通过原启动校验");
+        rules.PrimaryHitCount = 3; rules.SecondaryHitCount = 0;
+        Equal(mode == CraftMode.AltAugRegal, rules.Validate().Ok, "Mode2 上限2、Mode3 上限3保持");
     }
-    rules.Mode = CraftMode.AltAugRegal;
-    rules.PrimaryHitCount = 3;
-    rules.SecondaryHitCount = 0;
-    True(rules.Validate().Ok, "Mode3 的 3+0 合法契约必须保留");
 }
 
 static void ClipboardItemHeaderValidation()

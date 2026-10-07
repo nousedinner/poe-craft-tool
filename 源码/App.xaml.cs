@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
 using ShiKe.Host;
@@ -51,7 +51,7 @@ public partial class App : Application
 
         if (!TryAcquireSingleInstance())
         {
-            MessageBox.Show(
+            ThemedMessageBox.Show(
                 "拾刻已经在运行。\n\n请从系统托盘打开现有窗口；本次启动将退出。",
                 "拾刻已在运行", MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown();
@@ -204,7 +204,7 @@ public partial class App : Application
         var conflicts = _host.Hotkeys.RegisterAll(_host.BuildHotkeyRequests());
         if (conflicts.Count > 0)
         {
-            MessageBox.Show("检测到热键冲突：\n\n" + string.Join("\n", conflicts),
+            ThemedMessageBox.Show("检测到热键冲突：\n\n" + string.Join("\n", conflicts),
                 "热键冲突", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
@@ -301,10 +301,10 @@ public partial class App : Application
 
     private void ShowUpdateDialog(VersionCheckResult ver)
     {
-        MessageBox.Show($"检测到新版本，请下载更新后使用。\n\n最新版本: {ver.Latest}",
+        ThemedMessageBox.Show($"检测到新版本，请下载更新后使用。\n\n最新版本: {ver.Latest}",
             "发现新版本", MessageBoxButton.OK, MessageBoxImage.Warning);
         if (!BrowserLauncher.TryOpen(ver.DownloadUrl, out var error))
-            MessageBox.Show(_mainWindow!, $"{error}\n\n请手动访问下载地址：\n{ver.DownloadUrl}",
+            ThemedMessageBox.Show(_mainWindow!, $"{error}\n\n请手动访问下载地址：\n{ver.DownloadUrl}",
                 "无法打开下载页面", MessageBoxButton.OK, MessageBoxImage.Warning);
         RequestShutdown();
     }

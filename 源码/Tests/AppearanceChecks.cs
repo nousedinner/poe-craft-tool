@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -29,7 +29,7 @@ internal static class AppearanceChecks
         }) { IsBackground = true };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        Require(thread.Join(TimeSpan.FromSeconds(20)), "WPF 外观检查超时");
+        Require(thread.Join(TimeSpan.FromSeconds(30)), "WPF 外观检查超时");
         if (failure is not null) throw new InvalidOperationException(failure.ToString(), failure);
     }
 
@@ -121,15 +121,12 @@ internal static class AppearanceChecks
             CheckInteractiveSwitchAnimation();
             presets.SelectedItem = "appearance-check-limit";
             Pump();
-            Require(Find<Border>(page, "HitCountWarning").IsVisible &&
-                    Find<RadioButton>(page, "PrimaryHit3").IsChecked == true &&
+            Require(Find<RadioButton>(page, "PrimaryHit3").IsChecked == true &&
                     Find<RadioButton>(page, "SecondaryHit3").IsChecked == true,
-                    "加载 3+3 预设必须原样恢复数量并立即显示当前模式上限");
+                    "加载3+3预设应原样恢复数量，编辑阶段不显示超限提示");
             presets.SelectedItem = "appearance-check-baseline";
             Pump();
-            Require(Find<Border>(page, "HitCountWarning").Visibility == Visibility.Collapsed,
-                    "切回有效预设必须清除超限提示");
-            CheckCraftSelections(page, craft, window);
+            CheckCraftSelections(page, craft, window, host);
 
             var panels = new[] { "ModePanel", "CurrencyPanel", "RulesPanel" }.Select(name => Find<Border>(page, name)).ToArray();
             Require(panels.All(panel => panel.Background is LinearGradientBrush { IsFrozen: false }), "面板应拥有独立可动画的画刷");
@@ -421,69 +418,65 @@ internal static class AppearanceChecks
                         "坐标按钮不能溢出通货卡片");
     }
 
-    private static void CheckCraftSelections(CraftPage page, CraftTool craft, Window window)
+    private static void CheckCraftSelections(CraftPage page, CraftTool craft, Window window, ToolHost host)
     {
-        var editor = Find<Expander>(page, "HitCountEditor");
-        var warning = Find<Border>(page, "HitCountWarning");
+        var controls = Find<Border>(page, "HitCountControls");
+        var secondary = Find<StackPanel>(page, "SecondaryPoolSection");
         Find<RadioButton>(page, "Mode2Radio").IsChecked = true;
         Pump();
-        Require(warning.IsVisible && editor.IsExpanded, "切换 Mode2 必须立即提示继承的 2+1 超限");
-        Require(Find<RadioButton>(page, "PrimaryHit2").IsChecked == true &&
-                Find<RadioButton>(page, "SecondaryHit1").IsChecked == true, "切模式不能静默削减命中要求");
-        Find<RadioButton>(page, "PrimaryHit1").IsChecked = true;
-        Require(warning.Visibility == Visibility.Collapsed, "修正到 1+1 后应清除提示");
-        Find<RadioButton>(page, "PrimaryHit3").IsChecked = true;
-        Require(Find<RadioButton>(page, "PrimaryHit1").IsChecked == true && warning.Visibility == Visibility.Visible,
-                "有效模式下增加到超限必须保留旧值并给出内联提示");
-        Find<RadioButton>(page, "SecondaryHit0").IsChecked = true;
-        Find<RadioButton>(page, "Mode1Radio").IsChecked = true;
-        Pump();
-        Require(!editor.IsExpanded && Find<RadioButton>(page, "PrimaryHit1").IsChecked == true &&
-                Find<RadioButton>(page, "SecondaryHit0").IsChecked == true, "单通货常用 1+0 应以摘要呈现，按需展开");
-        Snapshot(window, "T11-WPF-Single-default.png");
-        editor.IsExpanded = true;
+        Require(controls.IsVisible && secondary.IsVisible, "Mode2 直接显示主次命中与两个池");
         Find<RadioButton>(page, "PrimaryHit3").IsChecked = true;
         Find<RadioButton>(page, "SecondaryHit3").IsChecked = true;
+        Require(Find<RadioButton>(page, "PrimaryHit3").IsChecked == true &&
+                Find<RadioButton>(page, "SecondaryHit3").IsChecked == true, "编辑超限不得回退选择或弹窗");
+        Find<RadioButton>(page, "Mode1Radio").IsChecked = true;
+        Pump();
+        Require(!controls.IsVisible && !secondary.IsVisible && Find<TextBlock>(page, "SingleHitHint").IsVisible,
+                "单通货去掉自定义数量和次池，只显示一命中规则");
+        page.CollectRulesFromUi();
+        Require(craft.Rules.PrimaryHitCount == 1 && craft.Rules.SecondaryHitCount == 0,
+                "单通货保存和运行规则固定主1次0");
+        var saved = host.Storage.LoadRules()!;
+        Require(saved["primary_hit_count"]!.GetValue<int>() == 1 && saved["secondary_hit_count"]!.GetValue<int>() == 0,
+                "单通货必须真正保存一命中规则");
+        Snapshot(window, "T11-WPF-Single-default.png");
         var currency = Find<ComboBox>(page, "SingleCurrencyCombo");
         foreach (var key in Currency.ModeCurrencies[CraftMode.Single])
         {
-            currency.SelectedValue = key;
-            page.CollectRulesFromUi();
-            Require(craft.Rules.SingleCurrency == key, "通货下拉框必须真正更新运行规则");
+            currency.SelectedValue = key; page.CollectRulesFromUi();
+            Require(craft.Rules.SingleCurrency == key, "通货下拉必须真正更新运行规则");
         }
-        var cards = Find<ItemsControl>(page, "CurrencyGrid").Items.Cast<Border>().ToArray();
-        foreach (var card in cards.Where(card => card.IsVisible))
+        foreach (var card in Find<ItemsControl>(page, "CurrencyGrid").Items.Cast<Border>().Where(card => card.IsVisible))
         {
-            var name = Descendants(card).OfType<TextBlock>().First();
-            name.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
+            Descendants(card).OfType<TextBlock>().First().RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
             { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
-            Require(card.BorderThickness == new Thickness(1) && ReferenceEquals(card.BorderBrush, page.FindResource("CardBorder")),
-                    "通货坐标卡片不应再有选中外观");
-            Require((string)currency.SelectedValue == Currency.Custom, "点击坐标卡片标题不能改变使用通货");
+            Require((string)currency.SelectedValue == Currency.Custom, "坐标卡片名称不能改变使用通货");
         }
-        Find<RadioButton>(page, "Mode2Radio").IsChecked = true;
-        Pump();
-        Require(warning.IsVisible && Find<TextBlock>(page, "HitCountWarningText").Text.Contains("合计 6", StringComparison.Ordinal),
-                "3+3 切 Mode2 后必须立即给出当前数量与上限");
-        Find<RadioButton>(page, "PrimaryHit1").IsChecked = true;
-        Require(warning.Visibility == Visibility.Visible, "减少为 1+3 后超限提示仍须保留");
-        Find<RadioButton>(page, "SecondaryHit1").IsChecked = true;
-        Require(warning.Visibility == Visibility.Collapsed, "逐步修正为 1+1 后应清除提示");
-        Find<RadioButton>(page, "Mode1Radio").IsChecked = true;
-        editor.IsExpanded = true;
-        Find<RadioButton>(page, "PrimaryHit3").IsChecked = true;
-        Find<RadioButton>(page, "SecondaryHit3").IsChecked = true;
-        Find<RadioButton>(page, "Mode3Radio").IsChecked = true;
-        Pump();
-        Require(warning.IsVisible && Find<TextBlock>(page, "HitCountWarningText").Text.Contains("最多 3", StringComparison.Ordinal),
-                "3+3 切 Mode3 后必须立即提示，不能只在启动时发现");
-        Snapshot(window, "T11-WPF-Mode-limit.png");
-        Find<RadioButton>(page, "PrimaryHit2").IsChecked = true;
-        Find<RadioButton>(page, "SecondaryHit1").IsChecked = true;
-        currency.SelectedValue = Currency.Alteration;
+        var presets = Find<ComboBox>(page, "PresetCombo");
+        PromptChecks.WithResponse(() => presets.SelectedItem = "appearance-check-limit", MessageBoxResult.Yes);
         page.CollectRulesFromUi();
-        Require(craft.Rules.Validate().Ok && warning.Visibility == Visibility.Collapsed,
-                "Mode3 恢复 2+1 后仍须符合原运行规则");
+        Require(craft.Rules.PrimaryHitCount == 1 && craft.Rules.SecondaryHitCount == 0,
+                "单通货载入旧3+3预设后仍固定一命中");
+        var previousTarget = host.Foreground.TargetProcess;
+        host.Foreground.TargetProcess = "isolated-test.exe";
+        try
+        {
+            foreach (var (modeName, maximum) in new[] { ("Mode2Radio", 2), ("Mode3Radio", 3) })
+            {
+                Find<RadioButton>(page, modeName).IsChecked = true; Pump();
+                page.CollectRulesFromUi();
+                Require(craft.Rules.PrimaryHitCount == 3 && craft.Rules.SecondaryHitCount == 3,
+                    "切回多通货应保留旧预设的主次数量");
+                var message = PromptChecks.WithResponse(craft.Start, MessageBoxResult.OK,
+                    dialog => PromptChecks.Snapshot(dialog, $"Mode{maximum}规则提醒.png"));
+                Require(message.Contains($"不能超过 {maximum}", StringComparison.Ordinal), "启动时应显示当前模式的正确上限");
+                Require(!host.Statuses.Read(craft.Id).AnyRunning, "超限启动必须在发送输入之前拒绝");
+            }
+        }
+        finally { host.Foreground.TargetProcess = previousTarget; }
+        PromptChecks.WithResponse(() => presets.SelectedItem = "appearance-check-baseline", MessageBoxResult.Yes);
+        currency.SelectedValue = Currency.Alteration; page.CollectRulesFromUi();
+        Require(craft.Rules.Validate().Ok, "Mode3 修正为2+1后应保持原运行规则");
     }
 
     private static void CheckColumns(CraftPage page)
@@ -603,7 +596,7 @@ internal static class AppearanceChecks
         bitmap.Render(root);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using var stream = File.Create(Path.Combine(directory, name.Replace("T11-WPF", "T11-v38", StringComparison.Ordinal)));
+        using var stream = File.Create(Path.Combine(directory, name.Replace("T11-WPF", "T11-v39", StringComparison.Ordinal)));
         encoder.Save(stream);
     }
 

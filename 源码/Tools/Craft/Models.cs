@@ -143,35 +143,12 @@ public enum Mode3StartDecision
 
 public static class CraftDecisions
 {
-    public static int? GetHitCountLimit(CraftMode mode) => mode switch
-    {
-        CraftMode.AltAug => 2,
-        CraftMode.AltAugRegal => 3,
-        _ => null,
-    };
-
     /// <summary>
     /// Mode 3 改造得到两条显式词缀但未达到魔法阶段阈值时，记录完整样本用于排查漏识别。
     /// 该策略只影响诊断文件，不改变下一步通货判定。
     /// </summary>
     public static bool ShouldCaptureMode3Miss(int explicitAffixCount, int hits, int threshold, bool hasExclude)
         => !hasExclude && explicitAffixCount >= 2 && hits < threshold;
-
-    /// <summary>命中数按钮的模式上限；Single 模式没有总数限制。</summary>
-    public static bool IsHitCountSelectionValid(CraftMode mode, int primaryHitCount, int secondaryHitCount)
-    {
-        var total = primaryHitCount + secondaryHitCount;
-        return GetHitCountLimit(mode) is not { } limit || total <= limit;
-    }
-
-    /// <summary>超限增加恢复原值；切模式继承超限总数时允许逐步调低，不改写启动约束。</summary>
-    public static int ResolveHitCountSelection(CraftMode mode, int previousValue, int proposedValue, int otherValue)
-        => IsHitCountSelectionValid(
-            mode,
-            primaryHitCount: proposedValue,
-            secondaryHitCount: otherValue)
-            ? proposedValue
-            : proposedValue < previousValue ? proposedValue : previousValue;
 
     /// <summary>Mode 3 每次启动都先确认底材状态；蓝/黄装先重铸，其他未知状态拒绝盲点。</summary>
     public static Mode3StartDecision BeforeMode3(ItemRarity rarity) => rarity switch
@@ -220,6 +197,10 @@ public sealed class CraftRules
 
     public List<AffixRule> ExcludeAffixes { get; } = [];
 
+    // 旧规则/预设的数量仍可读取；单通货的校验、执行和保存使用同一固定需求。
+    public int RequiredPrimaryHits => Mode == CraftMode.Single ? 1 : PrimaryHitCount;
+    public int RequiredSecondaryHits => Mode == CraftMode.Single ? 0 : SecondaryHitCount;
+
     /// <summary>创建一次洗装运行使用的深拷贝，避免 UI 修改正在执行的规则。</summary>
     public CraftRules CreateSnapshot()
     {
@@ -227,8 +208,8 @@ public sealed class CraftRules
         {
             Mode = Mode,
             SingleCurrency = SingleCurrency,
-            PrimaryHitCount = PrimaryHitCount,
-            SecondaryHitCount = SecondaryHitCount,
+            PrimaryHitCount = RequiredPrimaryHits,
+            SecondaryHitCount = RequiredSecondaryHits,
         };
         snapshot.PrimaryAffixes.AddRange(PrimaryAffixes.Select(rule => new AffixRule { Text = rule.Text }));
         snapshot.SecondaryAffixes.AddRange(SecondaryAffixes.Select(rule => new AffixRule { Text = rule.Text }));
@@ -236,7 +217,7 @@ public sealed class CraftRules
         return snapshot;
     }
 
-    /// <summary>验证规则约束（对齐 Python validate；primary_hit_count=0 合法，方案 D5）。</summary>
+    /// <summary>启动校验；单通货固定主1次0，Mode2/3 保留各池零命中和原总数上限。</summary>
     public (bool Ok, string Message) Validate()
     {
         if (!Enum.IsDefined(Mode))
@@ -261,14 +242,14 @@ public sealed class CraftRules
             }
         }
 
-        if (PrimaryHitCount > 0 && PrimaryAffixes.Count == 0)
-            return (false, $"主词缀命中数要求 {PrimaryHitCount}，但主词缀池为空");
-        if (PrimaryHitCount > PrimaryAffixes.Count)
-            return (false, $"主词缀命中数 {PrimaryHitCount} 超过主词缀池数量 {PrimaryAffixes.Count}");
-        if (SecondaryHitCount > 0 && SecondaryAffixes.Count == 0)
-            return (false, $"次级词缀命中数要求 {SecondaryHitCount}，但次级词缀池为空");
-        if (SecondaryHitCount > SecondaryAffixes.Count)
-            return (false, $"次级词缀命中数 {SecondaryHitCount} 超过次级词缀池数量 {SecondaryAffixes.Count}");
+        if (RequiredPrimaryHits > 0 && PrimaryAffixes.Count == 0)
+            return (false, $"主词缀命中数要求 {RequiredPrimaryHits}，但主词缀池为空");
+        if (RequiredPrimaryHits > PrimaryAffixes.Count)
+            return (false, $"主词缀命中数 {RequiredPrimaryHits} 超过主词缀池数量 {PrimaryAffixes.Count}");
+        if (RequiredSecondaryHits > 0 && SecondaryAffixes.Count == 0)
+            return (false, $"次级词缀命中数要求 {RequiredSecondaryHits}，但次级词缀池为空");
+        if (RequiredSecondaryHits > SecondaryAffixes.Count)
+            return (false, $"次级词缀命中数 {RequiredSecondaryHits} 超过次级词缀池数量 {SecondaryAffixes.Count}");
 
         var total = PrimaryHitCount + SecondaryHitCount;
         if (Mode == CraftMode.AltAug && total > 2)
@@ -298,8 +279,8 @@ public sealed class AffixCheckResult
     public bool MeetsFinalRules(CraftRules rules)
     {
         if (HasExclude) return false;
-        if (PrimaryHits < rules.PrimaryHitCount) return false;
-        if (SecondaryHits < rules.SecondaryHitCount) return false;
+        if (PrimaryHits < rules.RequiredPrimaryHits) return false;
+        if (SecondaryHits < rules.RequiredSecondaryHits) return false;
         return true;
     }
 

@@ -175,9 +175,9 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
             ["mode"] = (int)Rules.Mode,
             ["single_currency"] = Rules.SingleCurrency,
             ["primary_affixes"] = new JsonArray(Rules.PrimaryAffixes.Select(a => (JsonNode)a.Text).ToArray()),
-            ["primary_hit_count"] = Rules.PrimaryHitCount,
+            ["primary_hit_count"] = Rules.RequiredPrimaryHits,
             ["secondary_affixes"] = new JsonArray(Rules.SecondaryAffixes.Select(a => (JsonNode)a.Text).ToArray()),
-            ["secondary_hit_count"] = Rules.SecondaryHitCount,
+            ["secondary_hit_count"] = Rules.RequiredSecondaryHits,
             ["exclude_affixes"] = new JsonArray(Rules.ExcludeAffixes.Select(a => (JsonNode)a.Text).ToArray()),
         };
         _host.Storage.SaveRules(obj);

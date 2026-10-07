@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -66,9 +66,9 @@ public partial class ClickerPage : UserControl
         RefreshEnabledPresentation();
         var owner = Window.GetWindow(this);
         if (owner is null)
-            MessageBox.Show(result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
         else
-            MessageBox.Show(owner, result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(owner, result.Message, "无法修改启用状态", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private void MouseButton_Checked(object sender, RoutedEventArgs e)

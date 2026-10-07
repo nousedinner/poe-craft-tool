@@ -1,0 +1,52 @@
+<Window x:Class="ShiKe.Services.MessageDialog" x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True"
+        Background="Transparent" ShowInTaskbar="False" SizeToContent="Height" Width="460">
+    <Window.Resources>
+        <Style x:Key="PromptButton" TargetType="Button">
+            <Setter Property="MinWidth" Value="78"/><Setter Property="Height" Value="34"/>
+            <Setter Property="Padding" Value="16,6"/><Setter Property="Margin" Value="8,0,0,0"/>
+            <Setter Property="Background" Value="#FAFDFE"/><Setter Property="BorderBrush" Value="#CFDEE7"/>
+            <Setter Property="Foreground" Value="#294F66"/><Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonSurface" CornerRadius="8" BorderThickness="1"
+                                Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonSurface" Property="Opacity" Value="0.85"/></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ButtonSurface" Property="BorderBrush" Value="#3789B2"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonSurface" Property="Opacity" Value="0.65"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <Border x:Name="DialogSurface" CornerRadius="18" BorderBrush="#CCDDE7" BorderThickness="1" Margin="10" Padding="24">
+        <Border.Effect><DropShadowEffect Color="#47677E" BlurRadius="14" ShadowDepth="2" Opacity="0.15"/></Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid x:Name="TitleBar" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown" Background="Transparent" Margin="0,0,0,18">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Border x:Name="IconSurface" Width="34" Height="34" CornerRadius="11" Background="#E2F0F6" Margin="0,0,12,0">
+                    <TextBlock x:Name="IconText" Text="i" Foreground="#367C9D" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="拾刻" FontSize="11" Foreground="#708898" Margin="0,0,0,2"/>
+                    <TextBlock x:Name="CaptionText" FontSize="17" FontWeight="SemiBold" Foreground="#294F66" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+            </Grid>
+            <ScrollViewer x:Name="MessageScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="360">
+                <TextBox x:Name="MessageText" IsReadOnly="True" TextWrapping="Wrap" FontSize="14" Foreground="#294F66"
+                         Background="Transparent" BorderThickness="0" Padding="0" IsReadOnlyCaretVisible="False"/>
+            </ScrollViewer>
+            <StackPanel x:Name="ButtonPanel" Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0"/>
+        </Grid>
+    </Border>
+</Window>

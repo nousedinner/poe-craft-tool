@@ -1,4 +1,4 @@
-using System.Windows.Controls;
+﻿using System.Windows.Controls;
 using ShiKe.Services;
 
 namespace ShiKe.Tools.Hideout;
@@ -39,9 +39,9 @@ public partial class HideoutPage : UserControl
         RefreshFromTool();
         var owner = System.Windows.Window.GetWindow(this);
         if (owner is null)
-            System.Windows.MessageBox.Show(result.Message, "无法修改启用状态", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+            ShiKe.Services.ThemedMessageBox.Show(result.Message, "无法修改启用状态", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
         else
-            System.Windows.MessageBox.Show(owner, result.Message, "无法修改启用状态", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+            ShiKe.Services.ThemedMessageBox.Show(owner, result.Message, "无法修改启用状态", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
     }
 
     private void CommandText_Commit(object sender, System.Windows.RoutedEventArgs e)
