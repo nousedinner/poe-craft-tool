@@ -463,7 +463,8 @@ public partial class CraftPage : UserControl
     {
         var single = CurrentMode == CraftMode.Single;
         SingleHitHint.Visibility = single ? Visibility.Visible : Visibility.Collapsed;
-        HitCountControls.Visibility = single ? Visibility.Collapsed : Visibility.Visible;
+        PrimaryHitControls.Visibility = single ? Visibility.Collapsed : Visibility.Visible;
+        SecondaryHitControls.Visibility = single ? Visibility.Collapsed : Visibility.Visible;
         SecondaryPoolSection.Visibility = single ? Visibility.Collapsed : Visibility.Visible;
     }
 

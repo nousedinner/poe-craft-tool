@@ -127,6 +127,7 @@ internal static class AppearanceChecks
             presets.SelectedItem = "appearance-check-baseline";
             Pump();
             CheckCraftSelections(page, craft, window, host);
+            CheckCompactRuleLayout(page, craft, window);
 
             var panels = new[] { "ModePanel", "CurrencyPanel", "RulesPanel" }.Select(name => Find<Border>(page, name)).ToArray();
             Require(panels.All(panel => panel.Background is LinearGradientBrush { IsFrozen: false }), "面板应拥有独立可动画的画刷");
@@ -252,6 +253,7 @@ internal static class AppearanceChecks
             window.Height = window.MinHeight;
             Pump();
             CheckColumns(page);
+            CheckPoolHeaders(page, window);
             foreach (var input in new[] { "PrimaryInput", "SecondaryInput", "ExcludeInput" })
                 Require(Find<TextBox>(page, input).ActualWidth >= 100, "最小尺寸下词缀输入框过窄");
             var rulesScroll = Descendants(panels[2]).OfType<ScrollViewer>().First();
@@ -420,11 +422,13 @@ internal static class AppearanceChecks
 
     private static void CheckCraftSelections(CraftPage page, CraftTool craft, Window window, ToolHost host)
     {
-        var controls = Find<Border>(page, "HitCountControls");
+        var controls = Find<StackPanel>(page, "PrimaryHitControls");
         var secondary = Find<StackPanel>(page, "SecondaryPoolSection");
         Find<RadioButton>(page, "Mode2Radio").IsChecked = true;
         Pump();
         Require(controls.IsVisible && secondary.IsVisible, "Mode2 直接显示主次命中与两个池");
+        Require(Find<StackPanel>(page, "SecondaryHitControls").IsVisible, "Mode2显示次池旁的命中选择");
+        CheckPoolHeaders(page, window);
         Find<RadioButton>(page, "PrimaryHit3").IsChecked = true;
         Find<RadioButton>(page, "SecondaryHit3").IsChecked = true;
         Require(Find<RadioButton>(page, "PrimaryHit3").IsChecked == true &&
@@ -477,6 +481,55 @@ internal static class AppearanceChecks
         PromptChecks.WithResponse(() => presets.SelectedItem = "appearance-check-baseline", MessageBoxResult.Yes);
         currency.SelectedValue = Currency.Alteration; page.CollectRulesFromUi();
         Require(craft.Rules.Validate().Ok, "Mode3 修正为2+1后应保持原运行规则");
+    }
+
+    private static void CheckPoolHeaders(CraftPage page, Window window)
+    {
+        foreach (var prefix in new[] { "Primary", "Secondary" })
+        {
+            var header = Find<Grid>(page, prefix + "PoolHeader");
+            var controls = Find<StackPanel>(page, prefix + "HitControls");
+            var clear = Find<Button>(page, "Clear" + prefix + "Button");
+            var label = header.Children.OfType<TextBlock>().Single();
+            var labelBounds = Bounds(label, window); var controlsBounds = Bounds(controls, window); var clearBounds = Bounds(clear, window);
+            Require(controls.Parent == header && controlsBounds.Left >= labelBounds.Right + 2 && controlsBounds.Right <= clearBounds.Left - 2,
+                "命中按钮应在池标题与清空按钮之间，不能重叠");
+            Require(Math.Abs(controlsBounds.Top + controlsBounds.Height / 2 - labelBounds.Top - labelBounds.Height / 2) < 1,
+                "命中选择必须与词缀池名称同行居中");
+        }
+    }
+
+    private static void CheckCompactRuleLayout(CraftPage page, CraftTool craft, Window window)
+    {
+        var original = craft.Rules.CreateSnapshot();
+        var scroll = Descendants(Find<Border>(page, "RulesPanel")).OfType<ScrollViewer>().First();
+        void SetPool(string prefix, IEnumerable<string> texts)
+        {
+            Find<Button>(page, "Clear" + prefix + "Button").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            foreach (var text in texts)
+            {
+                Find<TextBox>(page, prefix + "Input").Text = text;
+                Descendants(page).OfType<Button>().Single(button => (string?)button.Tag == prefix.ToLowerInvariant())
+                    .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            }
+        }
+        try
+        {
+            SetPool("Primary", ["无情", "独裁", "迸出", "晶化", "汽化", "焦化", "基础物理", "基础冰", "基础火", "基础闪", "基础混沌"]);
+            SetPool("Secondary", ["暴击几率", "暴击伤害", "攻击速度", "火焰抗性", "冰霜抗性", "闪电抗性", "混沌抗性"]);
+            SetPool("Exclude", []);
+            Pump(); CheckPoolHeaders(page, window);
+            Console.WriteLine($"INFO 常用11主+7次: extent={scroll.ExtentHeight:0.0}, viewport={scroll.ViewportHeight:0.0}, overflow={scroll.ScrollableHeight:0.0}");
+            Require(scroll.ScrollableHeight < 1, "默认窗口的常用词缀数量不应触发滚动");
+            Snapshot(window, "T11-WPF-Compact-rules.png");
+        }
+        finally
+        {
+            SetPool("Primary", original.PrimaryAffixes.Select(rule => rule.Text));
+            SetPool("Secondary", original.SecondaryAffixes.Select(rule => rule.Text));
+            SetPool("Exclude", original.ExcludeAffixes.Select(rule => rule.Text));
+            page.CollectRulesFromUi(); Pump();
+        }
     }
 
     private static void CheckColumns(CraftPage page)
@@ -596,7 +649,7 @@ internal static class AppearanceChecks
         bitmap.Render(root);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using var stream = File.Create(Path.Combine(directory, name.Replace("T11-WPF", "T11-v39", StringComparison.Ordinal)));
+        using var stream = File.Create(Path.Combine(directory, name.Replace("T11-WPF", "T11-v40", StringComparison.Ordinal)));
         encoder.Save(stream);
     }
 
