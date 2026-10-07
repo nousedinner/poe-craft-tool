@@ -11,6 +11,15 @@
                 <Setter.Value><DataTemplate><TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" ToolTip="{Binding}"/></DataTemplate></Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="AffixInput" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="7,3"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="AddAffixButton" TargetType="Button" BasedOn="{StaticResource CardButton}">
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
         <Style x:Key="HitButton" TargetType="RadioButton" BasedOn="{StaticResource ChoiceButtonStyle}">
             <Setter Property="Margin" Value="3,0,0,0"/>
             <Setter Property="Padding" Value="6,3"/>
@@ -137,8 +146,8 @@
                             <Button x:Name="ClearPrimaryButton" Grid.Column="2" Content="清空" Style="{StaticResource ClearPoolButton}" Click="ClearPrimaryButton_Click"/>
                         </Grid>
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <TextBox x:Name="PrimaryInput" KeyDown="AffixInput_KeyDown" Tag="primary" ToolTip="输入主词缀，回车添加" FontSize="12"/>
-                            <Button Grid.Column="1" Content="添加" Style="{StaticResource CardButton}" Click="AddAffixButton_Click" Tag="primary" Margin="6,0,0,0"/>
+                            <TextBox x:Name="PrimaryInput" Style="{StaticResource AffixInput}" KeyDown="AffixInput_KeyDown" Tag="primary" ToolTip="输入主词缀，回车添加" FontSize="12"/>
+                            <Button Grid.Column="1" Content="添加" Style="{StaticResource AddAffixButton}" Click="AddAffixButton_Click" Tag="primary" Margin="6,0,0,0"/>
                         </Grid>
                         <WrapPanel x:Name="PrimaryTags" Margin="0,3,0,6"/>
                         <StackPanel x:Name="SecondaryPoolSection">
@@ -154,8 +163,8 @@
                             <Button x:Name="ClearSecondaryButton" Grid.Column="2" Content="清空" Style="{StaticResource ClearPoolButton}" Click="ClearSecondaryButton_Click"/>
                         </Grid>
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <TextBox x:Name="SecondaryInput" KeyDown="AffixInput_KeyDown" Tag="secondary" ToolTip="输入次词缀，回车添加" FontSize="12"/>
-                            <Button Grid.Column="1" Content="添加" Style="{StaticResource CardButton}" Click="AddAffixButton_Click" Tag="secondary" Margin="6,0,0,0"/>
+                            <TextBox x:Name="SecondaryInput" Style="{StaticResource AffixInput}" KeyDown="AffixInput_KeyDown" Tag="secondary" ToolTip="输入次词缀，回车添加" FontSize="12"/>
+                            <Button Grid.Column="1" Content="添加" Style="{StaticResource AddAffixButton}" Click="AddAffixButton_Click" Tag="secondary" Margin="6,0,0,0"/>
                         </Grid>
                         <WrapPanel x:Name="SecondaryTags" Margin="0,3,0,6"/>
                         </StackPanel>
@@ -164,8 +173,8 @@
                             <Button x:Name="ClearExcludeButton" Grid.Column="1" Content="清空" Style="{StaticResource ClearPoolButton}" Click="ClearExcludeButton_Click"/>
                         </Grid>
                         <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                            <TextBox x:Name="ExcludeInput" KeyDown="AffixInput_KeyDown" Tag="exclude" ToolTip="输入排除词缀，回车添加" FontSize="12"/>
-                            <Button Grid.Column="1" Content="添加" Style="{StaticResource CardButton}" Click="AddAffixButton_Click" Tag="exclude" Margin="6,0,0,0"/>
+                            <TextBox x:Name="ExcludeInput" Style="{StaticResource AffixInput}" KeyDown="AffixInput_KeyDown" Tag="exclude" ToolTip="输入排除词缀，回车添加" FontSize="12"/>
+                            <Button Grid.Column="1" Content="添加" Style="{StaticResource AddAffixButton}" Click="AddAffixButton_Click" Tag="exclude" Margin="6,0,0,0"/>
                         </Grid>
                         <WrapPanel x:Name="ExcludeTags" Margin="0,3,0,0"/>
                     </StackPanel>
