@@ -1,23 +1,25 @@
-__pycache__/
-*.pyc
-*.pyo
-data/coordinates.json
-data/rules.json
-data/settings.json
-venv/
-.env
-*.zip
-*.exe
-release/
-build/
-dist/
-*.spec
-platforms/
-*.md
-# CHANGELOG 是项目一部分，随每次提交更新，需进仓库
-!CHANGELOG.md
-# .NET 构建产物
+# .NET 构建、发布和验证产物
 bin/
 obj/
+*.exe
+*.zip
+
+# 本地开发设置
+.vs/
+.idea/
 *.user
+*.suo
+.env
+.env.*
 kill_shike.*
+
+# 个人配置与运行日志；源码/data/presets 保留内置预设
+**/data/coordinates.json
+**/data/rules.json
+**/data/settings.json
+*.log
+
+# 本地项目上下文、交接资料和已完成的设计预览
+/AGENTS.md
+/文档/
+/源码/设计预览/
