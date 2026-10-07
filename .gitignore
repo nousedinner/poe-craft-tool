@@ -1,8 +1,33 @@
+# 根目录只公开项目入口、Git 规则和源码；新功能放在 源码/ 下
+/*
+!/.gitignore
+!/.gitattributes
+!/.githooks/
+!/README.md
+!/CHANGELOG.md
+!/源码/
+
 # .NET 构建、发布和验证产物
 bin/
 obj/
 *.exe
 *.zip
+*.dll
+*.pdb
+*.dmp
+
+# 验证、预览、截图及备份目录只在本地保存
+截图/
+设计预览/
+验证记录/
+发布暂存/
+备份/
+研究资料/
+.shike-output.json
+*.tmp
+*.bak
+*.orig
+*.rej
 
 # 本地开发设置
 .vs/
@@ -23,3 +48,8 @@ kill_shike.*
 /AGENTS.md
 /文档/
 /源码/设计预览/
+*.md
+!/README.md
+!/CHANGELOG.md
+
+# 入库边界同时由 .githooks/check-files 检查；扩展范围时一起更新

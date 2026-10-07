@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 检查实际 Git 树：提交时检查索引，推送时检查将发送的提交。
+# 新工具及资源允许放在 源码/；更改公开边界时同步更新 .gitignore。
+if [[ $# != 1 ]]; then
+    printf '%s\n' '用法：check-files --index 或 check-files <Git 提交/树>' >&2
+    exit 2
+fi
+
+if [[ $1 == --index ]]; then
+    tree=$(git write-tree)
+else
+    tree=$(git rev-parse --verify "$1^{tree}")
+fi
+
+git ls-tree -r --name-only -z "$tree" | (
+    rejected=0
+    while IFS= read -r -d '' path; do
+        reason=''
+        case "$path" in
+            .gitignore|.gitattributes|README.md|CHANGELOG.md|.githooks/*|源码/*) ;;
+            *) reason='不在公开项目目录内' ;;
+        esac
+
+        lower_path=${path,,}
+        case "/$lower_path/" in
+            */bin/*|*/obj/*|*/.vs/*|*/.idea/*|*/截图/*|*/设计预览/*|*/验证记录/*|*/发布暂存/*|*/备份/*|*/研究资料/*)
+                reason='本地资料或生成目录' ;;
+        esac
+
+        case "$path" in
+            README.md|CHANGELOG.md) ;;
+            *)
+                case "$lower_path" in
+                    *.md|*.exe|*.zip|*.dll|*.pdb|*.dmp|*.log|*.tmp|*.bak|*.orig|*.rej|*.user|*.suo|*/.env|*/.env.*|*/.shike-output.json|*/kill_shike.*)
+                        reason='本地文档、配置或生成文件' ;;
+                esac ;;
+        esac
+
+        case "$lower_path" in
+            */data/coordinates.json|*/data/rules.json|*/data/settings.json)
+                reason='个人运行配置' ;;
+        esac
+
+        if [[ -n $reason ]]; then
+            printf '拒绝入库：%s（%s）\n' "$path" "$reason" >&2
+            rejected=1
+        fi
+    done
+
+    if (( rejected != 0 )); then
+        printf '%s\n' '请把以上文件移出 Git 暂存区或公开提交，本地原文件可以保留。' >&2
+        printf '%s\n' '新功能需要扩大公开范围时，先更新 .gitignore 与 .githooks/check-files。' >&2
+        exit 1
+    fi
+)

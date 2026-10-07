@@ -47,6 +47,8 @@ Mode 2/3 在词缀池标题旁选择命中数，超限会在启动时弹窗提�
 ```text
 README.md                   使用与开发入口
 CHANGELOG.md                版本变化
+.gitignore / .gitattributes  入库边界与文本格式
+.githooks/                  提交、推送前的文件范围检查
 源码/
   拾刻.csproj               主程序项目
   App.xaml / Bootstrapper.cs 启动入口
@@ -69,6 +71,7 @@ CHANGELOG.md                版本变化
 开发需要 Windows、Git 和 **[.NET 10 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/10.0)**。在 Windows PowerShell 中进入仓库根目录：
 
 ```powershell
+git config --local core.hooksPath .githooks
 dotnet restore ".\源码\Tests\ShiKe.InternalTests.csproj"
 dotnet build ".\源码\拾刻.csproj" -c Release --no-restore
 .\源码\验证内部用例.cmd
@@ -85,6 +88,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\源码\scripts\Build-
 输出统一在 `bin/Release/net10.0-windows/`。分享包仅包含 EXE、五个内置音效和一个内置预设；个人配置和自定义资源不进入包。已有日常程序运行时，发布入口会要求先退出。
 
 已验证的 EXE 可用同一入口的 `-PackageOnly` 参数重新整理分享包。`Run-StartupChecks.ps1` 用于发布后的隔离启动与关闭验证，`Measure-Startup.ps1` 是它使用的测量脚本。
+
+根目录只收录项目入口、Git 规则与 `源码/`。新增工具、源码和资源放在 `源码/` 下；截图、开发文档、配置、日志和构建产物留在本地。克隆后执行上面的 `core.hooksPath` 设置即可启用检查，提交和推送时会列出超出范围的文件。新功能确实需要扩大公开目录或文件类型时，同时更新 `.gitignore` 和 `.githooks/check-files`。
 
 ## 反馈与免责声明
 

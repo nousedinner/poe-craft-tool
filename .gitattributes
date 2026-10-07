@@ -1,0 +1,2 @@
+# Git 钩子在 Windows 和其他平台都使用 LF，避免自动 CRLF 破坏脚本
+.githooks/* text eol=lf
