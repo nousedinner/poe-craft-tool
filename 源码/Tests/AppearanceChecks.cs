@@ -86,6 +86,7 @@ internal static class AppearanceChecks
             window = new MainWindow(registry, host) { ShowActivated = false, ShowInTaskbar = false };
             var settingsBeforeShow = File.ReadAllBytes(Path.Combine(host.Storage.DataDir, "settings.json"));
             CheckFirstFrameSwitches(window, window.Show);
+            Console.WriteLine($"INFO 本次窗口标题: {window.Title}");
             Require(Find<Slider>(window, "GradientSpeed").Value == 3, "窗口首次显示必须恢复保存的速度");
             Require(File.ReadAllBytes(Path.Combine(host.Storage.DataDir, "settings.json")).SequenceEqual(settingsBeforeShow), "初始化外观不应额外写盘");
             var nav = Find<ListBox>(window, "ToolList");

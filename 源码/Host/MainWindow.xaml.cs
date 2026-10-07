@@ -1,6 +1,8 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Security;
+using System.Security.Principal;
 using ShiKe.Services;
 
 namespace ShiKe.Host;
@@ -24,6 +26,7 @@ public partial class MainWindow : Window
     public MainWindow(ToolRegistry registry, ToolHost host)
     {
         InitializeComponent();
+        Title = GetStartupTitle();
         // 高 DPI / 小工作区时缩到可见范围；三栏各自滚动，避免窗口底部落到屏幕外。
         var workArea = SystemParameters.WorkArea;
         MinWidth = Math.Min(MinWidth, workArea.Width);
@@ -51,6 +54,24 @@ public partial class MainWindow : Window
         ToolList.DisplayMemberPath = nameof(ITool.Name);
         ToolList.SelectedIndex = 0; // 默认选中第一个抽屉
         BottomAdButton.Click += BottomAdButton_Click;
+    }
+
+    private static string GetStartupTitle()
+    {
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            var administratorSid = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            return new WindowsPrincipal(identity).IsInRole(administratorSid)
+                ? "拾刻 · 以管理员身份运行"
+                : "拾刻 · 非管理员身份运行";
+        }
+        catch (SecurityException error)
+        {
+            // 仅展示权限；无法查询时不影响启动，也不把未知状态误写成非管理员。
+            Diag.Log($"[启动] 无法查询运行权限: {error.Message}");
+            return "拾刻 · 运行权限未能确认";
+        }
     }
 
     private void GradientSpeed_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> args)
