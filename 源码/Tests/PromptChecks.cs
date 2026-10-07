@@ -22,6 +22,7 @@ internal static class PromptChecks
             {
                 owner = new Window { Width = 200, Height = 100, ShowActivated = false, ShowInTaskbar = false };
                 owner.Show();
+                CheckErrorSound();
                 foreach (var (buttons, chosen, defaultChoice) in new[]
                 {
                     (MessageBoxButton.OK, MessageBoxResult.OK, MessageBoxResult.OK),
@@ -84,7 +85,57 @@ internal static class PromptChecks
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         Require(thread.Join(TimeSpan.FromSeconds(12)), "提示窗口检查超时");
-        if (failure is not null) throw new InvalidOperationException("提示窗口行为检查失败", failure);
+        if (failure is not null) throw new InvalidOperationException("提示窗口行为检查失败: " + failure, failure);
+    }
+
+    private static void CheckErrorSound()
+    {
+        foreach (var image in new[] { MessageBoxImage.Error, MessageBoxImage.Warning, MessageBoxImage.None })
+        {
+            var requests = 0;
+            var dialog = new MessageDialog("提示音检查", "提示", MessageBoxButton.OK, image, MessageBoxResult.OK,
+                false, () => requests++);
+            Require(requests == 0, "仅构造窗口不能提前播放错误音");
+            var rendered = false;
+            dialog.ContentRendered += (_, _) => rendered = true;
+            try
+            {
+                dialog.Show();
+                WaitFor(() => rendered);
+                var expected = image is MessageBoxImage.Error or MessageBoxImage.Warning ? 1 : 0;
+                Require(requests == expected, "仅已显示的错误/警告窗提交一次系统提示音");
+                // 初次显示走真实WPF绘制；额外框架通知检验重复回调不会重复播放。
+                var renderMethod = typeof(Window).GetMethod("OnContentRendered",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+                renderMethod.Invoke(dialog, [EventArgs.Empty]); renderMethod.Invoke(dialog, [EventArgs.Empty]);
+                Require(requests == expected, "重复绘制通知不能重复响铃");
+            }
+            finally { dialog.Close(); }
+        }
+        var failed = new MessageDialog("音效失败仍需可确认", "错误", MessageBoxButton.OK, MessageBoxImage.Error,
+            MessageBoxResult.OK, false, () => throw new InvalidOperationException("隔离音效失败"));
+        var failedRendered = false;
+        failed.ContentRendered += (_, _) => failedRendered = true;
+        try
+        {
+            failed.Show(); WaitFor(() => failedRendered);
+            var button = ((StackPanel)failed.FindName("ButtonPanel")).Children.OfType<Button>().Single();
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(failed.Result == MessageBoxResult.OK, "音效异常不能阻止错误窗关闭");
+        }
+        finally { if (failed.IsVisible) failed.Close(); }
+    }
+
+    private static void WaitFor(Func<bool> ready)
+    {
+        var frame = new DispatcherFrame();
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(10) };
+        timer.Tick += (_, _) => { if (ready() || DateTime.UtcNow >= deadline) frame.Continue = false; };
+        timer.Start();
+        try { Dispatcher.PushFrame(frame); }
+        finally { timer.Stop(); }
+        Require(ready(), "提示窗口未完成真实显示");
     }
 
     internal static string WithResponse(Action show, MessageBoxResult choice, Action<MessageDialog>? inspect = null)

@@ -10,11 +10,13 @@ namespace ShiKe.Services;
 internal partial class MessageDialog : Window
 {
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(nint hwnd);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool MessageBeep(uint type);
+    private bool _alertSoundRequested;
     private readonly MessageBoxResult _dismissResult;
     internal MessageBoxResult Result { get; private set; }
 
     internal MessageDialog(string message, string caption, MessageBoxButton buttons, MessageBoxImage image,
-        MessageBoxResult defaultResult, bool topmost)
+        MessageBoxResult defaultResult, bool topmost, Action? playAlertSound = null)
     {
         InitializeComponent();
         Title = caption;
@@ -70,12 +72,29 @@ internal partial class MessageDialog : Window
         };
         ContentRendered += (_, _) =>
         {
+            if (image is MessageBoxImage.Error or MessageBoxImage.Warning && !_alertSoundRequested)
+            {
+                _alertSoundRequested = true;
+                try
+                {
+                    if (playAlertSound is not null) playAlertSound();
+                    else PlayAlertSound(image);
+                }
+                catch (Exception error) { Diag.Log($"[提示] 错误提示音失败: {error.Message}"); }
+            }
             ButtonPanel.Children.OfType<Button>().First(button => button.IsDefault).Focus();
             if (!Topmost) return;
             Activate();
             SetForegroundWindow(new WindowInteropHelper(this).Handle);
         };
         Closed += (_, _) => { if (Result == MessageBoxResult.None) Result = _dismissResult; };
+    }
+
+    private static void PlayAlertSound(MessageBoxImage image)
+    {
+        // 恢复原错误/警告图标对应的系统提示音；异步播放，不占用洗词缀完成音效播放器。
+        if (!MessageBeep((uint)image))
+            Diag.Log($"[提示] 无法提交系统提示音: Win32 {Marshal.GetLastWin32Error()}");
     }
 
     internal static MessageBoxResult DismissResult(MessageBoxButton buttons) => buttons switch
