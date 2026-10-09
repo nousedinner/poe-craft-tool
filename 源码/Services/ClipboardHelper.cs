@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace ShiKe.Services;
 
@@ -89,11 +90,11 @@ public static class ClipboardHelper
         return false;
     }
 
-    /// <summary>仅接受 PoE 中英文物品剪贴板头，防止把其他应用文本送进词缀判定。</summary>
+    /// <summary>仅接受 PoE 简繁中文或英文物品类别字段头，防止把其他应用文本送进词缀判定。</summary>
     public static bool IsItemText(string text)
     {
         var value = text.TrimStart();
-        return value.StartsWith("物品类别:", StringComparison.Ordinal) ||
+        return Regex.IsMatch(value, @"^物品(?:[类類][别別]|種類)\s*[:：]") ||
                value.StartsWith("Item Class:", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -6,41 +6,47 @@ namespace ShiKe.Tools.Craft;
 /// 词缀解析与匹配引擎。
 /// 行为按 DEV_GUIDE §60-98 + 方案 §6 铁律实现（用户 2026-08-04 拍板：装备名字参与匹配）：
 /// - 按行处理，跳过空行与 -------- 分段符
-/// - 过滤元数据行（skip patterns 中英文完整，铁律 #3）
+/// - 按字段边界过滤简繁中文和英文元数据行（铁律 #3）
 /// - ⚠️ 装备名字/基础类型必须保留参与匹配（铁律 #1：宽松匹配是设计意图，不过滤）
 /// - 匹配语料与真实词缀数量分离：装备名可匹配，但不计入前/后缀数量
 /// - 匹配：排除优先 → 主 → 次；同一实际候选在主/次词缀池之间也只能贡献一次；子串匹配，无数值范围（未实现功能）
 /// </summary>
 public static class AffixEngine
 {
-    /// <summary>元数据 skip patterns（DEV_GUIDE §66-88 完整列表 + 品质；^ 前缀匹配）。</summary>
-    private static readonly string[] SkipPatterns =
-    [
-        // 中文（腾讯客户端）
-        @"^稀\s*有\s*度",           // 稀有度
-        @"^物品类别",               // 物品类别
-        @"^物品等级",               // 物品等级
-        @"^需求",                   // 需求
-        @"^等级:",                  // 等级需求
-        @"^敏捷:", @"^力量:", @"^智慧:",  // 属性需求
-        @"^插槽",                   // 插槽
-        @"^物理伤害",               // 物理伤害
-        @"^火焰，冰霜，闪电伤害",    // 元素伤害（国服顿号分隔）
-        @"^火焰伤害", @"^冰霜伤害", @"^闪电伤害",
-        @"^攻击暴击率",             // 攻击暴击率
-        @"^每秒攻击次数",           // 每秒攻击次数
-        @"^出售获得通货",           // 出售获得通货
-        @"^品质",                   // 品质（补充）
+    /// <summary>
+    /// 元数据字段（DEV_GUIDE §66-88 完整列表 + 品质）。只匹配字段名后的冒号，
+    /// 不能因正文以“插槽”“物理伤害”等字样开头而吞掉整条词缀。
+    /// </summary>
+    private static readonly string[] SkipPatterns = new[]
+    {
+        // 简繁中文。只兼容元数据字段的字形，匹配正文保持原文，不自动转换用户规则。
+        @"^稀\s*有\s*度",
+        @"^物品(?:[类類][别別]|種類)",
+        @"^物品等[级級]",
+        @"^需求",
+        @"^等[级級]",
+        @"^敏捷", @"^力量", @"^智慧",
+        @"^插槽",
+        @"^物理[伤傷]害",
+        @"^火焰，冰霜，[闪閃][电電][伤傷]害",
+        @"^火焰[伤傷]害", @"^冰霜[伤傷]害", @"^[闪閃][电電][伤傷]害",
+        @"^攻[击擊]暴[击擊]率",
+        @"^每秒攻[击擊]次[数數]",
+        @"^出售[获獲]得通[货貨]",
+        @"^品[质質]",
         // 英文
-        @"^Rarity", @"^Item Class", @"^Item Level", @"^Requires", @"^Level:",
+        @"^Rarity", @"^Item Class", @"^Item Level", @"^Requirements", @"^Level",
         @"^Sockets", @"^Quality", @"^Physical Damage", @"^Elemental Damage",
         @"^Fire Damage", @"^Cold Damage", @"^Lightning Damage",
-        @"^Critical Strike Chance", @"^Attacks per Second", @"^Vendor",
-    ];
+        @"^Critical Strike Chance", @"^Attacks per Second",
+    }.Select(pattern => pattern + @"\s*[:：]")
+     // 需求分节可以独占一行；英文旧格式的 Requires / Vendor 值可以直接跟在空格后。
+     .Concat(new[] { @"^需求$", @"^Requires(?:\s|[:：]|$)", @"^Vendor(?:\s|[:：]|$)" })
+     .ToArray();
 
     /// <summary>
     /// 解析物品文本为双视图：MatchLines 用于宽松匹配；ExplicitAffixes 用于真实词缀计数。
-    /// 国服高级描述中的显式词缀头形如 { 前缀属性 ... } / { 后缀属性 ... }。
+    /// 高级描述中的显式词缀头形如 { 前缀属性 ... } / { 後綴 ... } / { Prefix Modifier ... }。
     /// </summary>
     public static ItemParseResult ParseItem(string clipboardText)
     {
@@ -122,7 +128,7 @@ public static class AffixEngine
 
     private static ItemRarity ParseRarity(string line)
     {
-        var chinese = Regex.Match(line, @"^稀\s*有\s*度\s*:\s*(\S+)");
+        var chinese = Regex.Match(line, @"^稀\s*有\s*度\s*[:：]\s*(\S+)");
         if (chinese.Success)
         {
             return chinese.Groups[1].Value switch
@@ -130,7 +136,7 @@ public static class AffixEngine
                 "普通" => ItemRarity.Normal,
                 "魔法" => ItemRarity.Magic,
                 "稀有" => ItemRarity.Rare,
-                "传奇" => ItemRarity.Unique,
+                "传奇" or "傳奇" => ItemRarity.Unique,
                 _ => ItemRarity.Unknown,
             };
         }
@@ -151,8 +157,9 @@ public static class AffixEngine
     {
         if (!line.StartsWith('{')) return false;
 
-        var chinese = line.Contains("属性", StringComparison.Ordinal) &&
-                      (line.Contains("前缀", StringComparison.Ordinal) || line.Contains("后缀", StringComparison.Ordinal));
+        // 前/后缀类型必须紧跟左花括号；繁体描述可以没有“屬性”。
+        // 階層只是头里的附加信息，不要求它出现，也不把基底/附魔头里的前后缀名字误计数。
+        var chinese = Regex.IsMatch(line, @"^\{\s*(?:前[缀綴]|[后後][缀綴])(?:[属屬]性)?(?=\s|[""“])");
         var english = line.Contains("Modifier", StringComparison.OrdinalIgnoreCase) &&
                       (line.Contains("Prefix", StringComparison.OrdinalIgnoreCase) ||
                        line.Contains("Suffix", StringComparison.OrdinalIgnoreCase));
