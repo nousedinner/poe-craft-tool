@@ -9,6 +9,7 @@ public enum CraftSpeedExperiment
     Movement10,
     CopyPadding10,
     Combined,
+    Balanced,
 }
 
 internal sealed record CraftTimingProfile(
@@ -23,6 +24,8 @@ internal sealed record CraftTimingProfile(
         CraftSpeedExperiment.Movement10 => new(experiment, "仅装备移动等待10ms", null, 20, 10, 20, 20),
         CraftSpeedExperiment.CopyPadding10 => new(experiment, "仅复制前后各10ms", null, 20, 30, 10, 10),
         CraftSpeedExperiment.Combined => new(experiment, "组合提速", 10, 5, 10, 10, 10),
+        // 与已测移动10ms档保持同一发送复制的时刻；只提前读取结果，不提前要求游戏复制。
+        CraftSpeedExperiment.Balanced => new(experiment, "稳健组合", null, 5, 10, 20, 10),
         _ => throw new ArgumentOutOfRangeException(nameof(experiment)),
     };
 

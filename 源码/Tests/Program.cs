@@ -78,6 +78,7 @@ var tests = new (string Name, Action Run)[]
     ("物品快照比较保留完整字段变化", CraftLoopChecks.SnapshotChangeComparisonPreservesCompleteFields),
     ("新复制和新运行的物品快照相互独立", CraftLoopChecks.SnapshotsAreIndependentAcrossCopies),
     ("速度实验基线保持原等待且单项档位独立", CraftSpeedChecks.ProfilesKeepTheBaselineAndSeparateVariables),
+    ("稳健组合保留移动档复制请求时刻并仅提前读取", CraftSpeedChecks.BalancedDoesNotRequestACopyEarlierThanMovementOnly),
     ("速度实验选择不写入原设置且重启恢复基线", CraftSpeedChecks.ExperimentSelectionNeverEntersSavedSettings),
     ("完整循环计时包含点击复制与匹配", CraftSpeedChecks.CompleteCycleIncludesClickCopyAndMatching),
     ("剪贴板读取与拒绝复制分开计数", CraftSpeedChecks.ReadsAndRejectedCopiesAreDifferentCounters),

@@ -9,7 +9,9 @@ internal static class CraftSpeedChecks
         Require(baseline.FirstWaitMs(47) == 47, "基线必须跟随现有滑条");
         var original = new[] { 47, 20, 30, 20, 20 };
         Require(Values(baseline).SequenceEqual(original), "基线时序改变");
-        foreach (var experiment in Enum.GetValues<CraftSpeedExperiment>().Skip(1).SkipLast(1))
+        foreach (var experiment in new[] { CraftSpeedExperiment.FirstWait10,
+            CraftSpeedExperiment.ClipboardPoll5, CraftSpeedExperiment.Movement10,
+            CraftSpeedExperiment.CopyPadding10 })
         {
             var profile = CraftTimingProfile.For(experiment);
             var differences = Values(profile).Zip(original).Count(pair => pair.First != pair.Second);
@@ -24,6 +26,28 @@ internal static class CraftSpeedChecks
         static int[] Values(CraftTimingProfile profile) =>
             [profile.FirstWaitMs(47), profile.ClipboardPollMs, profile.ItemMovementMs,
              profile.CopyBeforeMs, profile.CopyAfterMs];
+    }
+
+    public static void BalancedDoesNotRequestACopyEarlierThanMovementOnly()
+    {
+        var provenMovement = CraftTimingProfile.For(CraftSpeedExperiment.Movement10);
+        var balanced = CraftTimingProfile.For(CraftSpeedExperiment.Balanced);
+        foreach (var configuredDelay in new[] { 10, 33, 47, 200 })
+        {
+            var movementCopyRequestAt = provenMovement.FirstWaitMs(configuredDelay) +
+                provenMovement.ItemMovementMs + provenMovement.CopyBeforeMs;
+            var balancedCopyRequestAt = balanced.FirstWaitMs(configuredDelay) +
+                balanced.ItemMovementMs + balanced.CopyBeforeMs;
+            Require(balancedCopyRequestAt == movementCopyRequestAt,
+                "稳健组合不能比已测低重试的移动档更早发出Ctrl+Alt+C");
+            Require(balanced.FirstWaitMs(configuredDelay) == configuredDelay,
+                "稳健组合必须保留用户配置的首次同步窗口");
+        }
+        Require(balanced.CopyAfterMs < provenMovement.CopyAfterMs &&
+            balanced.ClipboardPollMs < provenMovement.ClipboardPollMs,
+            "稳健组合应只进一步提早读取已请求的结果");
+        Require(CraftTimingProfile.For(CraftSpeedExperiment.Combined).FirstWaitMs(33) == 10,
+            "新档位不能悄悄修改已有组合对照");
     }
 
     public static void ExperimentSelectionNeverEntersSavedSettings()

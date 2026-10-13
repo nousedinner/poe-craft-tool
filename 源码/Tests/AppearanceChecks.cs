@@ -105,12 +105,17 @@ internal static class AppearanceChecks
             Require(Find<ToggleButton>(page, "ExaltCheck").IsChecked == true, "原崇高选项应恢复");
             Require(Find<Slider>(page, "DelaySlider").Value == 55, "原延迟应恢复");
             var speedProfiles = Find<ComboBox>(page, "SpeedProfileCombo");
-            Require(speedProfiles.Items.Count == 6 && speedProfiles.SelectedIndex == 0,
+            Require(speedProfiles.Items.Count == 7 && speedProfiles.SelectedIndex == 0,
                 "实验页面应默认原等待并显示全部对照档位");
             speedProfiles.SelectedIndex = (int)CraftSpeedExperiment.Combined;
             Pump();
             Require(craft.SpeedExperiment == CraftSpeedExperiment.Combined && craft.DelayMs == 55,
                 "实验档位只修改本次试验选择，不能覆盖原延迟");
+            speedProfiles.SelectedIndex = 0;
+            speedProfiles.SelectedIndex = (int)CraftSpeedExperiment.Balanced;
+            Pump();
+            Require(craft.SpeedExperiment == CraftSpeedExperiment.Balanced && craft.DelayMs == 55,
+                "新增稳健档位必须可选且保留原滑条设置");
             speedProfiles.SelectedIndex = 0;
             CheckColumns(page);
             CheckSwitchHitArea(Find<ToggleButton>(page, "EnableToolSwitch"));

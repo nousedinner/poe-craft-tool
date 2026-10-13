@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param()
+param([switch]$CandidateOnly)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -14,8 +14,9 @@ if (-not $experimentProperty -or $experimentProperty.InnerText -ne 'true') { thr
 $artifactRoot = Get-ArtifactRoot $projectRoot
 $experimentRoot = Assert-ArtifactPath $artifactRoot (Join-Path $artifactRoot '速度实验')
 $stage = Assert-ArtifactPath $artifactRoot (Join-Path $artifactRoot '速度实验发布暂存')
-$program = Assert-ArtifactPath $artifactRoot (Join-Path $experimentRoot '拾刻-速度实验.exe')
-$running = @(Get-Process -Name '拾刻-速度实验' -ErrorAction SilentlyContinue | Where-Object {
+$programName = if ($CandidateOnly) { '拾刻-速度实验-待替换.exe' } else { '拾刻-速度实验.exe' }
+$program = Assert-ArtifactPath $artifactRoot (Join-Path $experimentRoot $programName)
+$running = @(Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($programName)) -ErrorAction SilentlyContinue | Where-Object {
     [string]::Equals($_.Path, $program, [StringComparison]::OrdinalIgnoreCase)
 })
 if ($running.Count -gt 0) { throw '请先退出速度实验程序，再重新生成；日常拾刻无需退出' }
@@ -81,7 +82,7 @@ foreach ($path in $dailyHashes.Keys) {
 }
 Remove-GeneratedDirectory $artifactRoot $stage '速度实验发布暂存'
 [pscustomobject]@{
-    Version = $version; Program = $program; FirstBuild = $firstBuild
+    Version = $version; Program = $program; FirstBuild = $firstBuild; CandidateOnly = [bool]$CandidateOnly
     Sha256 = (Get-FileHash -LiteralPath $program -Algorithm SHA256).Hash
     Reports = Join-Path $experimentRoot 'data\speed-experiments'
     DailyFilesUnchanged = $true

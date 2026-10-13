@@ -70,6 +70,8 @@ CHANGELOG.md                版本变化
 
 当前 `codex/craft-speed-experiment` 为独立速度实验分支。运行 `源码/生成速度实验.cmd`，生成 `bin/Release/net10.0-windows/速度实验/拾刻-速度实验.exe`，首次建立日常配置副本。先退出日常版，再运行实验版；洗词缀页可选择原等待、单项提速和组合，每次停止显示任务平均速度及拒绝/空复制/转换失败次数。每次重启恢复原等待，报告保存在该副本的 `data/speed-experiments/`。此分支的普通发布入口会拒绝替换日常程序。
 
+`源码/scripts/Build-CraftSpeedExperiment.ps1 -CandidateOnly` 可在当前实验程序运行时生成同目录的 `拾刻-速度实验-待替换.exe`。先退出当前程序再打开候选，两者共用原单实例保护及这份实验配置。新增“稳健组合”保留首次等待和复制前等待，只缩短装备移动及复制后的读取等待；实际效果以实机报告为准。
+
 开发需要 Windows、Git 和 **[.NET 10 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/10.0)**。在 Windows PowerShell 中进入仓库根目录：
 
 ```powershell
