@@ -1,0 +1,191 @@
+using System.Text.Json;
+using ShiKe.Tools.Craft;
+
+internal static class CraftSpeedChecks
+{
+    public static void ProfilesKeepTheBaselineAndSeparateVariables()
+    {
+        var baseline = CraftTimingProfile.For(CraftSpeedExperiment.Baseline);
+        Require(baseline.FirstWaitMs(47) == 47, "基线必须跟随现有滑条");
+        var original = new[] { 47, 20, 30, 20, 20 };
+        Require(Values(baseline).SequenceEqual(original), "基线时序改变");
+        foreach (var experiment in Enum.GetValues<CraftSpeedExperiment>().Skip(1).SkipLast(1))
+        {
+            var profile = CraftTimingProfile.For(experiment);
+            var differences = Values(profile).Zip(original).Count(pair => pair.First != pair.Second);
+            Require(differences == (experiment == CraftSpeedExperiment.CopyPadding10 ? 2 : 1),
+                "单项对照不能夹带其他等待变化");
+            Require(CraftStateSync.CalculateChangeTimeoutMs(profile.FirstWaitMs(47)) == 900,
+                "正常设置下保留原同步时间预算");
+        }
+        Require(Values(CraftTimingProfile.For(CraftSpeedExperiment.Combined))
+            .SequenceEqual(new[] { 10, 5, 10, 10, 10 }), "组合方案未包含已声明的四项变化");
+
+        static int[] Values(CraftTimingProfile profile) =>
+            [profile.FirstWaitMs(47), profile.ClipboardPollMs, profile.ItemMovementMs,
+             profile.CopyBeforeMs, profile.CopyAfterMs];
+    }
+
+    public static void ExperimentSelectionNeverEntersSavedSettings()
+    {
+        var source = new CraftTool { DelayMs = 47, ExhaustionThreshold = 12,
+            SpeedExperiment = CraftSpeedExperiment.Combined };
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream)) source.SaveSettings(writer);
+        using var document = JsonDocument.Parse(stream.ToArray());
+        Require(!document.RootElement.EnumerateObject().Any(property =>
+            property.Name.Contains("experiment", StringComparison.OrdinalIgnoreCase)),
+            "实验选择不得污染持久设置");
+        var restored = new CraftTool();
+        restored.LoadSettings(document.RootElement);
+        Require(restored.DelayMs == 47 && restored.ExhaustionThreshold == 12, "现有设置必须正常往返");
+        Require(restored.SpeedExperiment == CraftSpeedExperiment.Baseline, "重启必须恢复原等待");
+    }
+
+    public static void CompleteCycleIncludesClickCopyAndMatching()
+    {
+        double now = 0;
+        var measurement = new CraftSpeedMeasurement(() => now);
+        measurement.RecordBaseline("旧文本");
+        measurement.CompleteMatching("旧文本", new AffixCheckResult());
+        now = 100; // 启动基线、选通货等也进入任务平均。
+        measurement.BeginClick("改造石");
+        now = 150;
+        measurement.ClickSent();
+        measurement.CopyAttempt();
+        measurement.ClipboardRead();
+        now = 220;
+        measurement.ConfirmTransition("新文本");
+        now = 230;
+        measurement.CompleteMatching("新文本", new AffixCheckResult { PrimaryHits = 1 });
+        var summary = measurement.Stop("匹配成功");
+        Require(summary.SentClicks == 1 && summary.ConfirmedTransitions == 1 && summary.MatchedCycles == 1,
+            "启动基线不得计为洗装循环");
+        Equal(230, summary.ActiveMs, "任务计时必须包含选通货等开销");
+        Equal(130, summary.MatchCycleMedianMs!.Value, "循环必须从装备点击前到匹配结束");
+        Equal(1000d / 230, summary.MatchedPerSecond, "总速度不能拿解析耗时的倒数计算");
+    }
+
+    public static void ReadsAndRejectedCopiesAreDifferentCounters()
+    {
+        double now = 0;
+        var measurement = new CraftSpeedMeasurement(() => now);
+        measurement.BeginClick("改造石");
+        measurement.ClickSent();
+        measurement.CopyAttempt();
+        for (var index = 0; index < 20; index++) measurement.ClipboardRead();
+        measurement.EmptyCopy();
+        measurement.CopyAttempt();
+        measurement.ClipboardRead();
+        measurement.RejectCopy(unchanged: true);
+        measurement.CopyAttempt();
+        measurement.ClipboardRead();
+        measurement.RejectCopy(unchanged: false);
+        measurement.SyncFailed();
+        now = 900;
+        var summary = measurement.Stop("转换失败");
+        Require(summary.CopyAttempts == 3 && summary.ClipboardReads == 22, "读取次数与重新复制次数被混淆");
+        Require(summary.RejectedCopies == 2 && summary.UnchangedCopies == 1 && summary.EmptyCopies == 1,
+            "读取空值不能直接累加拒绝计数，转换不符也须单列");
+        Require(summary.MatchedCycles == 0 && summary.ConfirmedTransitions == 0 && summary.SyncFailures == 1,
+            "失败点击不得制造吞吐量");
+    }
+
+    public static void ForegroundPauseIsExcludedAndStopIsStable()
+    {
+        double now = 0;
+        var measurement = new CraftSpeedMeasurement(() => now);
+        measurement.BeginClick("改造石");
+        measurement.ClickSent();
+        now = 30;
+        measurement.PauseForeground();
+        measurement.PauseForeground();
+        now = 1030;
+        measurement.ResumeForeground();
+        now = 1130;
+        measurement.ConfirmTransition("已确认");
+        measurement.CompleteMatching("已确认", new AffixCheckResult());
+        var summary = measurement.Stop("已停止");
+        Equal(1000, summary.ForegroundPauseMs, "重复暂停不能双重扣时");
+        Equal(130, summary.ActiveMs, "前台等待不能拖低活动期间速度");
+        Equal(130, summary.MatchCycleP95Ms!.Value, "循环也必须扣除前台等待");
+        now = 2000;
+        Equal(summary.ElapsedMs, measurement.Stop("已停止").ElapsedMs, "报告落盘不应继续增加耗时");
+        var pausedAtStop = new CraftSpeedMeasurement(() => now);
+        pausedAtStop.PauseForeground();
+        now += 500;
+        Equal(0, pausedAtStop.Stop("取消").ActiveMs, "前台等待中取消也必须正确扣时");
+    }
+
+    public static void TransitionOnlyAndCancelledClicksDoNotBecomeMatchedCycles()
+    {
+        double now = 0;
+        var measurement = new CraftSpeedMeasurement(() => now);
+        measurement.BeginClick("重铸石");
+        measurement.ClickSent();
+        now = 150;
+        measurement.ConfirmTransition("普通物品");
+        now = 500; // 后续选通货的开销不能加到重铸的单次延迟。
+        measurement.BeginClick("点金石");
+        now = 520;
+        var summary = measurement.Stop("取消");
+        Require(summary.SentClicks == 1 && summary.ConfirmedTransitions == 1 && summary.MatchedCycles == 0,
+            "仅转换确认或点击前取消不能计为完成匹配");
+        using var report = JsonDocument.Parse(measurement.SerializeReport(summary, new { profile = "基线" }));
+        var samples = report.RootElement.GetProperty("samples");
+        Equal(150, samples[0].GetProperty("activeMs").GetDouble(), "单次转换延迟不得包含后续选通货");
+        Require(!samples[1].GetProperty("clickSent").GetBoolean(), "取消前未发送的点击须如实记录");
+    }
+
+    public static void TraceRetainsLatestItemAndSeparateTimingSamples()
+    {
+        double now = 0;
+        var measurement = new CraftSpeedMeasurement(() => now);
+        measurement.RecordBaseline("原文0");
+        for (var index = 1; index <= 35; index++)
+        {
+            measurement.BeginClick("改造石");
+            measurement.ClickSent();
+            now += 100;
+            measurement.ConfirmTransition($"原文{index}");
+            measurement.CompleteMatching($"原文{index}", new AffixCheckResult());
+        }
+        var summary = measurement.Stop("成功");
+        using var report = JsonDocument.Parse(measurement.SerializeReport(summary, new { profile = "基线" }));
+        var trace = report.RootElement.GetProperty("recentItemStates");
+        Require(trace.GetArrayLength() == 30, "原文轨迹应限量保留，避免运行内存持续膨胀");
+        Require(trace[29].GetProperty("afterText").GetString() == "原文35", "最终命中原文不能被挤掉");
+        Require(report.RootElement.GetProperty("samples").GetArrayLength() == 35, "计时样本须独立于原文轨迹保留");
+    }
+
+    public static void ReportsAreSavedAndWriteFailureDoesNotThrow()
+    {
+        var root = Path.Combine(AppContext.BaseDirectory, "speed-report-check-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            double now = 0;
+            var measurement = new CraftSpeedMeasurement(() => now);
+            now = 100;
+            var summary = measurement.Stop("取消");
+            var saved = measurement.SaveReport(summary, new { profile = "原等待" }, root);
+            Require(saved.Path is not null && File.Exists(saved.Path), "停止后必须生成可读报告");
+            using var report = JsonDocument.Parse(File.ReadAllText(saved.Path!));
+            Require(report.RootElement.GetProperty("summary").GetProperty("matchedCycles").GetInt32() == 0,
+                "零次操作不能伪造速度");
+            var occupied = Path.Combine(root, "occupied-file");
+            File.WriteAllText(occupied, "不能作为目录");
+            var failed = measurement.SaveReport(summary, new { profile = "原等待" }, occupied);
+            Require(failed.Path is null && failed.Text.Contains("未保存", StringComparison.Ordinal),
+                "保存失败应报告事实，不能令停止流程抛异常");
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static void Equal(double expected, double actual, string message)
+        => Require(Math.Abs(expected - actual) < 0.00001, $"{message}: expected={expected}, actual={actual}");
+    private static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+}

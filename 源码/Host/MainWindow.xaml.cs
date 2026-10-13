@@ -26,7 +26,7 @@ public partial class MainWindow : Window
     public MainWindow(ToolRegistry registry, ToolHost host)
     {
         InitializeComponent();
-        Title = GetStartupTitle();
+        Title = GetStartupTitle().Replace("拾刻 · ", "拾刻 · 速度实验 · ", StringComparison.Ordinal);
         // 高 DPI / 小工作区时缩到可见范围；三栏各自滚动，避免窗口底部落到屏幕外。
         var workArea = SystemParameters.WorkArea;
         MinWidth = Math.Min(MinWidth, workArea.Width);

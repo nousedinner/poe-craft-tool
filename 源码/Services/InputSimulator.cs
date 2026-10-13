@@ -239,7 +239,10 @@ public sealed class InputSimulator
     // ── 基础操作 ──
 
     /// <summary>移动到坐标并等 0.03s（Python _move_to）。</summary>
-    public async Task MoveToAsync(int x, int y, CancellationToken token)
+    public Task MoveToAsync(int x, int y, CancellationToken token)
+        => MoveToAsync(x, y, 30, token);
+
+    internal async Task MoveToAsync(int x, int y, int settleMs, CancellationToken token)
     {
         CheckEmergencyStop();
         if (!SetCursorPos(x, y))
@@ -248,7 +251,7 @@ public sealed class InputSimulator
             Diag.Win32Error($"SetCursorPos({x},{y})", error);
             throw new InputSimulationException($"移动鼠标到 ({x}, {y}) 失败，Win32 错误码 {error}");
         }
-        await Task.Delay(30, token);
+        await Task.Delay(settleMs, token);
     }
 
     /// <summary>右键：MoveTo → 右键（down→0.02s→up）。
@@ -266,7 +269,10 @@ public sealed class InputSimulator
     /// <summary>
     /// Shift+点击（Shift 已由外层按住）：±10px 随机偏移 → 等待点击间隔 → down → 0.02s → up。
     /// </summary>
-    public async Task ShiftClickAsync(int x, int y, int delayMs, CancellationToken token)
+    public Task ShiftClickAsync(int x, int y, int delayMs, CancellationToken token)
+        => ShiftClickAsync(x, y, delayMs, 30, token);
+
+    internal async Task ShiftClickAsync(int x, int y, int delayMs, int settleMs, CancellationToken token)
     {
         await EnsureForegroundForInputAsync(token);
         int ox = x + Random.Shared.Next(-10, 11);
@@ -278,7 +284,7 @@ public sealed class InputSimulator
             Diag.Win32Error($"SetCursorPos({ox},{oy})", error);
             throw new InputSimulationException($"移动鼠标到装备位置失败，Win32 错误码 {error}");
         }
-        await Task.Delay(30, token);
+        await Task.Delay(settleMs, token);
         await WaitForCraftClickIntervalAsync(delayMs, token);
         CheckEmergencyStop();
         MarkCraftClick();
@@ -370,10 +376,13 @@ public sealed class InputSimulator
     // ── 键盘 ──
 
     /// <summary>Ctrl+Alt+C（国服复制物品文本；Shift 应保持按住）。剪贴板到达等待由调用方轮询。</summary>
-    public async Task CtrlAltCAsync(int _, CancellationToken token)
+    public Task CtrlAltCAsync(int _, CancellationToken token)
+        => CtrlAltCAsync(20, 20, token);
+
+    internal async Task CtrlAltCAsync(int beforeMs, int afterMs, CancellationToken token)
     {
         await EnsureForegroundForInputAsync(token);
-        await Task.Delay(20, token);
+        await Task.Delay(beforeMs, token);
         CheckEmergencyStop();
         try
         {
@@ -392,7 +401,7 @@ public sealed class InputSimulator
             SendKey(KeyCode.Control, up: true);
             throw;
         }
-        await Task.Delay(20, token);
+        await Task.Delay(afterMs, token);
     }
 
     public void KeyDown(string key) => PressKeyOrThrow(KeyCode.Parse(key), $"按下 {key}");
