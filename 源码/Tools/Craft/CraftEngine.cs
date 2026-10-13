@@ -421,7 +421,7 @@ public sealed class CraftEngine
     }
 
     /// <summary>启动基线允许重试复制，避免一次丢失的 Ctrl+Alt+C 直接终止任务。</summary>
-    private async Task<string> CopyBaselineWithRetryAsync(string context, CancellationToken token)
+    private async Task<CraftItemSnapshot> CopyBaselineWithRetryAsync(string context, CancellationToken token)
     {
         var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
         var stopwatch = Stopwatch.StartNew();
@@ -437,7 +437,7 @@ public sealed class CraftEngine
             {
                 Diag.Log($"[同步] {context} 启动基线已建立: total={stopwatch.ElapsedMilliseconds}ms, " +
                          $"attempts={attempts}, {text.Length} chars");
-                return text;
+                return new CraftItemSnapshot(text);
             }
 
             if (stopwatch.ElapsedMilliseconds >= timeoutMs) break;
@@ -453,7 +453,7 @@ public sealed class CraftEngine
     /// Mode 1 点击后的状态门禁：只有复制到与点击前不同的完整物品文本才允许进入词缀判定。
     /// 剪贴板未写入或仍为旧状态时只重发 Ctrl+Alt+C，绝不再次点击通货。
     /// </summary>
-    private async Task<string> WaitForChangedMode1ItemAsync(string baseline, CancellationToken token)
+    private async Task<CraftItemSnapshot> WaitForChangedMode1ItemAsync(CraftItemSnapshot baseline, CancellationToken token)
     {
         var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
         var stopwatch = Stopwatch.StartNew();
@@ -474,11 +474,11 @@ public sealed class CraftEngine
                 CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token);
             if (candidate is not null)
             {
-                if (CraftStateSync.HasItemStateChanged(baseline, candidate))
+                if (baseline.HasChangedTo(candidate))
                 {
                     Diag.Log($"[同步] Mode1 物品状态已变化: total={stopwatch.ElapsedMilliseconds}ms, " +
                              $"attempts={attempts}, unchanged={unchangedCopies}, empty={emptyCopies}");
-                    return candidate;
+                    return new CraftItemSnapshot(candidate);
                 }
 
                 unchangedCopies++;
@@ -512,7 +512,7 @@ public sealed class CraftEngine
     /// Mode 2/3 操作后门禁：重试复制直到观察到该通货应有的稀有度/词缀数转换。
     /// 未观察到预期转换时绝不发送下一次鼠标点击。
     /// </summary>
-    private async Task<string> WaitForExpectedTransitionAsync(string baseline,
+    private async Task<CraftItemSnapshot> WaitForExpectedTransitionAsync(CraftItemSnapshot baseline,
         CraftCurrencyOperation operation, string operationLabel, CancellationToken token)
     {
         var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
@@ -520,8 +520,7 @@ public sealed class CraftEngine
         var attempts = 0;
         var rejectedCopies = 0;
         var emptyCopies = 0;
-        var beforeParsed = AffixEngine.ParseItem(baseline);
-        var before = new CraftItemState(beforeParsed.Rarity, beforeParsed.ExplicitAffixCount);
+        var before = baseline.State;
         var lastReason = "未收到有效物品文本";
 
         if (_delayMs > 0)
@@ -540,9 +539,10 @@ public sealed class CraftEngine
             }
             else
             {
-                var afterParsed = AffixEngine.ParseItem(candidate);
-                var after = new CraftItemState(afterParsed.Rarity, afterParsed.ExplicitAffixCount);
-                var changed = CraftStateSync.HasItemStateChanged(baseline, candidate);
+                var changed = baseline.HasChangedTo(candidate);
+                // 旧状态无需重解析；新状态的解析与原文一起返回给后续匹配。
+                var observed = changed ? new CraftItemSnapshot(candidate) : baseline;
+                var after = observed.State;
                 var check = CraftStateSync.CheckTransition(operation, before, after, changed);
                 if (check.Accepted)
                 {
@@ -550,7 +550,7 @@ public sealed class CraftEngine
                              $"{before.Rarity}/{before.ExplicitAffixCount}→{after.Rarity}/{after.ExplicitAffixCount}, " +
                              $"total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}, " +
                              $"rejected={rejectedCopies}, empty={emptyCopies}");
-                    return candidate;
+                    return observed;
                 }
 
                 rejectedCopies++;
@@ -570,9 +570,9 @@ public sealed class CraftEngine
             $"{operationLabel}后未观察到预期物品变化（{lastReason}）；已安全停止，未继续使用其他通货");
     }
 
-    private (AffixCheckResult Result, int AffixCount) CheckItem(string text)
+    private (AffixCheckResult Result, int AffixCount) CheckItem(CraftItemSnapshot item)
     {
-        var parsed = AffixEngine.ParseItem(text);
+        var parsed = item.Parsed;
         var result = AffixEngine.CheckAffixes(parsed, _rules);
         if (result.HasAnyHit || result.HasExclude)
         {
@@ -664,11 +664,11 @@ public sealed class CraftEngine
 
         // 启动状态只作为第一次改造的基线，不判定命中。
         var text = await CopyBaselineWithRetryAsync("Mode2", token);
-        if (text.Contains("已污染", StringComparison.Ordinal) ||
-            text.Contains("Corrupted", StringComparison.OrdinalIgnoreCase))
+        if (text.Text.Contains("已污染", StringComparison.Ordinal) ||
+            text.Text.Contains("Corrupted", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Mode 2 不支持已污染物品，未执行通货操作");
 
-        var initialItem = AffixEngine.ParseItem(text);
+        var initialItem = text.Parsed;
         if (initialItem.Rarity != ItemRarity.Magic)
             throw new InvalidOperationException(
                 $"Mode 2 改造+增幅要求启动物品为魔法稀有度，当前为 {initialItem.Rarity}，未执行通货操作");
@@ -681,47 +681,38 @@ public sealed class CraftEngine
             // Phase 1: 改造（右键一次，shift+click 循环）
             await SelectCurrencyAsync(Currency.Alteration, altCoord, token);
             await _host.Input.HoldShiftAsync(token);
+            Mode2AlterationOutcome outcome;
             try
             {
-                while (true)
-                {
-                    token.ThrowIfCancellationRequested();
-                    await AwaitForegroundAsync(token);
-                    await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, token);
-                    UseCount++;
-
-                    text = await WaitForExpectedTransitionAsync(text,
-                        CraftCurrencyOperation.Alteration, "改造石", token);
-                    var (result, _) = CheckItem(text);
-                    MatchCount = result.TotalHits;
-
-                    if (result.HasExclude)
+                outcome = await Mode2AlterationLoop.RunAsync(_rules,
+                    async stepToken =>
                     {
-                        ReportStatus($"#{UseCount} 排除命中，继续改造...");
-                        continue;
-                    }
-                    if (result.HasAnyHit)
-                        break; // 改造阶段：至少命中 1 条（主或次）
-
-                    ReportStatus($"#{UseCount} 改造中...");
-                }
+                        await AwaitForegroundAsync(stepToken);
+                        await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0, stepToken);
+                        UseCount++;
+                        text = await WaitForExpectedTransitionAsync(text,
+                            CraftCurrencyOperation.Alteration, "改造石", stepToken);
+                        var (result, _) = CheckItem(text);
+                        MatchCount = result.TotalHits;
+                        return new Mode2AlterationStep(text, result);
+                    },
+                    step => ReportStatus(step.Result.HasExclude
+                        ? $"#{UseCount} 排除命中，继续改造..."
+                        : step.Item.Parsed.ExplicitAffixCount == 2 && step.Result.HasAnyHit
+                            ? $"#{UseCount} 2条词缀不满足，继续改造..."
+                            : $"#{UseCount} 改造中..."), token);
             }
             finally
             {
                 try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
             }
 
-            // 检查词缀数：≥2 则跳过增幅直接终检
-            var (lastResult, affixCount) = CheckItem(text);
-            if (affixCount >= 2)
+            // 两词缀终检失败留在上面的改造循环，不释放Shift或重新右键改造石。
+            text = outcome.Step.Item;
+            if (outcome.Decision == Mode2AlterationDecision.Complete)
             {
-                if (lastResult.MeetsFinalRules(_rules))
-                {
-                    OnSuccess();
-                    return;
-                }
-                ReportStatus($"#{UseCount} 2条词缀不满足，重新改造...");
-                continue;
+                OnSuccess();
+                return;
             }
 
             // Phase 2: 增幅（仅在恰好 1 词缀时使用，铁律 #4）
@@ -764,11 +755,11 @@ public sealed class CraftEngine
         ReportStatus("启动重铸+点金模式...", force: true);
 
         var text = await CopyBaselineWithRetryAsync("Mode2重铸点金", token);
-        if (text.Contains("已污染", StringComparison.Ordinal) ||
-            text.Contains("Corrupted", StringComparison.OrdinalIgnoreCase))
+        if (text.Text.Contains("已污染", StringComparison.Ordinal) ||
+            text.Text.Contains("Corrupted", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("重铸+点金不支持已污染物品，未执行通货操作");
 
-        var currentItem = AffixEngine.ParseItem(text);
+        var currentItem = text.Parsed;
         if (currentItem.Rarity is not (ItemRarity.Normal or ItemRarity.Magic or ItemRarity.Rare))
             throw new InvalidOperationException(
                 $"重铸+点金无法处理当前物品稀有度（{currentItem.Rarity}），未执行通货操作");
@@ -791,7 +782,7 @@ public sealed class CraftEngine
                     UseCount++;
                     text = await WaitForExpectedTransitionAsync(text,
                         CraftCurrencyOperation.Scouring, "重铸石", token);
-                    currentItem = AffixEngine.ParseItem(text);
+                    currentItem = text.Parsed;
                 }
                 finally
                 {
@@ -810,7 +801,7 @@ public sealed class CraftEngine
 
                 text = await WaitForExpectedTransitionAsync(text,
                     CraftCurrencyOperation.Alchemy, "点金石", token);
-                currentItem = AffixEngine.ParseItem(text);
+                currentItem = text.Parsed;
                 var (result, _) = CheckItem(text);
                 MatchCount = result.TotalHits;
 
@@ -853,11 +844,11 @@ public sealed class CraftEngine
         // 启动时先读取实际装备状态，避免对蓝/黄装直接使用蜕变后继续读取旧状态。
         ReportStatus("检查 Mode 3 装备初始状态...", force: true);
         var initialText = await CopyBaselineWithRetryAsync("Mode3", token);
-        if (initialText.Contains("已污染", StringComparison.Ordinal) ||
-            initialText.Contains("Corrupted", StringComparison.OrdinalIgnoreCase))
+        if (initialText.Text.Contains("已污染", StringComparison.Ordinal) ||
+            initialText.Text.Contains("Corrupted", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Mode 3 不支持已污染物品，未执行任何通货操作");
 
-        var initialItem = AffixEngine.ParseItem(initialText);
+        var initialItem = initialText.Parsed;
         var startDecision = CraftDecisions.BeforeMode3(initialItem.Rarity);
         Diag.Log($"[引擎] Mode3 初始预检: rarity={initialItem.Rarity}, decision={startDecision}, " +
                  $"affixes={initialItem.ExplicitAffixCount}");
@@ -975,7 +966,7 @@ public sealed class CraftEngine
                             if (CraftDecisions.ShouldCaptureMode3Miss(affixCount, hits, threshold, result.HasExclude))
                             {
                                 Mode3DiagnosticRecorder.Capture(
-                                    text,
+                                    text.Text,
                                     _rules,
                                     result,
                                     affixCount,

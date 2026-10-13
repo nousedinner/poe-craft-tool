@@ -126,6 +126,15 @@ public sealed class ItemParseResult
     public int ExplicitAffixCount => ExplicitAffixes.Count;
 }
 
+/// <summary>Mode2改造阶段下一步；两词缀失败继续当前改造阶段。</summary>
+public enum Mode2AlterationDecision
+{
+    ContinueAlteration,
+    UseAugmentation,
+    Complete,
+    StopUnsupported,
+}
+
 /// <summary>Mode 3 魔法阶段下一步；纯判定便于在不发送键鼠输入时验证状态机。</summary>
 public enum Mode3MagicDecision
 {
@@ -143,6 +152,21 @@ public enum Mode3StartDecision
 
 public static class CraftDecisions
 {
+    /// <summary>
+    /// 保持原改造命中门槛：没有命中或排除命中继续；一词缀有命中去增幅，
+    /// 两词缀直接终检。未识别词缀数量不能被当作一条而误用增幅。
+    /// </summary>
+    public static Mode2AlterationDecision AfterMode2Alteration(
+        int explicitAffixCount, AffixCheckResult result, CraftRules rules)
+    {
+        if (explicitAffixCount is not (1 or 2)) return Mode2AlterationDecision.StopUnsupported;
+        if (result.HasExclude || !result.HasAnyHit) return Mode2AlterationDecision.ContinueAlteration;
+        if (explicitAffixCount == 1) return Mode2AlterationDecision.UseAugmentation;
+        return result.MeetsFinalRules(rules)
+            ? Mode2AlterationDecision.Complete
+            : Mode2AlterationDecision.ContinueAlteration;
+    }
+
     /// <summary>
     /// Mode 3 改造得到两条显式词缀但未达到魔法阶段阈值时，记录完整样本用于排查漏识别。
     /// 该策略只影响诊断文件，不改变下一步通货判定。

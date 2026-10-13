@@ -44,7 +44,7 @@ public static class CraftStateSync
     public static bool HasItemStateChanged(string baseline, string candidate)
     {
         if (string.IsNullOrWhiteSpace(candidate)) return false;
-        return !string.Equals(Normalize(baseline), Normalize(candidate), StringComparison.Ordinal);
+        return !string.Equals(NormalizeItemText(baseline), NormalizeItemText(candidate), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -89,7 +89,7 @@ public static class CraftStateSync
             $"{before.Rarity}/{before.ExplicitAffixCount} → {after.Rarity}/{after.ExplicitAffixCount}");
     }
 
-    private static string Normalize(string text)
+    internal static string NormalizeItemText(string text)
         => text.Replace("\r\n", "\n", StringComparison.Ordinal)
                .Replace('\r', '\n')
                .Trim();

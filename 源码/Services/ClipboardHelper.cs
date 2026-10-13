@@ -11,6 +11,7 @@ namespace ShiKe.Services;
 public static class ClipboardHelper
 {
     private const uint CF_UNICODETEXT = 13;
+    private static readonly Regex ChineseItemHeader = new(@"^物品(?:[类類][别別]|種類)\s*[:：]");
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool OpenClipboard(nint hWndNewOwner);
@@ -94,7 +95,7 @@ public static class ClipboardHelper
     public static bool IsItemText(string text)
     {
         var value = text.TrimStart();
-        return Regex.IsMatch(value, @"^物品(?:[类類][别別]|種類)\s*[:：]") ||
+        return ChineseItemHeader.IsMatch(value) ||
                value.StartsWith("Item Class:", StringComparison.OrdinalIgnoreCase);
     }
 }

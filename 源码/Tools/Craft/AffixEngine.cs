@@ -17,7 +17,7 @@ public static class AffixEngine
     /// 元数据字段（DEV_GUIDE §66-88 完整列表 + 品质）。只匹配字段名后的冒号，
     /// 不能因正文以“插槽”“物理伤害”等字样开头而吞掉整条词缀。
     /// </summary>
-    private static readonly string[] SkipPatterns = new[]
+    private static readonly Regex[] SkipPatterns = new[]
     {
         // 简繁中文。只兼容元数据字段的字形，匹配正文保持原文，不自动转换用户规则。
         @"^稀\s*有\s*度",
@@ -42,7 +42,13 @@ public static class AffixEngine
     }.Select(pattern => pattern + @"\s*[:：]")
      // 需求分节可以独占一行；英文旧格式的 Requires / Vendor 值可以直接跟在空格后。
      .Concat(new[] { @"^需求$", @"^Requires(?:\s|[:：]|$)", @"^Vendor(?:\s|[:：]|$)" })
+     .Select(pattern => new Regex(pattern))
      .ToArray();
+
+    // 首次解析时保存固定表达式，避免35条过滤规则反复挤出静态Regex缓存。
+    private static readonly Regex ChineseRarity = new(@"^稀\s*有\s*度\s*[:：]\s*(\S+)");
+    private static readonly Regex EnglishRarity = new(@"^Rarity\s*:\s*(\S+)", RegexOptions.IgnoreCase);
+    private static readonly Regex ChineseExplicitHeader = new(@"^\{\s*(?:前[缀綴]|[后後][缀綴])(?:[属屬]性)?(?=\s|[""“])");
 
     /// <summary>
     /// 解析物品文本为双视图：MatchLines 用于宽松匹配；ExplicitAffixes 用于真实词缀计数。
@@ -128,7 +134,7 @@ public static class AffixEngine
 
     private static ItemRarity ParseRarity(string line)
     {
-        var chinese = Regex.Match(line, @"^稀\s*有\s*度\s*[:：]\s*(\S+)");
+        var chinese = ChineseRarity.Match(line);
         if (chinese.Success)
         {
             return chinese.Groups[1].Value switch
@@ -141,7 +147,7 @@ public static class AffixEngine
             };
         }
 
-        var english = Regex.Match(line, @"^Rarity\s*:\s*(\S+)", RegexOptions.IgnoreCase);
+        var english = EnglishRarity.Match(line);
         if (!english.Success) return ItemRarity.Unknown;
         return english.Groups[1].Value.ToLowerInvariant() switch
         {
@@ -159,7 +165,7 @@ public static class AffixEngine
 
         // 前/后缀类型必须紧跟左花括号；繁体描述可以没有“屬性”。
         // 階層只是头里的附加信息，不要求它出现，也不把基底/附魔头里的前后缀名字误计数。
-        var chinese = Regex.IsMatch(line, @"^\{\s*(?:前[缀綴]|[后後][缀綴])(?:[属屬]性)?(?=\s|[""“])");
+        var chinese = ChineseExplicitHeader.IsMatch(line);
         var english = line.Contains("Modifier", StringComparison.OrdinalIgnoreCase) &&
                       (line.Contains("Prefix", StringComparison.OrdinalIgnoreCase) ||
                        line.Contains("Suffix", StringComparison.OrdinalIgnoreCase));
@@ -174,7 +180,7 @@ public static class AffixEngine
     {
         foreach (var pattern in SkipPatterns)
         {
-            if (Regex.IsMatch(line, pattern)) return true;
+            if (pattern.IsMatch(line)) return true;
         }
         return false;
     }
@@ -182,7 +188,7 @@ public static class AffixEngine
     /// <summary>
     /// 检查词缀行是否满足规则（对齐 DEV_GUIDE §92-97 + Python check_affixes）：
     /// 排除优先 → 命中即 early return（终检/循环中均判失败，铁律 #7）；
-    /// 主词缀 → 每条规则最多匹配一行（break）；次级同理。
+    /// 每条规则和每个候选至多使用一次；先最大化主命中，再在保留主命中的前提下分配次池。
     /// </summary>
     public static AffixCheckResult CheckAffixes(List<string> affixLines, CraftRules rules)
         => CheckAffixes(
@@ -212,61 +218,76 @@ public static class AffixEngine
             }
         }
 
-        // 2. 主词缀优先。候选索引在主/次池之间共用，避免同一实际词缀被算两次。
-        // 显式词缀块优先于装备名/基础类型等宽松语料：魔法物品名称通常由词缀名生成，
-        // 若先消费名称行，再用另一条规则消费同一词缀正文，会把一个实际词缀算成两次。
-        var usedCandidates = new HashSet<int>();
-        foreach (var rule in rules.PrimaryAffixes)
+        // 存在显式对应的规则只连接显式块，不允许再用魔法名称制造重复命中；
+        // 没有显式对应才使用原来的装备名/基础类型后备。
+        var allRules = rules.PrimaryAffixes.Concat(rules.SecondaryAffixes).ToArray();
+        var matches = new List<int>[allRules.Length];
+        for (var ruleIndex = 0; ruleIndex < allRules.Length; ruleIndex++)
         {
-            var index = FindMatchCandidate(rule, candidates, usedCandidates);
-            if (index < 0) continue;
-            usedCandidates.Add(index);
-            result.PrimaryHits++;
-            result.MatchedPrimary.Add(candidates[index].DisplayText);
-            result.MatchedPrimaryRules.Add(rule.Text);
+            var eligible = matches[ruleIndex] = [];
+            for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
+            {
+                var candidate = candidates[candidateIndex];
+                if (candidate.IsExplicitAffix && allRules[ruleIndex].Matches(candidate.SearchText))
+                    eligible.Add(candidateIndex);
+            }
+            if (eligible.Count > 0) continue;
+            for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
+            {
+                var candidate = candidates[candidateIndex];
+                if (!candidate.IsExplicitAffix && allRules[ruleIndex].Matches(candidate.SearchText))
+                    eligible.Add(candidateIndex);
+            }
         }
 
-        // 3. 次级词缀只能使用尚未被主池消费的实际候选。
-        foreach (var rule in rules.SecondaryAffixes)
+        var candidateOwners = new int[candidates.Count];
+        var ruleCandidates = new int[allRules.Length];
+        Array.Fill(candidateOwners, -1);
+        Array.Fill(ruleCandidates, -1);
+        var visited = new bool[candidates.Count];
+
+        // 先处理主池，再处理次池。增广路径可以移动已有配对，但不能丢弃主池命中。
+        // 不按RequiredHits截断主池消费，保持既有主池优先和实际命中数量语义。
+        for (var ruleIndex = 0; ruleIndex < allRules.Length; ruleIndex++)
         {
-            var index = FindMatchCandidate(rule, candidates, usedCandidates);
-            if (index < 0) continue;
-            usedCandidates.Add(index);
-            result.SecondaryHits++;
-            result.MatchedSecondary.Add(candidates[index].DisplayText);
-            result.MatchedSecondaryRules.Add(rule.Text);
+            Array.Clear(visited);
+            TryAssign(ruleIndex);
+        }
+
+        // 明细沿用用户的规则顺序，数量来自最终的独立配对。
+        for (var ruleIndex = 0; ruleIndex < allRules.Length; ruleIndex++)
+        {
+            var candidateIndex = ruleCandidates[ruleIndex];
+            if (candidateIndex < 0) continue;
+            if (ruleIndex < rules.PrimaryAffixes.Count)
+            {
+                result.PrimaryHits++;
+                result.MatchedPrimary.Add(candidates[candidateIndex].DisplayText);
+                result.MatchedPrimaryRules.Add(allRules[ruleIndex].Text);
+            }
+            else
+            {
+                result.SecondaryHits++;
+                result.MatchedSecondary.Add(candidates[candidateIndex].DisplayText);
+                result.MatchedSecondaryRules.Add(allRules[ruleIndex].Text);
+            }
         }
 
         return result;
-    }
 
-    private static int FindMatchCandidate(
-        AffixRule rule,
-        List<ItemMatchCandidate> candidates,
-        HashSet<int> usedCandidates)
-    {
-        // 先把规则绑定到尚未消费的真实词缀块。
-        for (var i = 0; i < candidates.Count; i++)
+        bool TryAssign(int ruleIndex)
         {
-            if (usedCandidates.Contains(i) || !candidates[i].IsExplicitAffix) continue;
-            if (rule.Matches(candidates[i].SearchText)) return i;
+            foreach (var candidateIndex in matches[ruleIndex])
+            {
+                if (visited[candidateIndex]) continue;
+                visited[candidateIndex] = true;
+                var previousOwner = candidateOwners[candidateIndex];
+                if (previousOwner >= 0 && !TryAssign(previousOwner)) continue;
+                candidateOwners[candidateIndex] = ruleIndex;
+                ruleCandidates[ruleIndex] = candidateIndex;
+                return true;
+            }
+            return false;
         }
-
-        // 若规则能命中某个已经消费的真实词缀，它只是该词缀的另一种写法；
-        // 不得再退回魔法物品名称行制造第二次命中。
-        for (var i = 0; i < candidates.Count; i++)
-        {
-            if (!candidates[i].IsExplicitAffix) continue;
-            if (rule.Matches(candidates[i].SearchText)) return -1;
-        }
-
-        // 装备名和基础类型仍然参与匹配（铁律 #1），但只作为没有显式对应时的宽松后备。
-        for (var i = 0; i < candidates.Count; i++)
-        {
-            if (usedCandidates.Contains(i) || candidates[i].IsExplicitAffix) continue;
-            if (rule.Matches(candidates[i].SearchText)) return i;
-        }
-
-        return -1;
     }
 }
