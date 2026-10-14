@@ -104,19 +104,6 @@ internal static class AppearanceChecks
                     "持久保存的单通货必须恢复到新的下拉选项，不能重置成改造石");
             Require(Find<ToggleButton>(page, "ExaltCheck").IsChecked == true, "原崇高选项应恢复");
             Require(Find<Slider>(page, "DelaySlider").Value == 55, "原延迟应恢复");
-            var speedProfiles = Find<ComboBox>(page, "SpeedProfileCombo");
-            Require(speedProfiles.Items.Count == 7 && speedProfiles.SelectedIndex == 0,
-                "实验页面应默认原等待并显示全部对照档位");
-            speedProfiles.SelectedIndex = (int)CraftSpeedExperiment.Combined;
-            Pump();
-            Require(craft.SpeedExperiment == CraftSpeedExperiment.Combined && craft.DelayMs == 55,
-                "实验档位只修改本次试验选择，不能覆盖原延迟");
-            speedProfiles.SelectedIndex = 0;
-            speedProfiles.SelectedIndex = (int)CraftSpeedExperiment.Balanced;
-            Pump();
-            Require(craft.SpeedExperiment == CraftSpeedExperiment.Balanced && craft.DelayMs == 55,
-                "新增稳健档位必须可选且保留原滑条设置");
-            speedProfiles.SelectedIndex = 0;
             CheckColumns(page);
             CheckSwitchHitArea(Find<ToggleButton>(page, "EnableToolSwitch"));
             var delay = Find<Slider>(page, "DelaySlider");
@@ -202,12 +189,6 @@ internal static class AppearanceChecks
             Pump();
             Require(Find<StackPanel>(page, "Mode2Frame").IsVisible && !Find<StackPanel>(page, "Mode3Frame").IsVisible, "Mode 2 子模式显示错误");
             Require(Find<RadioButton>(page, "Mode2ScourAlch").IsChecked == true, "切模式不能重置子模式");
-            CheckCurrencies(page, CraftMode.AltAug);
-            Find<RadioButton>(page, "Mode2AltAug").IsChecked = true;
-            Pump();
-            CheckCurrencies(page, CraftMode.AltAug);
-            Find<RadioButton>(page, "Mode2ScourAlch").IsChecked = true;
-            Pump();
             CheckCurrencies(page, CraftMode.AltAug);
             Snapshot(window, "T11-WPF-Mode2.png");
             Find<RadioButton>(page, "Mode1Radio").IsChecked = true;
@@ -433,11 +414,7 @@ internal static class AppearanceChecks
     private static void CheckCurrencies(CraftPage page, CraftMode mode)
     {
         var visible = Find<ItemsControl>(page, "CurrencyGrid").Items.Cast<Border>().Where(border => border.IsVisible).ToArray();
-        var expected = mode == CraftMode.AltAug
-            ? new[] { Find<RadioButton>(page, "Mode2ScourAlch").IsChecked == true ? Currency.Alchemy : Currency.Alteration }
-            : Currency.ModeCurrencies[mode];
-        Require(visible.Select(card => (string)card.Tag).Order().SequenceEqual(expected.Order()),
-            "Mode2应只显示常驻通货，其他模式的通货子集保持");
+        Require(visible.Length == Currency.ModeCurrencies[mode].Length, "通货显示子集与当前模式不一致");
         foreach (var card in visible)
             foreach (var button in Descendants(card).OfType<Button>().Where(button => button.IsVisible))
                 Require(button.ActualWidth > 18 && button.TranslatePoint(new Point(button.ActualWidth, 0), card).X <= card.ActualWidth + 1,

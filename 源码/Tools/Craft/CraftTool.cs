@@ -35,8 +35,6 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
     public string SelectedSound { get; set; } = SettingsDefaults.SelectedSound;
     public bool Mode2ScourAlch { get; set; }
     public bool UseExalt { get; set; }
-    // 实验档位仅驻留内存，不参与 LoadSettings/SaveSettings 或预设。
-    public CraftSpeedExperiment SpeedExperiment { get; set; }
     private bool _enabled = SettingsDefaults.CraftEnabled;
     public bool IsEnabled => _enabled;
 
@@ -219,7 +217,7 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
 
         _engine.SetStopKey(HotkeyStop); // 设置停止键 VK（GetAsyncKeyState 轮询用）
         _engine.Start(Rules, Coordinates, DelayMs, SoundEnabled, PopupEnabled,
-            SelectedSound, ExhaustionThreshold, Mode2ScourAlch, UseExalt, SpeedExperiment);
+            SelectedSound, ExhaustionThreshold, Mode2ScourAlch, UseExalt);
         if (_engine.IsRunning && PopupEnabled)
             _host.Notification.Show("▶ 洗词缀 启动");
     }

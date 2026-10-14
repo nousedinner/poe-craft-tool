@@ -1,4 +1,4 @@
-﻿using ShiKe.Tools.Craft;
+using ShiKe.Tools.Craft;
 using ShiKe.Tools.Clicker;
 using ShiKe.Tools.KeyLoop;
 using ShiKe.Services;
@@ -86,19 +86,21 @@ var tests = new (string Name, Action Run)[]
     ("快捷Alt或鼠标输入失败仍释放Alt", Mode2ShortcutChecks.AltInputFailureAlwaysReleases),
     ("Ctrl+C按键失败仅清理C和Ctrl", Mode2ShortcutChecks.CtrlCUsesOnlyControlAndCAndCleansFailures),
     ("快捷Mode2坐标收紧且其他模式保持", Mode2ShortcutChecks.CoordinateRequirementsKeepOtherModes),
-    ("快捷候选保留v47七档及10ms", Mode2ShortcutChecks.KeepsVersion47SevenProfilesAndTenMs),
+    ("正式时序保留原滑条范围", Mode2ShortcutChecks.FormalTimingKeepsOriginalDelayRange),
+    ("正式页面布局文字与v45逐项一致", FormalReleaseChecks.PresentationMatchesVersion45),
+    ("等待有效复制时不跳过判定或使用下一通货", FormalReleaseChecks.PendingCopyDoesNotAdvanceCurrency),
     ("物品快照保留原文并复用解析对象", CraftLoopChecks.SnapshotKeepsOriginalTextAndReusesParsedObject),
     ("物品快照比较保留完整字段变化", CraftLoopChecks.SnapshotChangeComparisonPreservesCompleteFields),
     ("新复制和新运行的物品快照相互独立", CraftLoopChecks.SnapshotsAreIndependentAcrossCopies),
-    ("速度实验基线保持原等待且单项档位独立", CraftSpeedChecks.ProfilesKeepTheBaselineAndSeparateVariables),
-    ("稳健组合保留移动档复制请求时刻并仅提前读取", CraftSpeedChecks.BalancedDoesNotRequestACopyEarlierThanMovementOnly),
-    ("速度实验选择不写入原设置且重启恢复基线", CraftSpeedChecks.ExperimentSelectionNeverEntersSavedSettings),
-    ("完整循环计时包含点击复制与匹配", CraftSpeedChecks.CompleteCycleIncludesClickCopyAndMatching),
-    ("剪贴板读取与拒绝复制分开计数", CraftSpeedChecks.ReadsAndRejectedCopiesAreDifferentCounters),
-    ("测速扣除前台等待且停止后不继续计时", CraftSpeedChecks.ForegroundPauseIsExcludedAndStopIsStable),
-    ("仅转换确认和取消点击不计为完成匹配", CraftSpeedChecks.TransitionOnlyAndCancelledClicksDoNotBecomeMatchedCycles),
-    ("测速保留最近原文和独立计时样本", CraftSpeedChecks.TraceRetainsLatestItemAndSeparateTimingSamples),
-    ("测速报告真实保存且写入失败不妨碍停止", CraftSpeedChecks.ReportsAreSavedAndWriteFailureDoesNotThrow),
+    ("正式版默认固定已实测稳健时序", CraftRunChecks.FormalTimingDefaultsToBalanced),
+    ("正式稳健时序保留首次等待与同步门禁", CraftRunChecks.FormalTimingKeepsDelayAndSafetyBudget),
+    ("正式时序不新增设置字段", CraftRunChecks.FormalTimingDoesNotAddSavedSettings),
+    ("完整循环计时包含点击复制与匹配", CraftRunChecks.CompleteCycleIncludesClickCopyAndMatching),
+    ("剪贴板读取与拒绝复制分开计数", CraftRunChecks.ReadsAndRejectedCopiesAreDifferentCounters),
+    ("测速扣除前台等待且停止后不继续计时", CraftRunChecks.ForegroundPauseIsExcludedAndStopIsStable),
+    ("仅转换确认和取消点击不计为完成匹配", CraftRunChecks.TransitionOnlyAndCancelledClicksDoNotBecomeMatchedCycles),
+    ("测速保留最近原文和独立计时样本", CraftRunChecks.TraceRetainsLatestItemAndSeparateTimingSamples),
+    ("测速报告真实保存且写入失败不妨碍停止", CraftRunChecks.ReportsAreSavedAndWriteFailureDoesNotThrow),
     ("Mode3 蜕变产物进入魔法阶段判定", Mode3TransmutationDecisionMatrix),
     ("Mode3 增幅达标后必须进入富豪", Mode3AugmentationAlwaysProceedsToRegal),
     ("Mode3 启动稀有度判定矩阵", Mode3StartDecisionMatrix),

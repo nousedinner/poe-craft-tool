@@ -9,10 +9,6 @@ $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $projectPath = Join-Path $projectRoot '拾刻.csproj'
 $projectXml = [xml](Get-Content -LiteralPath $projectPath -Raw -Encoding UTF8)
 $version = [string]$projectXml.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
-if ($projectXml.SelectSingleNode('/Project/PropertyGroup/CraftSpeedExperimentBuild') -and
-    $projectXml.SelectSingleNode('/Project/PropertyGroup/CraftSpeedExperimentBuild').InnerText -eq 'true') {
-    throw '当前是速度实验分支，请使用生成速度实验.cmd；此入口不会替换日常 EXE 或 ZIP。'
-}
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw '项目版本格式无效' }
 
 # 只打包版本库中的内置资源，日常 data 和个人音效不作为发布来源。

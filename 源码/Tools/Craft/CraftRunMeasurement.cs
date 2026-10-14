@@ -3,34 +3,34 @@ using System.Text.Json;
 
 namespace ShiKe.Tools.Craft;
 
-public sealed record CraftSpeedReport(string Text, string? Path);
+internal sealed record CraftRunReport(string Text, string? Path);
 
-internal sealed record CraftSpeedSummary(
+internal sealed record CraftRunSummary(
     double ElapsedMs, double ForegroundPauseMs, double ActiveMs,
     int SentClicks, int ConfirmedTransitions, int MatchedCycles,
     int CopyAttempts, int ClipboardReads, int RejectedCopies, int UnchangedCopies,
     int EmptyCopies, int SyncFailures, double ConfirmedPerSecond, double MatchedPerSecond,
     double? MatchCycleMedianMs, double? MatchCycleP95Ms, string StopReason);
 
-internal sealed record CraftSpeedSample(int Number, string Currency, bool ClickSent,
+internal sealed record CraftRunSample(int Number, string Currency, bool ClickSent,
     bool Confirmed, bool Matched, double ActiveMs, int CopyAttempts, int ClipboardReads,
     int RejectedCopies, int EmptyCopies, int? PrimaryHits, int? SecondaryHits, bool? Excluded);
 
-internal sealed record CraftSpeedTrace(CraftSpeedSample Sample, string? BeforeText, string? AfterText);
+internal sealed record CraftRunTrace(CraftRunSample Sample, string? BeforeText, string? AfterText);
 
 /// <summary>
 /// 完整任务用单调时钟计时；循环计时从装备点击前到匹配结束。
 /// 游戏循环内只更新内存，停止后一次写报告，避免逐条测速落盘影响对照。
 /// </summary>
-internal sealed class CraftSpeedMeasurement
+internal sealed class CraftRunMeasurement
 {
     private const int SampleLimit = 10000;
     private const int TraceLimit = 30;
     private readonly Func<double> _clock;
     private readonly double _started;
     private readonly DateTime _startedUtc = DateTime.UtcNow;
-    private readonly List<CraftSpeedSample> _samples = [];
-    private readonly Queue<CraftSpeedTrace> _traces = new();
+    private readonly List<CraftRunSample> _samples = [];
+    private readonly Queue<CraftRunTrace> _traces = new();
     private readonly List<double> _matchDurations = [];
     private double? _stopped;
     private double? _pauseStarted;
@@ -64,7 +64,7 @@ internal sealed class CraftSpeedMeasurement
         public double? ConfirmedActiveMs;
     }
 
-    public CraftSpeedMeasurement(Func<double>? clock = null)
+    public CraftRunMeasurement(Func<double>? clock = null)
     {
         _clock = clock ?? (() => Stopwatch.GetTimestamp() * 1000d / Stopwatch.Frequency);
         _started = _clock();
@@ -138,7 +138,7 @@ internal sealed class CraftSpeedMeasurement
         if (_step is null) return;
         var finishedAt = result is null && _step.ConfirmedActiveMs.HasValue
             ? _step.ConfirmedActiveMs.Value : ActiveMs;
-        var sample = new CraftSpeedSample(_step.Number, _step.Currency, _step.ClickSent,
+        var sample = new CraftRunSample(_step.Number, _step.Currency, _step.ClickSent,
             _step.Confirmed, result is not null, Math.Max(0, finishedAt - _step.StartedActiveMs),
             _copies - _step.CopiesBefore, _reads - _step.ReadsBefore,
             _rejected - _step.RejectedBefore, _empty - _step.EmptyBefore,
@@ -149,7 +149,7 @@ internal sealed class CraftSpeedMeasurement
         _step = null;
     }
 
-    public CraftSpeedSummary Stop(string reason)
+    public CraftRunSummary Stop(string reason)
     {
         _stopped ??= _clock();
         FinishStep(null);
@@ -164,7 +164,7 @@ internal sealed class CraftSpeedMeasurement
             Percentile(0.5), Percentile(0.95), reason);
     }
 
-    public string SerializeReport(CraftSpeedSummary summary, object context) => JsonSerializer.Serialize(new
+    public string SerializeReport(CraftRunSummary summary, object context) => JsonSerializer.Serialize(new
     {
         schemaVersion = 1, startedUtc = _startedUtc, context, summary,
         scope = "实际引擎运行计时；不验证未被复制到的中间状态，不据此证明没有漏洗",
@@ -175,13 +175,13 @@ internal sealed class CraftSpeedMeasurement
         samples = _samples, recentItemStates = _traces.ToArray(),
     }, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 
-    public CraftSpeedReport SaveReport(CraftSpeedSummary summary, object context, string dataDirectory)
+    public CraftRunReport SaveReport(CraftRunSummary summary, object context, string dataDirectory)
     {
         var message = $"完成判定{summary.MatchedCycles}次，任务平均{summary.MatchedPerSecond:0.00}次/秒；" +
                       $"转换失败{summary.SyncFailures}次，拒绝{summary.RejectedCopies}次，空复制{summary.EmptyCopies}次。";
         try
         {
-            var directory = System.IO.Path.Combine(dataDirectory, "speed-experiments");
+            var directory = System.IO.Path.Combine(dataDirectory, "craft-runs");
             Directory.CreateDirectory(directory);
             var path = System.IO.Path.Combine(directory, $"run-{_startedUtc:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}.json");
             File.WriteAllText(path, SerializeReport(summary, context));

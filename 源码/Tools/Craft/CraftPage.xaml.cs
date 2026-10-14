@@ -112,17 +112,9 @@ public partial class CraftPage : UserControl
         RefreshPresetCombo();
 
         // 延迟滑块绑定
-        DelaySlider.ValueChanged += (_, _) =>
-        {
-            DelayValue.Text = $"{(int)DelaySlider.Value} ms";
-            RefreshSpeedProfile();
-        };
+        DelaySlider.ValueChanged += (_, _) => DelayValue.Text = $"{(int)DelaySlider.Value} ms";
         DelaySlider.Value = _tool.DelayMs;
         DelayValue.Text = $"{_tool.DelayMs} ms";
-        SpeedProfileCombo.ItemsSource = Enum.GetValues<CraftSpeedExperiment>().Select(CraftTimingProfile.For).ToArray();
-        SpeedProfileCombo.SelectedIndex = (int)_tool.SpeedExperiment;
-        RefreshSpeedProfile();
-        if (_tool.Engine?.LatestSpeedReport is { } report) SpeedResultText.Text = report.Text;
         RefreshEnabledPresentation();
         var startupElapsedMs = startupTimer.ElapsedMilliseconds;
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
@@ -150,38 +142,6 @@ public partial class CraftPage : UserControl
     }
 
     // ── 通货网格 ──
-
-    private void SpeedProfile_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_initialized || SpeedProfileCombo.SelectedItem is not CraftTimingProfile profile) return;
-        if (_tool.IsRunning)
-        {
-            SpeedProfileCombo.SelectedIndex = (int)_tool.SpeedExperiment;
-            return;
-        }
-        _tool.SpeedExperiment = profile.Experiment;
-        RefreshSpeedProfile();
-    }
-
-    private void RefreshSpeedProfile()
-    {
-        if (SpeedProfileDescription is null || SpeedProfileCombo?.SelectedItem is not CraftTimingProfile profile) return;
-        SpeedProfileDescription.Text = profile.Describe((int)DelaySlider.Value);
-    }
-
-    private void OpenSpeedReports_Click(object sender, RoutedEventArgs e)
-    {
-        var directory = Path.Combine(_host.Storage.DataDir, "speed-experiments");
-        try
-        {
-            Directory.CreateDirectory(directory);
-            Process.Start(new ProcessStartInfo(directory) { UseShellExecute = true });
-        }
-        catch (Exception error) when (error is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
-        {
-            ShowOwnedMessage($"无法打开测速记录：{error.Message}", "测速记录", MessageBoxImage.Warning);
-        }
-    }
 
     private void BuildCurrencyCards()
     {
@@ -254,8 +214,6 @@ public partial class CraftPage : UserControl
     private void ApplyModeVisibility()
     {
         var visible = Currency.ModeCurrencies.TryGetValue(CurrentMode, out var keys) ? keys : [];
-        if (CurrentMode == CraftMode.AltAug)
-            visible = [Mode2ScourAlch.IsChecked == true ? Currency.Alchemy : Currency.Alteration];
         foreach (var (key, card) in _cards)
         {
             var root = (Border)CurrencyGrid.Items[Array.IndexOf(Currency.All, key)];
@@ -547,7 +505,6 @@ public partial class CraftPage : UserControl
     {
         if (!IsLoaded) return;
         _tool.Mode2ScourAlch = Mode2ScourAlch.IsChecked == true;
-        ApplyModeVisibility();
         _dirty = true;
     }
 
@@ -790,14 +747,11 @@ public partial class CraftPage : UserControl
         engine.StatusUpdated += s => Dispatcher.BeginInvoke(() =>
         {
             CraftStatusText.Text = _tool.IsEnabled ? s.Text : "功能已停用";
-            SpeedProfileCombo.IsEnabled = !_tool.IsRunning;
         });
         engine.Stopped += reason => Dispatcher.BeginInvoke(() =>
         {
             CraftStatusText.Text = _tool.IsEnabled ? reason : "功能已停用";
-            SpeedProfileCombo.IsEnabled = !_tool.IsRunning;
         });
-        engine.SpeedMeasured += report => Dispatcher.BeginInvoke(() => SpeedResultText.Text = report.Text);
         // 错误弹窗由 CraftTool 全局订阅（页面未开也弹），这里不重复订阅
     }
 

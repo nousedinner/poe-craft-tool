@@ -1,75 +1,53 @@
 using System.Text.Json;
 using ShiKe.Tools.Craft;
 
-internal static class CraftSpeedChecks
+internal static class CraftRunChecks
 {
-    public static void ProfilesKeepTheBaselineAndSeparateVariables()
+    public static void FormalTimingDefaultsToBalanced()
     {
-        var baseline = CraftTimingProfile.For(CraftSpeedExperiment.Baseline);
-        Require(baseline.FirstWaitMs(47) == 47, "基线必须跟随现有滑条");
-        var original = new[] { 47, 20, 30, 20, 20 };
-        Require(Values(baseline).SequenceEqual(original), "基线时序改变");
-        foreach (var experiment in new[] { CraftSpeedExperiment.FirstWait10,
-            CraftSpeedExperiment.ClipboardPoll5, CraftSpeedExperiment.Movement10,
-            CraftSpeedExperiment.CopyPadding10 })
-        {
-            var profile = CraftTimingProfile.For(experiment);
-            var differences = Values(profile).Zip(original).Count(pair => pair.First != pair.Second);
-            Require(differences == (experiment == CraftSpeedExperiment.CopyPadding10 ? 2 : 1),
-                "单项对照不能夹带其他等待变化");
-            Require(CraftStateSync.CalculateChangeTimeoutMs(profile.FirstWaitMs(47)) == 900,
-                "正常设置下保留原同步时间预算");
-        }
-        Require(Values(CraftTimingProfile.For(CraftSpeedExperiment.Combined))
-            .SequenceEqual(new[] { 10, 5, 10, 10, 10 }), "组合方案未包含已声明的四项变化");
-
-        static int[] Values(CraftTimingProfile profile) =>
-            [profile.FirstWaitMs(47), profile.ClipboardPollMs, profile.ItemMovementMs,
-             profile.CopyBeforeMs, profile.CopyAfterMs];
+        var timing = CraftTimingProfile.Default;
+        Require(new[] { timing.ClipboardPollMs, timing.ItemMovementMs, timing.CopyBeforeMs, timing.CopyAfterMs }
+            .SequenceEqual(new[] { 5, 10, 20, 10 }), "正式版必须固定使用已实测稳健组合");
+        Require(typeof(CraftTool).GetProperty("SpeedExperiment") is null,
+            "正式抽屉不应继续暴露实验选择");
+        Require(typeof(CraftEngine).GetMethods().Single(method => method.Name == "Start").GetParameters().Length == 9,
+            "正式启动接口不能夹带实验档位");
     }
 
-    public static void BalancedDoesNotRequestACopyEarlierThanMovementOnly()
+    public static void FormalTimingKeepsDelayAndSafetyBudget()
     {
-        var provenMovement = CraftTimingProfile.For(CraftSpeedExperiment.Movement10);
-        var balanced = CraftTimingProfile.For(CraftSpeedExperiment.Balanced);
+        var timing = CraftTimingProfile.Default;
         foreach (var configuredDelay in new[] { 10, 33, 47, 200 })
         {
-            var movementCopyRequestAt = provenMovement.FirstWaitMs(configuredDelay) +
-                provenMovement.ItemMovementMs + provenMovement.CopyBeforeMs;
-            var balancedCopyRequestAt = balanced.FirstWaitMs(configuredDelay) +
-                balanced.ItemMovementMs + balanced.CopyBeforeMs;
-            Require(balancedCopyRequestAt == movementCopyRequestAt,
-                "稳健组合不能比已测低重试的移动档更早发出Ctrl+Alt+C");
-            Require(balanced.FirstWaitMs(configuredDelay) == configuredDelay,
-                "稳健组合必须保留用户配置的首次同步窗口");
+            Require(timing.FirstWaitMs(configuredDelay) == configuredDelay,
+                "正式时序不能覆盖用户配置的首次等待");
+            Require(timing.FirstWaitMs(configuredDelay) + timing.ItemMovementMs + timing.CopyBeforeMs == configuredDelay + 30,
+                "不能比已实测稳健组合更早发送复制");
+            Require(CraftStateSync.CalculateChangeTimeoutMs(configuredDelay) == 900 &&
+                CraftStateSync.RetryBackoffMs == 20 && CraftStateSync.CopyAttemptTimeoutMs == 120,
+                "正式化不能改变同步预算／复制退避／单次复制上限");
         }
-        Require(balanced.CopyAfterMs < provenMovement.CopyAfterMs &&
-            balanced.ClipboardPollMs < provenMovement.ClipboardPollMs,
-            "稳健组合应只进一步提早读取已请求的结果");
-        Require(CraftTimingProfile.For(CraftSpeedExperiment.Combined).FirstWaitMs(33) == 10,
-            "新档位不能悄悄修改已有组合对照");
     }
 
-    public static void ExperimentSelectionNeverEntersSavedSettings()
+    public static void FormalTimingDoesNotAddSavedSettings()
     {
-        var source = new CraftTool { DelayMs = 47, ExhaustionThreshold = 12,
-            SpeedExperiment = CraftSpeedExperiment.Combined };
+        var source = new CraftTool { DelayMs = 47, ExhaustionThreshold = 12 };
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream)) source.SaveSettings(writer);
         using var document = JsonDocument.Parse(stream.ToArray());
         Require(!document.RootElement.EnumerateObject().Any(property =>
-            property.Name.Contains("experiment", StringComparison.OrdinalIgnoreCase)),
-            "实验选择不得污染持久设置");
+            property.Name.Contains("experiment", StringComparison.OrdinalIgnoreCase) ||
+            property.Name.Contains("profile", StringComparison.OrdinalIgnoreCase)),
+            "稳健时序固定在内部，不能新增配置字段");
         var restored = new CraftTool();
         restored.LoadSettings(document.RootElement);
         Require(restored.DelayMs == 47 && restored.ExhaustionThreshold == 12, "现有设置必须正常往返");
-        Require(restored.SpeedExperiment == CraftSpeedExperiment.Baseline, "重启必须恢复原等待");
     }
 
     public static void CompleteCycleIncludesClickCopyAndMatching()
     {
         double now = 0;
-        var measurement = new CraftSpeedMeasurement(() => now);
+        var measurement = new CraftRunMeasurement(() => now);
         measurement.RecordBaseline("旧文本");
         measurement.CompleteMatching("旧文本", new AffixCheckResult());
         now = 100; // 启动基线、选通货等也进入任务平均。
@@ -93,7 +71,7 @@ internal static class CraftSpeedChecks
     public static void ReadsAndRejectedCopiesAreDifferentCounters()
     {
         double now = 0;
-        var measurement = new CraftSpeedMeasurement(() => now);
+        var measurement = new CraftRunMeasurement(() => now);
         measurement.BeginClick("改造石");
         measurement.ClickSent();
         measurement.CopyAttempt();
@@ -118,7 +96,7 @@ internal static class CraftSpeedChecks
     public static void ForegroundPauseIsExcludedAndStopIsStable()
     {
         double now = 0;
-        var measurement = new CraftSpeedMeasurement(() => now);
+        var measurement = new CraftRunMeasurement(() => now);
         measurement.BeginClick("改造石");
         measurement.ClickSent();
         now = 30;
@@ -135,7 +113,7 @@ internal static class CraftSpeedChecks
         Equal(130, summary.MatchCycleP95Ms!.Value, "循环也必须扣除前台等待");
         now = 2000;
         Equal(summary.ElapsedMs, measurement.Stop("已停止").ElapsedMs, "报告落盘不应继续增加耗时");
-        var pausedAtStop = new CraftSpeedMeasurement(() => now);
+        var pausedAtStop = new CraftRunMeasurement(() => now);
         pausedAtStop.PauseForeground();
         now += 500;
         Equal(0, pausedAtStop.Stop("取消").ActiveMs, "前台等待中取消也必须正确扣时");
@@ -144,7 +122,7 @@ internal static class CraftSpeedChecks
     public static void TransitionOnlyAndCancelledClicksDoNotBecomeMatchedCycles()
     {
         double now = 0;
-        var measurement = new CraftSpeedMeasurement(() => now);
+        var measurement = new CraftRunMeasurement(() => now);
         measurement.BeginClick("重铸石");
         measurement.ClickSent();
         now = 150;
@@ -164,7 +142,7 @@ internal static class CraftSpeedChecks
     public static void TraceRetainsLatestItemAndSeparateTimingSamples()
     {
         double now = 0;
-        var measurement = new CraftSpeedMeasurement(() => now);
+        var measurement = new CraftRunMeasurement(() => now);
         measurement.RecordBaseline("原文0");
         for (var index = 1; index <= 35; index++)
         {
@@ -189,7 +167,7 @@ internal static class CraftSpeedChecks
         try
         {
             double now = 0;
-            var measurement = new CraftSpeedMeasurement(() => now);
+            var measurement = new CraftRunMeasurement(() => now);
             now = 100;
             var summary = measurement.Stop("取消");
             var saved = measurement.SaveReport(summary, new { profile = "原等待" }, root);

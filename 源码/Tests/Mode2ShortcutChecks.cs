@@ -229,15 +229,12 @@ internal static class Mode2ShortcutChecks
         Require(coords.Count == 2, "检查不能清除原坐标");
     }
 
-    public static void KeepsVersion47SevenProfilesAndTenMs()
+    public static void FormalTimingKeepsOriginalDelayRange()
     {
-        Require(Enum.GetValues<CraftSpeedExperiment>().Length == 7, "应从v1.0.47保留七个对照档");
-        Require(CraftTimingProfile.For(CraftSpeedExperiment.Balanced).FirstWaitMs(10) == 10,
-            "不能夹带v1.0.48的33ms下限");
-        Require(CraftTimingProfile.For(CraftSpeedExperiment.Combined).FirstWaitMs(33) == 10,
-            "v1.0.47组合档的实际首次等待保持");
+        Require(CraftTimingProfile.Default.FirstWaitMs(10) == 10 && CraftTimingProfile.Default.FirstWaitMs(33) == 33,
+            "正式化保留v1.0.45的原滑条与首次等待范围");
         Require(CraftStateSync.CalculateChangeTimeoutMs(10) == 900 && CraftStateSync.RetryBackoffMs == 20,
-            "不得改变同步预算或复制退避");
+            "正式化不得改变同步预算或复制退避");
     }
 
     private static CraftRules Rules() => new() { Mode = CraftMode.AltAug, PrimaryHitCount = 1, SecondaryHitCount = 1 };

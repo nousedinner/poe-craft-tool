@@ -81,8 +81,6 @@
                             <TextBlock Text="Mode 2 子模式" Style="{StaticResource PoolHeading}" Margin="0,0,0,8"/>
                             <RadioButton x:Name="Mode2AltAug" Content="改造＋增幅" GroupName="M2Sub" IsChecked="True" Checked="Mode2Option_Changed" Margin="0,0,0,8"/>
                             <RadioButton x:Name="Mode2ScourAlch" Content="重铸＋点金" GroupName="M2Sub" Checked="Mode2Option_Changed"/>
-                            <TextBlock Text="保持 Shift，Alt 自动切换增幅／重铸。只需录制装备和改造／点金坐标。"
-                                       TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0" Foreground="{StaticResource TextSecondary}"/>
                         </StackPanel>
                         <StackPanel x:Name="Mode3Frame" Visibility="Collapsed" Margin="0,8,0,14">
                             <ToggleButton x:Name="ExaltCheck" Content="富豪后使用崇高石" Style="{StaticResource ModernSwitchStyle}"
@@ -95,16 +93,6 @@
                                     <TextBlock x:Name="DelayValue" Grid.Column="1" Text="33 ms" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"/>
                                 </Grid>
                                 <Slider x:Name="DelaySlider" Minimum="10" Maximum="200" Value="33" Margin="0,12,0,10"/>
-                                <TextBlock Text="速度实验" Style="{StaticResource PoolHeading}" Margin="0,14,0,8"/>
-                                <ComboBox x:Name="SpeedProfileCombo" DisplayMemberPath="Name"
-                                          SelectionChanged="SpeedProfile_Changed"/>
-                                <TextBlock x:Name="SpeedProfileDescription" TextWrapping="Wrap" FontSize="12"
-                                           Foreground="{StaticResource TextSecondary}" Margin="0,8,0,0"/>
-                                <TextBlock Text="每次重启恢复原等待。请先逐项比较速度与误停，再尝试组合。"
-                                           TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0"/>
-                                <TextBlock x:Name="SpeedResultText" Text="停止后显示本次测速结果。"
-                                           TextWrapping="Wrap" FontSize="12" Margin="0,12,0,8"/>
-                                <Button Content="打开测速记录" Click="OpenSpeedReports_Click"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>
