@@ -203,6 +203,12 @@ internal static class AppearanceChecks
             Require(Find<StackPanel>(page, "Mode2Frame").IsVisible && !Find<StackPanel>(page, "Mode3Frame").IsVisible, "Mode 2 子模式显示错误");
             Require(Find<RadioButton>(page, "Mode2ScourAlch").IsChecked == true, "切模式不能重置子模式");
             CheckCurrencies(page, CraftMode.AltAug);
+            Find<RadioButton>(page, "Mode2AltAug").IsChecked = true;
+            Pump();
+            CheckCurrencies(page, CraftMode.AltAug);
+            Find<RadioButton>(page, "Mode2ScourAlch").IsChecked = true;
+            Pump();
+            CheckCurrencies(page, CraftMode.AltAug);
             Snapshot(window, "T11-WPF-Mode2.png");
             Find<RadioButton>(page, "Mode1Radio").IsChecked = true;
             Pump();
@@ -427,7 +433,11 @@ internal static class AppearanceChecks
     private static void CheckCurrencies(CraftPage page, CraftMode mode)
     {
         var visible = Find<ItemsControl>(page, "CurrencyGrid").Items.Cast<Border>().Where(border => border.IsVisible).ToArray();
-        Require(visible.Length == Currency.ModeCurrencies[mode].Length, "通货显示子集与当前模式不一致");
+        var expected = mode == CraftMode.AltAug
+            ? new[] { Find<RadioButton>(page, "Mode2ScourAlch").IsChecked == true ? Currency.Alchemy : Currency.Alteration }
+            : Currency.ModeCurrencies[mode];
+        Require(visible.Select(card => (string)card.Tag).Order().SequenceEqual(expected.Order()),
+            "Mode2应只显示常驻通货，其他模式的通货子集保持");
         foreach (var card in visible)
             foreach (var button in Descendants(card).OfType<Button>().Where(button => button.IsVisible))
                 Require(button.ActualWidth > 18 && button.TranslatePoint(new Point(button.ActualWidth, 0), card).X <= card.ActualWidth + 1,

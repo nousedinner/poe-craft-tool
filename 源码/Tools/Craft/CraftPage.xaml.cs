@@ -254,6 +254,8 @@ public partial class CraftPage : UserControl
     private void ApplyModeVisibility()
     {
         var visible = Currency.ModeCurrencies.TryGetValue(CurrentMode, out var keys) ? keys : [];
+        if (CurrentMode == CraftMode.AltAug)
+            visible = [Mode2ScourAlch.IsChecked == true ? Currency.Alchemy : Currency.Alteration];
         foreach (var (key, card) in _cards)
         {
             var root = (Border)CurrencyGrid.Items[Array.IndexOf(Currency.All, key)];
@@ -545,6 +547,7 @@ public partial class CraftPage : UserControl
     {
         if (!IsLoaded) return;
         _tool.Mode2ScourAlch = Mode2ScourAlch.IsChecked == true;
+        ApplyModeVisibility();
         _dirty = true;
     }
 

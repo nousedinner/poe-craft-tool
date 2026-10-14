@@ -24,7 +24,7 @@ internal static class Mode2AlterationLoop
             if (decision == Mode2AlterationDecision.StopUnsupported)
                 throw new InvalidOperationException(
                     $"改造后未能确认1～2条真实词缀（识别到{step.Item.Parsed.ExplicitAffixCount}条）；" +
-                    "已停止，请检查Ctrl+Alt+C高级物品文本，未继续使用增幅石");
+                    "已停止，请检查Ctrl+C高级物品文本，未继续使用增幅石");
             if (decision != Mode2AlterationDecision.ContinueAlteration)
                 return new(decision, step);
             continuing(step);

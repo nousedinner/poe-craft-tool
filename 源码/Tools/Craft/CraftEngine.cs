@@ -181,7 +181,7 @@ public sealed class CraftEngine
     }
 
     /// <summary>坐标检查（对齐 Python _check_coordinates；Mode2 按子模式正确检查——修复 Python 错位 bug，方案 §6）。</summary>
-    private static string? CheckCoordinates(CraftRules rules, Dictionary<string, Point> coords,
+    internal static string? CheckCoordinates(CraftRules rules, Dictionary<string, Point> coords,
         bool mode2ScourAlch, bool useExalt)
     {
         static bool IsValid(Point c) => c.X != 0 || c.Y != 0;
@@ -198,15 +198,11 @@ public sealed class CraftEngine
             {
                 if (!coords.TryGetValue(Currency.Alchemy, out var alch) || !IsValid(alch))
                     return "点金石坐标";
-                if (!coords.TryGetValue(Currency.Scouring, out var scour) || !IsValid(scour))
-                    return "重铸石坐标";
             }
             else
             {
                 if (!coords.TryGetValue(Currency.Alteration, out var alt) || !IsValid(alt))
                     return "改造石坐标";
-                if (!coords.TryGetValue(Currency.Augmentation, out var aug) || !IsValid(aug))
-                    return "增幅石坐标";
             }
         }
         else if (rules.Mode == CraftMode.AltAugRegal)
@@ -249,6 +245,9 @@ public sealed class CraftEngine
                 changeTimeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs),
                 exhaustionThreshold = _exhaustionThreshold, mousePressMs = 20, currencySelectionWaitMs = 200,
                 mode2ScourAlch = _mode2ScourAlch, useExalt = _useExalt,
+                mode2AltShortcut = _rules.Mode == CraftMode.AltAug,
+                mode2AltSettleMs = CraftAltClick.ModifierSettleMs,
+                copyShortcut = "Ctrl+C",
                 rules = _rules.CreateSnapshot(),
             };
             Diag.Log($"[速度实验] {_speedTiming.Name}：{_speedTiming.Describe(_delayMs)}");
@@ -432,7 +431,7 @@ public sealed class CraftEngine
         }
 
         var stopwatch = Stopwatch.StartNew();
-        await _host.Input.CtrlAltCAsync(_speedTiming.CopyBeforeMs, _speedTiming.CopyAfterMs, token);
+        await _host.Input.CtrlCAsync(_speedTiming.CopyBeforeMs, _speedTiming.CopyAfterMs, token);
         while (stopwatch.ElapsedMilliseconds < timeoutMs)
         {
             token.ThrowIfCancellationRequested();
@@ -458,7 +457,7 @@ public sealed class CraftEngine
         if (text is not null) return text;
 
         Diag.Log($"[剪贴板] 获取新物品文本超时: {clipboardTimeoutMs}ms");
-        throw new InvalidOperationException("复制物品信息超时；请确认鼠标位于装备上且游戏支持 Ctrl+Alt+C");
+        throw new InvalidOperationException("复制物品信息超时；请确认鼠标位于装备上且游戏支持 Ctrl+C 高级物品文本");
     }
 
     /// <summary>启动基线允许重试复制，避免一次丢失的 Ctrl+Alt+C 直接终止任务。</summary>
@@ -494,7 +493,7 @@ public sealed class CraftEngine
 
     /// <summary>
     /// Mode 1 点击后的状态门禁：只有复制到与点击前不同的完整物品文本才允许进入词缀判定。
-    /// 剪贴板未写入或仍为旧状态时只重发 Ctrl+Alt+C，绝不再次点击通货。
+    /// 剪贴板未写入或仍为旧状态时只重发 Ctrl+C，绝不再次点击通货。
     /// </summary>
     private async Task<CraftItemSnapshot> WaitForChangedMode1ItemAsync(CraftItemSnapshot baseline, CancellationToken token)
     {
@@ -646,6 +645,17 @@ public sealed class CraftEngine
         _speedMeasurement?.ClickSent();
     }
 
+    private async Task ClickMode2PairedCurrencyAsync(string currency, Point itemCoord, CancellationToken token)
+    {
+        await AwaitForegroundAsync(token);
+        token.ThrowIfCancellationRequested();
+        _speedMeasurement?.BeginClick(Currency.Label(currency));
+        await _host.Input.ShiftAltClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0,
+            _speedTiming.ItemMovementMs, token);
+        _speedMeasurement?.ClickSent();
+        // 常驻通货保持改造/点金，前台恢复时重选它，不能重选 Alt 配对通货。
+    }
+
     private void ReportStatus(string text, bool force = false)
     {
         var now = DateTime.Now;
@@ -719,7 +729,6 @@ public sealed class CraftEngine
     private async Task Mode2Async(CancellationToken token)
     {
         var altCoord = _coordinates[Currency.Alteration];
-        var augCoord = _coordinates[Currency.Augmentation];
         var itemCoord = _coordinates["item"];
 
         ReportStatus("启动改造+增幅模式...", force: true);
@@ -735,75 +744,47 @@ public sealed class CraftEngine
             throw new InvalidOperationException(
                 $"Mode 2 改造+增幅要求启动物品为魔法稀有度，当前为 {initialItem.Rarity}，未执行通货操作");
 
-        while (true)
-        {
-            token.ThrowIfCancellationRequested();
-            await AwaitForegroundAsync(token);
-
-            // Phase 1: 改造（右键一次，shift+click 循环）
-            await SelectCurrencyAsync(Currency.Alteration, altCoord, token);
-            await _host.Input.HoldShiftAsync(token);
-            Mode2AlterationOutcome outcome;
-            try
+        await Mode2PairedCurrencyLoop.RunAlterationAugmentationAsync(_rules,
+            async workToken =>
             {
-                outcome = await Mode2AlterationLoop.RunAsync(_rules,
-                    async stepToken =>
-                    {
-                        await AwaitForegroundAsync(stepToken);
-                        await ClickItemForExperimentAsync(itemCoord, stepToken);
-                        UseCount++;
-                        text = await WaitForExpectedTransitionAsync(text,
-                            CraftCurrencyOperation.Alteration, "改造石", stepToken);
-                        var (result, _) = CheckItem(text);
-                        MatchCount = result.TotalHits;
-                        return new Mode2AlterationStep(text, result);
-                    },
-                    step => ReportStatus(step.Result.HasExclude
-                        ? $"#{UseCount} 排除命中，继续改造..."
-                        : step.Item.Parsed.ExplicitAffixCount == 2 && step.Result.HasAnyHit
-                            ? $"#{UseCount} 2条词缀不满足，继续改造..."
-                            : $"#{UseCount} 改造中..."), token);
-            }
-            finally
+                await SelectCurrencyAsync(Currency.Alteration, altCoord, workToken);
+                await _host.Input.HoldShiftAsync(workToken);
+                Diag.Log("[引擎] Mode2: 常驻改造石并保持Shift，Alt临时使用增幅石");
+            },
+            async cleanupToken =>
             {
-                try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
-            }
-
-            // 两词缀终检失败留在上面的改造循环，不释放Shift或重新右键改造石。
-            text = outcome.Step.Item;
-            if (outcome.Decision == Mode2AlterationDecision.Complete)
+                try { await _host.Input.ReleaseShiftAsync(cleanupToken); } catch { }
+            },
+            async workToken =>
             {
-                OnSuccess();
-                return;
-            }
-
-            // Phase 2: 增幅（仅在恰好 1 词缀时使用，铁律 #4）
-            await SelectCurrencyAsync(Currency.Augmentation, augCoord, token);
-            await _host.Input.HoldShiftAsync(token);
-            try
-            {
-                await AwaitForegroundAsync(token);
-                await ClickItemForExperimentAsync(itemCoord, token);
+                await AwaitForegroundAsync(workToken);
+                await ClickItemForExperimentAsync(itemCoord, workToken);
                 UseCount++;
-
                 text = await WaitForExpectedTransitionAsync(text,
-                    CraftCurrencyOperation.Augmentation, "增幅石", token);
+                    CraftCurrencyOperation.Alteration, "改造石", workToken);
                 var (result, _) = CheckItem(text);
                 MatchCount = result.TotalHits;
-
-                if (result.MeetsFinalRules(_rules))
-                {
-                    OnSuccess();
-                    return;
-                }
-            }
-            finally
+                return new Mode2AlterationStep(text, result);
+            },
+            async workToken =>
             {
-                try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
-            }
-
-            ReportStatus($"#{UseCount} 增幅后不满足，重新改造...");
-        }
+                // 仍只在恰好一条词缀且有命中时增幅。左键/Alt释放后才复制。
+                await ClickMode2PairedCurrencyAsync(Currency.Augmentation, itemCoord, workToken);
+                UseCount++;
+                text = await WaitForExpectedTransitionAsync(text,
+                    CraftCurrencyOperation.Augmentation, "增幅石", workToken);
+                var (result, _) = CheckItem(text);
+                MatchCount = result.TotalHits;
+                return new Mode2AlterationStep(text, result);
+            },
+            step => ReportStatus(step.Result.HasExclude
+                ? $"#{UseCount} 排除命中，继续改造..."
+                : step.Item.Parsed.ExplicitAffixCount == 2 && step.Result.HasAnyHit
+                    ? $"#{UseCount} 2条词缀不满足，继续改造..."
+                    : $"#{UseCount} 改造中..."),
+            () => ReportStatus($"#{UseCount} 增幅后不满足，继续改造..."), token);
+        token.ThrowIfCancellationRequested();
+        OnSuccess();
     }
 
     // ── Mode 2 子模式：重铸+点金（Python _mode2_scour_alch）──
@@ -811,7 +792,6 @@ public sealed class CraftEngine
     private async Task Mode2ScourAlchAsync(CancellationToken token)
     {
         var alchCoord = _coordinates[Currency.Alchemy];
-        var scourCoord = _coordinates[Currency.Scouring];
         var itemCoord = _coordinates["item"];
 
         ReportStatus("启动重铸+点金模式...", force: true);
@@ -826,60 +806,39 @@ public sealed class CraftEngine
             throw new InvalidOperationException(
                 $"重铸+点金无法处理当前物品稀有度（{currentItem.Rarity}），未执行通货操作");
 
-        while (true)
-        {
-            token.ThrowIfCancellationRequested();
-            await AwaitForegroundAsync(token);
-
-            // 非普通物品先重铸；已是普通物品时跳过无效重铸，直接点金。
-            if (currentItem.Rarity != ItemRarity.Normal)
+        await Mode2PairedCurrencyLoop.RunScouringAlchemyAsync(_rules, currentItem.Rarity,
+            async workToken =>
+            {
+                await SelectCurrencyAsync(Currency.Alchemy, alchCoord, workToken);
+                await _host.Input.HoldShiftAsync(workToken);
+                Diag.Log("[引擎] Mode2: 常驻点金石并保持Shift，Alt临时使用重铸石");
+            },
+            async cleanupToken =>
+            {
+                try { await _host.Input.ReleaseShiftAsync(cleanupToken); } catch { }
+            },
+            async workToken =>
             {
                 ReportStatus($"#{UseCount} 重铸后重新点金...");
-                await SelectCurrencyAsync(Currency.Scouring, scourCoord, token);
-                await _host.Input.HoldShiftAsync(token);
-                try
-                {
-                    await AwaitForegroundAsync(token);
-                    await ClickItemForExperimentAsync(itemCoord, token);
-                    UseCount++;
-                    text = await WaitForExpectedTransitionAsync(text,
-                        CraftCurrencyOperation.Scouring, "重铸石", token);
-                    currentItem = text.Parsed;
-                }
-                finally
-                {
-                    try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
-                }
-            }
-
-            // 点金（白→黄）并检查新结果
-            await SelectCurrencyAsync(Currency.Alchemy, alchCoord, token);
-            await _host.Input.HoldShiftAsync(token);
-            try
-            {
-                await AwaitForegroundAsync(token);
-                await ClickItemForExperimentAsync(itemCoord, token);
+                await ClickMode2PairedCurrencyAsync(Currency.Scouring, itemCoord, workToken);
                 UseCount++;
-
                 text = await WaitForExpectedTransitionAsync(text,
-                    CraftCurrencyOperation.Alchemy, "点金石", token);
-                currentItem = text.Parsed;
+                    CraftCurrencyOperation.Scouring, "重铸石", workToken);
+            },
+            async workToken =>
+            {
+                await AwaitForegroundAsync(workToken);
+                await ClickItemForExperimentAsync(itemCoord, workToken);
+                UseCount++;
+                text = await WaitForExpectedTransitionAsync(text,
+                    CraftCurrencyOperation.Alchemy, "点金石", workToken);
                 var (result, _) = CheckItem(text);
                 MatchCount = result.TotalHits;
-
-                if (result.MeetsFinalRules(_rules))
-                {
-                    OnSuccess();
-                    return;
-                }
-            }
-            finally
-            {
-                try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
-            }
-
-            ReportStatus($"#{UseCount} 点金后不满足，继续下一轮...");
-        }
+                return new Mode2AlterationStep(text, result);
+            },
+            () => ReportStatus($"#{UseCount} 点金后不满足，重铸后继续..."), token);
+        token.ThrowIfCancellationRequested();
+        OnSuccess();
     }
 
     private async Task UseMode3CurrencyOnItemAsync(Point itemCoord, CancellationToken token)

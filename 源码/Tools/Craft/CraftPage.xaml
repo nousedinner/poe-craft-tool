@@ -81,6 +81,8 @@
                             <TextBlock Text="Mode 2 子模式" Style="{StaticResource PoolHeading}" Margin="0,0,0,8"/>
                             <RadioButton x:Name="Mode2AltAug" Content="改造＋增幅" GroupName="M2Sub" IsChecked="True" Checked="Mode2Option_Changed" Margin="0,0,0,8"/>
                             <RadioButton x:Name="Mode2ScourAlch" Content="重铸＋点金" GroupName="M2Sub" Checked="Mode2Option_Changed"/>
+                            <TextBlock Text="保持 Shift，Alt 自动切换增幅／重铸。只需录制装备和改造／点金坐标。"
+                                       TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0" Foreground="{StaticResource TextSecondary}"/>
                         </StackPanel>
                         <StackPanel x:Name="Mode3Frame" Visibility="Collapsed" Margin="0,8,0,14">
                             <ToggleButton x:Name="ExaltCheck" Content="富豪后使用崇高石" Style="{StaticResource ModernSwitchStyle}"

@@ -8,13 +8,14 @@ $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'Artifact-Paths.ps1')
 $projectPath = Join-Path $projectRoot '拾刻.csproj'
 $projectXml = [xml](Get-Content -LiteralPath $projectPath -Raw -Encoding UTF8)
+$version = $projectXml.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
 $experimentProperty = $projectXml.SelectSingleNode('/Project/PropertyGroup/CraftSpeedExperimentBuild')
 if (-not $experimentProperty -or $experimentProperty.InnerText -ne 'true') { throw '当前源码不是速度实验分支' }
 
 $artifactRoot = Get-ArtifactRoot $projectRoot
 $experimentRoot = Assert-ArtifactPath $artifactRoot (Join-Path $artifactRoot '速度实验')
 $stage = Assert-ArtifactPath $artifactRoot (Join-Path $artifactRoot '速度实验发布暂存')
-$programName = if ($CandidateOnly) { '拾刻-速度实验-待替换.exe' } else { '拾刻-速度实验.exe' }
+$programName = if ($CandidateOnly) { "拾刻-速度实验-候选-v$version.exe" } else { '拾刻-速度实验.exe' }
 $program = Assert-ArtifactPath $artifactRoot (Join-Path $experimentRoot $programName)
 $running = @(Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($programName)) -ErrorAction SilentlyContinue | Where-Object {
     [string]::Equals($_.Path, $program, [StringComparison]::OrdinalIgnoreCase)
@@ -35,7 +36,6 @@ foreach ($name in $dailyNames) {
 & dotnet publish $projectPath -c Release -p:PublishProfile=FrameworkDependent --output $stage
 if ($LASTEXITCODE -ne 0) { throw '实验编译失败，日常程序与已有实验配置保持' }
 $publishedProgram = Join-Path $stage '拾刻.exe'
-$version = $projectXml.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
 if ((Get-Item -LiteralPath $publishedProgram).VersionInfo.FileVersion -ne "$version.0") { throw '实验版本与源码不一致' }
 $firstBuild = -not (Test-Path -LiteralPath $experimentRoot)
 if ($firstBuild) { $null = New-GeneratedDirectory $artifactRoot $experimentRoot '速度实验' }

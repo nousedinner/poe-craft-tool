@@ -64,7 +64,7 @@ public static class ClipboardHelper
     }
 
     /// <summary>
-    /// 清空旧剪贴板，使下一次读取只能接受本次 Ctrl+Alt+C 新写入的物品文本。
+    /// 清空旧剪贴板，使下一次读取只能接受本次 Ctrl+C 新写入的物品文本。
     /// 失败时返回 false，调用方必须停止本次判定，不能继续使用可能过期的内容。
     /// </summary>
     public static bool TryClear()

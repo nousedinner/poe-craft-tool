@@ -274,6 +274,36 @@ public sealed class InputSimulator
 
     internal async Task ShiftClickAsync(int x, int y, int delayMs, int settleMs, CancellationToken token)
     {
+        await PrepareCraftClickAsync(x, y, delayMs, settleMs, token);
+        await SendCraftMouseClickAsync();
+    }
+
+    /// <summary>常驻改造/点金并保持 Shift 时，用 Alt 临时点击配对通货；返回前必释放 Alt。</summary>
+    internal async Task ShiftAltClickAsync(int x, int y, int delayMs, int settleMs, CancellationToken token)
+    {
+        if (!IsShiftHeld)
+            throw new InputSimulationException("快捷通货操作要求持续按住 Shift，已停止本次输入");
+        await PrepareCraftClickAsync(x, y, delayMs, settleMs, token);
+        await EnsureForegroundForInputAsync(token);
+        if (!IsShiftHeld)
+            throw new InputSimulationException("快捷通货操作前 Shift 已释放，已停止本次输入");
+
+        await CraftAltClick.RunAsync(
+            () => PressKeyOrThrow(KeyCode.Alt, "快捷通货的 Alt 按下"),
+            () => ReleaseKeyOrThrow(KeyCode.Alt, "快捷通货的 Alt 释放"),
+            async clickToken =>
+            {
+                clickToken.ThrowIfCancellationRequested();
+                // Alt 已按下时不长时间等待前台，退出本次动作以免在桌面残留。
+                if (!_foreground.IsTargetForeground() || !IsShiftHeld)
+                    throw new InputSimulationException("快捷通货期间游戏失去前台或 Shift 已释放，已停止本次输入");
+                CheckEmergencyStop();
+                await SendCraftMouseClickAsync();
+            }, Task.Delay, token);
+    }
+
+    private async Task PrepareCraftClickAsync(int x, int y, int delayMs, int settleMs, CancellationToken token)
+    {
         await EnsureForegroundForInputAsync(token);
         int ox = x + Random.Shared.Next(-10, 11);
         int oy = y + Random.Shared.Next(-10, 11);
@@ -287,6 +317,10 @@ public sealed class InputSimulator
         await Task.Delay(settleMs, token);
         await WaitForCraftClickIntervalAsync(delayMs, token);
         CheckEmergencyStop();
+    }
+
+    private async Task SendCraftMouseClickAsync()
+    {
         MarkCraftClick();
         SendMouseOrThrow(MOUSEEVENTF_LEFTDOWN, "鼠标左键按下");
         await Task.Delay(20, CancellationToken.None);
@@ -375,32 +409,19 @@ public sealed class InputSimulator
 
     // ── 键盘 ──
 
-    /// <summary>Ctrl+Alt+C（国服复制物品文本；Shift 应保持按住）。剪贴板到达等待由调用方轮询。</summary>
-    public Task CtrlAltCAsync(int _, CancellationToken token)
-        => CtrlAltCAsync(20, 20, token);
+    /// <summary>Ctrl+C（PoE 3.29高级物品文本；Shift保持按住）。剪贴板到达由调用方轮询。</summary>
+    public Task CtrlCAsync(int _, CancellationToken token)
+        => CtrlCAsync(20, 20, token);
 
-    internal async Task CtrlAltCAsync(int beforeMs, int afterMs, CancellationToken token)
+    internal async Task CtrlCAsync(int beforeMs, int afterMs, CancellationToken token)
     {
         await EnsureForegroundForInputAsync(token);
         await Task.Delay(beforeMs, token);
         CheckEmergencyStop();
-        try
-        {
-            PressKeyOrThrow(KeyCode.Control, "Ctrl+Alt+C 的 Ctrl 按下");
-            PressKeyOrThrow(KeyCode.Alt, "Ctrl+Alt+C 的 Alt 按下");
-            PressKeyOrThrow(KeyCode.C, "Ctrl+Alt+C 的 C 按下");
-            ReleaseKeyOrThrow(KeyCode.C, "Ctrl+Alt+C 的 C 释放");
-            ReleaseKeyOrThrow(KeyCode.Alt, "Ctrl+Alt+C 的 Alt 释放");
-            ReleaseKeyOrThrow(KeyCode.Control, "Ctrl+Alt+C 的 Ctrl 释放");
-        }
-        catch
-        {
-            // 某一步失败也必须尽力释放，避免修饰键残留到桌面。
-            SendKey(KeyCode.C, up: true);
-            SendKey(KeyCode.Alt, up: true);
-            SendKey(KeyCode.Control, up: true);
-            throw;
-        }
+        CraftCopyShortcut.Send(
+            key => PressKeyOrThrow(key, "Ctrl+C 的按键按下"),
+            key => ReleaseKeyOrThrow(key, "Ctrl+C 的按键释放"),
+            key => SendKey(key, up: true));
         await Task.Delay(afterMs, token);
     }
 

@@ -63,7 +63,7 @@ internal static class Mode3DiagnosticRecorder
         builder.AppendLine($"次命中: {result.SecondaryHits} [{string.Join(", ", result.MatchedSecondaryRules)}]");
         builder.AppendLine($"主词缀规则: {string.Join(" | ", rules.PrimaryAffixes.Select(rule => rule.Text))}");
         builder.AppendLine($"次词缀规则: {string.Join(" | ", rules.SecondaryAffixes.Select(rule => rule.Text))}");
-        builder.AppendLine("----- 完整 Ctrl+Alt+C 物品文本 -----");
+        builder.AppendLine("----- 完整 Ctrl+C 物品文本 -----");
         builder.AppendLine(itemText.Trim());
         return builder.ToString();
     }
