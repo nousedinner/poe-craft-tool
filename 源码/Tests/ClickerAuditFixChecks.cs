@@ -5,6 +5,28 @@ using ShiKe.Tools.Clicker;
 // 注入受控点击与释放动作，整个检查不调用实际鼠标输入、热键或网络。
 internal static class ClickerAuditFixChecks
 {
+    public static void SameRunLateRunningStatusDoesNotReplaceStop() => WithHost(host =>
+    {
+        var statuses = new List<ClickerStatus>();
+        var engine = new ClickerEngine(host, () => true, (_, _) => Task.CompletedTask);
+        engine.StatusUpdated += statuses.Add;
+        try
+        {
+            var gate = typeof(ClickerEngine).GetField("_gate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
+            lock (gate)
+            {
+                Require(engine.Start(ClickerMouseButton.Left, 33), "待运行连点启动失败");
+                var runId = (int)typeof(ClickerEngine).GetField("_runId", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
+                Require(engine.Stop(), "待运行连点停止失败");
+                typeof(ClickerEngine).GetMethod("ReportStatus", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(engine, new object?[] { "迟到的运行消息", true, true, runId });
+                Require(statuses.Count == 2 && !statuses[^1].Running && statuses[^1].Text == "连点器已停止",
+                    "同一轮已经停止后，迟到的运行状态不能覆盖停止文案");
+            }
+        }
+        finally { Require(engine.Shutdown(TimeSpan.FromSeconds(2)), "迟到状态验证必须完整关闭"); }
+    });
+
     public static void OldWorkerFailureDoesNotAffectRestartedRun() => WithHost(host =>
     {
         using var firstEntered = new ManualResetEventSlim();

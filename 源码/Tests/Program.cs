@@ -85,6 +85,7 @@ var tests = new (string Name, Action Run)[]
     ("连点停止容忍取消源已被工作任务释放", ClickerAuditFixChecks.DisposedCancellationSnapshotIsHarmless),
     ("连点紧急原因不受宿主令牌重置影响", ClickerAuditFixChecks.EmergencyReasonSurvivesHostReset),
     ("连点清理中重启不发送旧轮事件", ClickerAuditFixChecks.RestartDuringCleanupSkipsStaleEvents),
+    ("连点同轮迟到的运行消息不能覆盖停止", ClickerAuditFixChecks.SameRunLateRunningStatusDoesNotReplaceStop),
     ("按键循环紧急停止不受宿主令牌重置影响", KeyLoopAuditFixChecks.EmergencyStopSurvivesHostTokenReset),
     ("旧槽位异常不影响快速重启的新运行", KeyLoopAuditFixChecks.OldWorkerCannotFailRestartedRun),
     ("取消其他槽位时重启不会发布旧错误或停止状态", KeyLoopAuditFixChecks.RestartDuringOtherSlotCancellationSkipsOldError),
