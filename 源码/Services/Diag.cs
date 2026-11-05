@@ -19,7 +19,8 @@ internal static class Diag
         {
             Owner.WriteLine(line);
         }
-        catch (Exception error) { Debug.WriteLine($"[日志] 无法接收诊断消息：{error.Message}"); }
+        catch (Exception error) { DiagnosticFailureReporter.Report(DiagnosticFailureKind.Receive,
+            $"[日志] 无法接收诊断消息：{error.Message}"); }
     }
 
     /// <summary>记录 Win32 API 错误（自动获取 Marshal.GetLastWin32Error）。</summary>
@@ -35,14 +36,21 @@ internal static class Diag
         {
             Owner.ClearOldLog();
         }
-        catch (Exception error) { Debug.WriteLine($"[日志] 无法清理旧日志：{error.Message}"); }
+        catch (Exception error) { DiagnosticFailureReporter.Report(DiagnosticFailureKind.Receive,
+            $"[日志] 无法清理旧日志：{error.Message}"); }
     }
 
     /// <summary>不创建日志。成功仅表示此前队列已处理且最近写入正常；历史失败另有计数。</summary>
     internal static bool Flush(TimeSpan timeout) => Owner.Flush(timeout);
 
     /// <summary>最终退出调用，不用于业务或更新放行；晚到消息不复活线程。</summary>
-    internal static bool Shutdown(TimeSpan timeout) => Owner.Shutdown(timeout);
+    internal static bool Shutdown(TimeSpan timeout)
+    {
+        var completed = Owner.Shutdown(timeout);
+        if (!completed) DiagnosticFailureReporter.Report(DiagnosticFailureKind.Shutdown,
+            "[日志] 最终退出刷新未完成；应用退出和更新结果不受此诊断失败影响。");
+        return completed;
+    }
 
     internal static DiagnosticLogSnapshot? Snapshot() => Owner.Snapshot();
 }
@@ -67,7 +75,8 @@ internal sealed class DiagnosticLogOwner(Func<BufferedDiagnosticLog> create)
     {
         var log = GetLog();
         if (log is not null) return log.WriteLine(line);
-        Debug.WriteLine("[日志] 最终关闭后的消息仅保留在调试输出。");
+        DiagnosticFailureReporter.Report(DiagnosticFailureKind.LateMessage,
+            "[日志] 最终关闭后的消息未写入文件，未创建新的日志线程。");
         return 0;
     }
 

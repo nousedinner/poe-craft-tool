@@ -13,12 +13,14 @@ namespace ShiKe.Tools.Craft;
 /// - 坐标槽位：物品 + 10 种通货（divine 占位永不显示，对齐 config_tab.py）
 /// - 存储：craft 节 settings + rules.json/coordinates.json 兼容旧版
 /// </summary>
-public sealed partial class CraftTool : ITool, ICoordinateProvider, IEnableableTool
+public sealed partial class CraftTool : ITool, ICoordinateProvider, IEnableableTool, IConfigurationWarnings
 {
     private ToolHost? _host;
     private CraftEngine? _engine;
     private CraftPage? _page;
     private bool _editorReady;
+    private int _delayMs = SettingsDefaults.DelayMs;
+    private int? _unacknowledgedDelayMs;
 
     public string Id => "craft";
     public string Name => "洗词缀";
@@ -29,7 +31,15 @@ public sealed partial class CraftTool : ITool, ICoordinateProvider, IEnableableT
     public Dictionary<string, Point> Coordinates { get; } = [];
 
     // ── 设置（craft 节，默认值以 SettingsDefaults 为准）──
-    public int DelayMs { get; set; } = SettingsDefaults.DelayMs;
+    public int DelayMs
+    {
+        get => _delayMs;
+        set
+        {
+            _delayMs = Math.Clamp(value, 10, 200);
+            _unacknowledgedDelayMs = null; // 显式编辑采用当前值，无需继续告知旧配置修正。
+        }
+    }
     public bool SoundEnabled { get; set; } = SettingsDefaults.SoundEnabled;
     public bool PopupEnabled { get; set; } = SettingsDefaults.PopupEnabled;
     public int ExhaustionThreshold { get; set; } = SettingsDefaults.ClipboardUnchangedThreshold;
@@ -331,7 +341,9 @@ public sealed partial class CraftTool : ITool, ICoordinateProvider, IEnableableT
     public void LoadSettings(JsonElement section)
     {
         _enabled = GetBool(section, "enabled", SettingsDefaults.CraftEnabled);
-        DelayMs = GetInt(section, "delay_ms", SettingsDefaults.DelayMs);
+        var rawDelay = GetInt(section, "delay_ms", SettingsDefaults.DelayMs);
+        _delayMs = Math.Clamp(rawDelay, 10, 200);
+        _unacknowledgedDelayMs = rawDelay == _delayMs ? null : rawDelay;
         SoundEnabled = GetBool(section, "sound_enabled", SettingsDefaults.SoundEnabled);
         PopupEnabled = GetBool(section, "popup_enabled", SettingsDefaults.PopupEnabled);
         ExhaustionThreshold = GetInt(section, "clipboard_unchanged_threshold", SettingsDefaults.ClipboardUnchangedThreshold);
@@ -361,7 +373,8 @@ public sealed partial class CraftTool : ITool, ICoordinateProvider, IEnableableT
     private JsonObject CreateSettingsSection() => new()
     {
         ["enabled"] = _enabled,
-        ["delay_ms"] = DelayMs,
+        // 未实际告知前保留原值，首帧前关闭或更新验证退出不能静默改写用户配置。
+        ["delay_ms"] = _unacknowledgedDelayMs ?? DelayMs,
         ["sound_enabled"] = SoundEnabled,
         ["popup_enabled"] = PopupEnabled,
         ["clipboard_unchanged_threshold"] = ExhaustionThreshold,
@@ -369,6 +382,20 @@ public sealed partial class CraftTool : ITool, ICoordinateProvider, IEnableableT
         ["mode2_scour_alch"] = Mode2ScourAlch,
         ["use_exalt"] = UseExalt,
     };
+
+    public IReadOnlyList<ConfigurationWarning> GetConfigurationWarnings()
+        => _unacknowledgedDelayMs is { } original
+            ? [new(DelayWarningId(original, DelayMs),
+                $"洗词缀的操作延迟原为 {original} ms，超出 10～200 ms 的范围，已调整为 {DelayMs} ms。")]
+            : [];
+
+    public void AcknowledgeConfigurationWarning(string id)
+    {
+        if (_unacknowledgedDelayMs is { } original && id == DelayWarningId(original, DelayMs))
+            _unacknowledgedDelayMs = null;
+    }
+
+    private static string DelayWarningId(int original, int effective) => $"delay_ms:{original}:{effective}";
 
     private static int GetInt(JsonElement section, string key, int fallback)
         => section.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i) ? i : fallback;

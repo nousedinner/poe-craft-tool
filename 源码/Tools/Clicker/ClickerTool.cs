@@ -88,23 +88,6 @@ public sealed partial class ClickerTool : ITool, IEnableableTool
         },
     ];
 
-    public void ToggleFromPage()
-    {
-        if (_engine is null || _host is null) return;
-        if (!_enabled)
-        {
-            _host.Notification.ShowError("连点器当前未启用，请先打开功能开关");
-            return;
-        }
-        if (!IsRunning && string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess))
-        {
-            _host.Notification.ShowError("尚未锁定游戏进程，无法启动连点器");
-            return;
-        }
-        _holdStarted = false;
-        _engine.Toggle(MouseButton, IntervalMs);
-    }
-
     public void Stop() => _engine?.Stop();
 
     private void NotifyMissingTarget()

@@ -71,7 +71,7 @@ CHANGELOG.md                版本变化
   sounds/ / poe.ico         内置音效与图标
 ```
 
-宿主统一管理热键、共享服务和分节存储；工具实现 `Host/ITool.cs`，通过 `Host/ToolRegistry.cs` 注册。坐标录制使用独立的 `ICoordinateProvider` 能力接口。需要后台工作的工具实现 `IToolRuntime`，明确区分正在运行和清理已完成；可编辑热键通过 `IEditableHotkeyProvider` 声明，设置页自动生成对应条目。独立数据文件通过 `IToolAuxiliaryState` 参与宿主的可写退出保存。
+宿主统一管理热键、共享服务和分节存储；工具实现 `Host/ITool.cs`，通过 `Host/ToolRegistry.cs` 注册。坐标录制使用独立的 `ICoordinateProvider` 能力接口。需要后台工作的工具实现 `IToolRuntime`，明确区分正在运行和清理已完成；无后台自动操作的工具必须显式声明 `IPassiveTool`，缺失或同时声明两种能力会拒绝注册。工具 ID 不能占用旧平铺配置字段。可编辑热键通过 `IEditableHotkeyProvider` 声明，设置页自动生成对应条目。独立数据文件通过 `IToolAuxiliaryState` 参与宿主的可写退出保存。
 
 Core 不引用 WPF 或桌面项目。页面编辑即时更新配置，运行入口读取本轮快照，不反向读取页面控件；切页和退出仍按原时机保存。连点和按键循环通过 `Core/Runtime` 中的接口请求 Windows 能力。洗装的输入/剪贴板编排保留在桌面项目，依赖 `ICraftEnvironment`；词缀、模式决策、预设和状态同步位于 Core。`ITool` 是 WPF 抽屉接口，不作为纯核心接口。项目拆分后仍使用原单 EXE 发布及更新方式。
 
@@ -81,17 +81,18 @@ Core 不引用 WPF 或桌面项目。页面编辑即时更新配置，运行入�
 
 每次停止后，后台将运行计数与最近物品状态保存到`data/craft-runs/`，用于故障排查，不增加页面控件或提示。历史速度实验版本及报告不由正式构建修改。自动更新复用原启动版本检查，不增加常驻轮询服务。
 
+诊断日志写入异常会通过 Release 也有效的 `ShiKe-DiagnosticFailures` 事件源报告，运行期间最多每30秒出现一次轻提醒；退出时不新建提示窗口。独立事件通道不回写发生故障的日志队列，主日志恢复后仍记录失败摘要。旧配置的洗装延迟越界时，程序会明确告知原值和10～200ms范围内的生效值；未实际告知前保留原始持久值。
+
 开发需要 Windows、Git 和 **[.NET 10 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/10.0)**。在 Windows PowerShell 中进入仓库根目录：
 
 ```powershell
 git config --local core.hooksPath .githooks
-dotnet restore ".\源码\Tests\ShiKe.InternalTests.csproj"
-dotnet run --project ".\源码\CoreTests\ShiKe.CoreTests.csproj" -c Release
-dotnet build ".\源码\拾刻.csproj" -c Release --no-restore
 .\源码\验证内部用例.cmd
 ```
 
-内部用例会短暂显示独立测试窗口，不启动日常程序、不注册实际热键、不发送游戏输入、不访问真实网络。结果生成在 `bin/Release/net10.0-windows/验证记录/内部用例/`。
+统一入口默认增量恢复依赖，依次编译并执行桌面主套件和独立 CoreTests，任一失败即整体失败；报告分别列出两套结果，不把复用用例相加当作新增覆盖。依赖已准备好时可传 `-NoRestore`。CoreTests 也可通过 `dotnet run --project .\源码\CoreTests\ShiKe.CoreTests.csproj -c Release` 单独执行。
+
+内部用例会短暂显示独立测试窗口，不启动日常程序、不注册实际热键、不发送游戏输入、不访问真实应用服务。依赖恢复按本机 NuGet 配置进行。结果生成在 `bin/Release/net10.0-windows/验证记录/内部用例/`；`Run-ReviewPipelineChecks.ps1` 可独立验证首次恢复和两套失败聚合。
 
 生成发布程序与分享包：
 
@@ -107,7 +108,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\源码\scripts\Build-
 
 成功自动更新并重启后，程序会显示一次本次更新说明；普通启动、手动替换 EXE、更新失败或回滚不会显示。说明可滚动和复制，点击“知道了”、右上关闭或按 Esc 继续。
 
-每次发布前同时更新 `源码/ReleaseNotes.txt` 中面向用户的本次更新内容。正文编译进 EXE，弹窗版本号取自应用版本；无需在服务器额外部署说明文件，也不修改签名清单格式。说明读取或显示失败只跳过提示，不改变已成功更新的结果。
+每次发布前同时更新 `源码/ReleaseNotes.txt` 的声明版本和本次更新内容。首行必须是 `Version: ` 加与项目 Version 相同的三段版本号，后面填写正文；版本头不会出现在弹窗正文里。构建时版本不符、正文为空或过长会直接失败，并把说明版本与文件 SHA256 绑定到 EXE 的版本资源中。打包和准备签名时再次只读核验实际 EXE，源说明被修改后必须重新构建，旧的未绑定 EXE 不能通过新的 PackageOnly/准备流程。
+
+正文编译进 EXE，弹窗版本号取自应用版本；无需在服务器额外部署说明文件，也不修改签名清单格式。说明读取或显示失败只跳过提示，不改变已成功更新的结果。版本校验只能防止漏更新版本声明，正文是否准确仍须发布者审阅。
 
 继续发布完整 ZIP。固定 `version.json` 保留旧客户端的 `latest/url`；新客户端验证其中 `autoUpdate` 的签名载荷，使用 `/download/releases/<版本>/shike-win-x64.zip` 不可变地址。发布包和文件清单均有大小及 SHA-256 校验；签名采用 RSA-PSS/SHA-256，公钥随客户端交付，私钥只在发布环境保存。
 

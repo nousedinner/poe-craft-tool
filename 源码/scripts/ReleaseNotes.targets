@@ -1,0 +1,51 @@
+<Project>
+  <UsingTask TaskName="ValidateBoundReleaseNotes" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <NotesFile ParameterType="System.String" Required="true" />
+      <ExpectedVersion ParameterType="System.String" Required="true" />
+      <BaseDescription ParameterType="System.String" Required="true" />
+      <BoundDescription ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Text" />
+      <Using Namespace="System.Security.Cryptography" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        try
+        {
+            var bytes = File.ReadAllBytes(NotesFile);
+            var rawText = new UTF8Encoding(false, true).GetString(bytes);
+            if (rawText.Length > 12128) throw new InvalidDataException("版本说明原始文本超过长度限制");
+            var text = rawText.TrimStart('\uFEFF').Replace("\r\n", "\n").Replace('\r', '\n');
+            var newline = text.IndexOf('\n');
+            if (!System.Text.RegularExpressions.Regex.IsMatch(ExpectedVersion, @"\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z") ||
+                newline < 0 || text.Substring(0, newline) != "Version: " + ExpectedVersion)
+                throw new InvalidDataException("版本说明首行必须为 Version: " + ExpectedVersion);
+            var body = text.Substring(newline + 1).Trim();
+            if (text.Length > 12128 || body.Length == 0 || body.Length > 12000)
+                throw new InvalidDataException("版本说明正文为空或超过长度限制");
+            for (var index = 0; index < body.Length; index++)
+            {
+                var character = body[index];
+                if (char.IsControl(character) && character != '\n' && character != '\t') throw new InvalidDataException("版本说明含控制字符");
+                if (char.IsHighSurrogate(character))
+                {
+                    if (++index >= body.Length || !char.IsLowSurrogate(body[index])) throw new InvalidDataException("版本说明Unicode不完整");
+                }
+                else if (char.IsLowSurrogate(character)) throw new InvalidDataException("版本说明Unicode不完整");
+            }
+            string hash;
+            using (var sha = SHA256.Create()) hash = BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "");
+            BoundDescription = BaseDescription + " [ReleaseNotesVersion=" + ExpectedVersion + ";Sha256=" + hash + "]";
+        }
+        catch (Exception error) { Log.LogError("版本说明校验失败：" + error.Message); }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <Target Name="ValidateReleaseNotesBeforeBuild" BeforeTargets="PrepareForBuild;GetAssemblyAttributes;PrepareForPublish">
+    <ValidateBoundReleaseNotes NotesFile="$(ReleaseNotesFile)" ExpectedVersion="$(Version)" BaseDescription="$(BaseDescription)">
+      <Output TaskParameter="BoundDescription" PropertyName="Description" />
+    </ValidateBoundReleaseNotes>
+  </Target>
+</Project>

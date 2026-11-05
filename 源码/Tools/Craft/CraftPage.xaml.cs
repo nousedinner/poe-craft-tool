@@ -120,14 +120,15 @@ public partial class CraftPage : UserControl
 
         // 延迟滑块绑定
         DelaySlider.Value = _tool.DelayMs;
-        DelayValue.Text = $"{_tool.DelayMs} ms";
+        DelayValue.Text = $"{(int)DelaySlider.Value} ms";
         DelaySlider.ValueChanged += (_, _) =>
         {
+            _tool.DelayMs = (int)DelaySlider.Value;
             DelayValue.Text = $"{(int)DelaySlider.Value} ms";
             SynchronizeEditedRules();
         };
         RefreshEnabledPresentation();
-        // 恢复时控件可能采用已有的币种/数量后备值；运行配置必须与首次显示保持一致。
+        // 恢复时控件可能采用已有的币种/数量后备值；延迟范围已由工具加载负责。
         // 这里只同步内存，不改变原来在启动、切页或退出时才写盘的时机。
         SynchronizeEditedRules();
         _tool.MarkEditorReady();
@@ -714,7 +715,6 @@ public partial class CraftPage : UserControl
         _tool.Rules.ExcludeAffixes.AddRange(_excludeTags.Select(t => new AffixRule { Text = t.Text }));
         _tool.Mode2ScourAlch = Mode2ScourAlch.IsChecked == true;
         _tool.UseExalt = ExaltCheck.IsChecked == true;
-        _tool.DelayMs = (int)DelaySlider.Value;
     }
 
     // ── 引擎事件（后台线程 → Dispatcher）──

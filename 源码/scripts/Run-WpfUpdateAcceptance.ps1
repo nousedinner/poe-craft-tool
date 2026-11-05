@@ -15,10 +15,13 @@ $projectVersion=[xml](Get-Content -LiteralPath (Join-Path $source '拾刻.csproj
 $version=[string]$projectVersion.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
 $parsedVersion=[Version]::Parse($version)
 $next=('{0}.{1}.{2}' -f $parsedVersion.Major,$parsedVersion.Minor,($parsedVersion.Build+1))
-$expectedReleaseNotes=[IO.File]::ReadAllText((Join-Path $source 'ReleaseNotes.txt')).TrimStart([char]0xFEFF).Replace("`r`n","`n").Replace("`r","`n").Trim()
-if([string]::IsNullOrWhiteSpace($expectedReleaseNotes)){throw '版本说明资源不能为空'}
+. (Join-Path $PSScriptRoot 'ReleaseNotes-Validation.ps1')
+$expectedReleaseNotes=(Assert-ReleaseNotes (Join-Path $source 'ReleaseNotes.txt') $version).Body
+$candidateNotes=Join-Path $batch ('ReleaseNotes-'+$next+'.txt')
 foreach($item in @(@($version,$original),@($next,$candidate))){
-    & dotnet publish (Join-Path $source '拾刻.csproj') -c Release -p:PublishProfile=FrameworkDependent ("-p:Version="+$item[0]) ("-p:InformationalVersion="+$item[0]) --output $item[1] --nologo
+    $fixtureNotes=Join-Path $batch ('ReleaseNotes-'+$item[0]+'.txt')
+    [IO.File]::WriteAllText($fixtureNotes,('Version: '+$item[0]+"`n`n"+$expectedReleaseNotes+"`n"),[Text.UTF8Encoding]::new($false))
+    & dotnet publish (Join-Path $source '拾刻.csproj') -c Release -p:PublishProfile=FrameworkDependent ("-p:Version="+$item[0]) ("-p:InformationalVersion="+$item[0]) ("-p:ReleaseNotesFile="+$fixtureNotes) --output $item[1] --nologo
     if($LASTEXITCODE -ne 0){throw '正式WPF候选构建失败'}
 }
 $oldExe=Join-Path $original '拾刻.exe'
@@ -38,7 +41,7 @@ try{
 $tool=Join-Path $root '发布工具\Release\net10.0-windows\ShiKe.ReleaseTools.dll'
 if(-not(Test-Path -LiteralPath $tool)){throw '请先构建ReleaseTools，再运行WPF验收'}
 $release=Join-Path $batch 'signed-release'
-& dotnet $tool prepare --zip $zipPath --exe $newExe --version $next --key-path $KeyPath --output $release --mode exe-only --min-app-version $version
+& dotnet $tool prepare --zip $zipPath --exe $newExe --version $next --notes $candidateNotes --key-path $KeyPath --output $release --mode exe-only --min-app-version $version
 if($LASTEXITCODE -ne 0){throw '仅本地测试发行签名失败'}
 
 function Write-JsonFile([string]$Path,$Value){

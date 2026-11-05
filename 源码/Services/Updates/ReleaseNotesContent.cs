@@ -6,7 +6,7 @@ namespace ShiKe.Services.Updates;
 internal static class ReleaseNotesContent
 {
     internal const string ResourceName = "ShiKe.ReleaseNotes.txt";
-    internal const int MaximumCharacters = 12000;
+    internal const int MaximumCharacters = ReleaseNotesFormat.MaximumBodyCharacters;
 
     internal static string CurrentVersion => AppIdentity.Version.ToString(3);
 
@@ -28,10 +28,10 @@ internal static class ReleaseNotesContent
 
             using var reader = new StreamReader(stream, new UTF8Encoding(false, true),
                 detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true);
-            var buffer = new char[MaximumCharacters + 1];
+            var buffer = new char[ReleaseNotesFormat.MaximumDocumentCharacters + 1];
             var length = reader.ReadBlock(buffer, 0, buffer.Length);
             var text = Parse(new string(buffer, 0, length));
-            if (text is null) Report(report, "[版本说明] 内容为空、格式无效或超过长度限制，已跳过显示。");
+            if (text is null) Report(report, "[版本说明] 声明版本不符、内容为空、格式无效或超过长度限制，已跳过显示。");
             return text;
         }
         catch (Exception error)
@@ -41,24 +41,7 @@ internal static class ReleaseNotesContent
         }
     }
 
-    internal static string? Parse(string? text)
-    {
-        if (text is null || text.Length > MaximumCharacters) return null;
-        var normalized = text.TrimStart('\uFEFF').Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Replace('\r', '\n').Trim();
-        if (normalized.Length == 0) return null;
-        for (var index = 0; index < normalized.Length; index++)
-        {
-            var character = normalized[index];
-            if (char.IsControl(character) && character is not ('\n' or '\t')) return null;
-            if (char.IsHighSurrogate(character))
-            {
-                if (index + 1 >= normalized.Length || !char.IsLowSurrogate(normalized[++index])) return null;
-            }
-            else if (char.IsLowSurrogate(character)) return null;
-        }
-        return normalized;
-    }
+    internal static string? Parse(string? text) => ReleaseNotesFormat.Parse(text, CurrentVersion);
 
     internal static bool ShouldShow(bool isAutomaticUpdate, bool healthConfirmed, bool appClosing,
         bool alreadyShown, string? text)

@@ -15,8 +15,8 @@ public sealed class ToolRegistry
     public void Register(ITool tool)
     {
         ArgumentNullException.ThrowIfNull(tool);
-        if (string.IsNullOrWhiteSpace(tool.Id) || tool.Id != tool.Id.Trim())
-            throw new ArgumentException("工具 ID 不能为空或带首尾空格", nameof(tool));
+        ShiKe.Services.SettingsSectionIdentity.Validate(tool.Id);
+        ToolCapabilities.ValidateLifecycle(tool);
         if (_tools.Any(existing => string.Equals(existing.Id, tool.Id, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException($"工具 ID“{tool.Id}”已注册");
         _tools.Add(tool);

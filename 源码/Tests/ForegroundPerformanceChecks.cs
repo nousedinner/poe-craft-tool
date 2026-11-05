@@ -75,9 +75,10 @@ internal static class ForegroundPerformanceChecks
             "无同步权限的名称只能本次使用，每次重新打开且立即释放");
         native.DenyLimitedOpen = true;
         native.ManagedName = "target.exe";
-        Require(detector.IsTargetForeground() && native.ManagedReads == 1, "保留托管名称兜底");
+        Require(detector.IsTargetForeground() && native.ManagedReads == 2,
+            "保留托管名称兜底，诊断输出后重新确认允许结果");
         native.ManagedName = null;
-        Require(!detector.IsTargetForeground() && native.ManagedReads == 2,
+        Require(!detector.IsTargetForeground() && native.ManagedReads == 3,
             "两种查询失败不能复用上次托管成功结果");
     }
 
@@ -157,13 +158,76 @@ internal static class ForegroundPerformanceChecks
             "目标设置返回后，后续检查必须重新查询且不得沿用旧允许结果");
     }
 
+    public static void DiagnosticBackpressureDoesNotHoldForegroundIdentityLock()
+    {
+        var native = new FakeNative { ManagedName = "target.exe" };
+        native.Processes[10].QueryFails = true;
+        native.Processes[10].QueryDiagnostic = "模拟原生查询失败";
+        using var diagnosticEntered = new ManualResetEventSlim();
+        using var releaseDiagnostic = new ManualResetEventSlim();
+        using var detector = new ForegroundDetector(native, _ =>
+        {
+            diagnosticEntered.Set();
+            Require(releaseDiagnostic.Wait(TimeSpan.FromSeconds(5)), "诊断背压释放超时");
+        }) { TargetProcess = "target.exe" };
+        var check = Task.Run(detector.IsTargetForeground);
+        Require(diagnosticEntered.Wait(TimeSpan.FromSeconds(5)), "未进入原生失败的锁外诊断回调");
+        var changeAndDispose = Task.Run(() =>
+        {
+            detector.TargetProcess = "other.exe";
+            detector.Dispose();
+        });
+        try
+        {
+            Require(changeAndDispose.Wait(TimeSpan.FromSeconds(2)),
+                "日志受阻时目标变更和Dispose必须仍能取得前台身份锁");
+        }
+        finally { releaseDiagnostic.Set(); }
+        Require(check.Wait(TimeSpan.FromSeconds(5)) && !check.Result,
+            "锁外诊断期间目标已变化/实例已释放，不能返回等待前的允许结果");
+    }
+
+    public static void ForegroundIsRecheckedAfterSlowSuccessfulFallbackDiagnostics()
+    {
+        var native = new FakeNative { ManagedName = "target.exe" };
+        native.Processes[10].QueryFails = true;
+        native.Processes[10].QueryDiagnostic = "模拟原生查询失败";
+        native.Processes[20] = new FakeProcess("other.exe");
+        using var diagnosticEntered = new ManualResetEventSlim();
+        using var releaseDiagnostic = new ManualResetEventSlim();
+        using var detector = new ForegroundDetector(native, _ =>
+        {
+            diagnosticEntered.Set();
+            Require(releaseDiagnostic.Wait(TimeSpan.FromSeconds(5)), "诊断等待超时");
+        }) { TargetProcess = "target.exe" };
+        var check = Task.Run(detector.IsTargetForeground);
+        Require(diagnosticEntered.Wait(TimeSpan.FromSeconds(5)), "未进入诊断等待");
+        native.Window = 2;
+        native.ProcessId = 20;
+        releaseDiagnostic.Set();
+        Require(check.Wait(TimeSpan.FromSeconds(5)) && !check.Result,
+            "日志等待期间切到其他进程，必须重新检查后拒绝输入");
+    }
+
+    public static void DiagnosticCallbackFailureCannotChangeForegroundDecision()
+    {
+        var native = new FakeNative { ManagedName = "target.exe" };
+        native.Processes[10].QueryFails = true;
+        native.Processes[10].QueryDiagnostic = "模拟原生查询失败";
+        using var detector = new ForegroundDetector(native, _ => throw new IOException("诊断回调失败"))
+        { TargetProcess = "target.exe" };
+        Require(detector.IsTargetForeground(), "失败的诊断观察者不应改变重新验证后的目标身份");
+        native.ManagedName = null;
+        Require(!detector.IsTargetForeground(), "诊断回调失败也不得把查询失败改为允许");
+    }
+
     // 只查询当前测试进程。前台来源固定为自身，因此只比较身份解析成本，不代表真实游戏或完整输入循环提速。
     public static void BenchmarkOwnProcessIdentityResolution()
     {
         var native = new OwnProcessNative();
-        using var initial = native.OpenProcess((uint)Environment.ProcessId, verifyLifetime: false)
+        using var initial = native.OpenProcess((uint)Environment.ProcessId, verifyLifetime: false, out _)
             ?? throw new InvalidOperationException("无法查询当前测试进程");
-        var name = initial.ReadImageName() ?? throw new InvalidOperationException("无法读取当前测试进程名");
+        var name = initial.ReadImageName(out _) ?? throw new InvalidOperationException("无法读取当前测试进程名");
         using var detector = new ForegroundDetector(native) { TargetProcess = name };
         for (var i = 0; i < 100; i++) Require(detector.IsTargetForeground(), "自身身份预热失败");
         const int iterations = 10000;
@@ -172,8 +236,8 @@ internal static class ForegroundPerformanceChecks
         {
             var uncached = Measure(() =>
             {
-                using var handle = native.OpenProcess((uint)Environment.ProcessId, verifyLifetime: false);
-                Require(string.Equals(handle?.ReadImageName(), name, StringComparison.OrdinalIgnoreCase), "自身未缓存查询失败");
+                using var handle = native.OpenProcess((uint)Environment.ProcessId, verifyLifetime: false, out _);
+                Require(string.Equals(handle?.ReadImageName(out _), name, StringComparison.OrdinalIgnoreCase), "自身未缓存查询失败");
             }, iterations);
             var cached = Measure(() => Require(detector.IsTargetForeground(), "自身缓存查询失败"), iterations);
             results.Add(new { round, uncached, cached });
@@ -203,6 +267,7 @@ internal static class ForegroundPerformanceChecks
         public bool Alive { get; set; } = true;
         public bool WaitFails { get; set; }
         public bool QueryFails { get; set; }
+        public string? QueryDiagnostic { get; set; }
     }
 
     private sealed class FakeNative : IForegroundNativeApi
@@ -224,27 +289,31 @@ internal static class ForegroundPerformanceChecks
         public Action? OnPidRead { get; set; }
         public nint GetForegroundWindow() { WindowReads++; return Window; }
         public uint GetWindowProcessId(nint window) { PidReads++; OnPidRead?.Invoke(); return ProcessId; }
-        public IForegroundProcessHandle? OpenProcess(uint processId, bool verifyLifetime)
+        public IForegroundProcessHandle? OpenProcess(uint processId, bool verifyLifetime, out string? diagnostic)
         {
+            diagnostic = null;
             if (verifyLifetime) StableOpens++; else LimitedOpens++;
             if (verifyLifetime ? DenyStableOpen : DenyLimitedOpen) return null;
             return Processes.TryGetValue(processId, out var process) ? new Handle(this, process) : null;
         }
-        public string? GetManagedProcessName(uint processId) { ManagedReads++; return ManagedName; }
+        public string? GetManagedProcessName(uint processId, out string? diagnostic)
+        { diagnostic = null; ManagedReads++; return ManagedName; }
 
         private sealed class Handle(FakeNative owner, FakeProcess process) : IForegroundProcessHandle
         {
             private bool _disposed;
-            public string? ReadImageName()
+            public string? ReadImageName(out string? diagnostic)
             {
+                diagnostic = process.QueryDiagnostic;
                 Require(!_disposed, "不能查询已释放句柄");
                 owner.ImageReads++;
                 owner.OnImageRead?.Invoke();
                 Require(!_disposed, "查询进行中句柄被并发关闭");
                 return process.QueryFails ? null : process.Name;
             }
-            public bool IsAlive()
+            public bool IsAlive(out string? diagnostic)
             {
+                diagnostic = null;
                 Require(!_disposed, "不能等待已释放句柄");
                 return process.Alive && !process.WaitFails;
             }
@@ -261,15 +330,15 @@ internal static class ForegroundPerformanceChecks
     {
         public nint GetForegroundWindow() => 1;
         public uint GetWindowProcessId(nint window) => (uint)Environment.ProcessId;
-        public IForegroundProcessHandle? OpenProcess(uint processId, bool verifyLifetime)
+        public IForegroundProcessHandle? OpenProcess(uint processId, bool verifyLifetime, out string? diagnostic)
         {
             Require(processId == Environment.ProcessId, "benchmark只能查询自身");
-            return ForegroundNativeApi.Instance.OpenProcess(processId, verifyLifetime);
+            return ForegroundNativeApi.Instance.OpenProcess(processId, verifyLifetime, out diagnostic);
         }
-        public string? GetManagedProcessName(uint processId)
+        public string? GetManagedProcessName(uint processId, out string? diagnostic)
         {
             Require(processId == Environment.ProcessId, "benchmark托管兜底只能查询自身");
-            return ForegroundNativeApi.Instance.GetManagedProcessName(processId);
+            return ForegroundNativeApi.Instance.GetManagedProcessName(processId, out diagnostic);
         }
     }
 

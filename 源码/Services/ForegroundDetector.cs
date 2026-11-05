@@ -12,6 +12,7 @@ public sealed class ForegroundDetector : IDisposable
 {
     private readonly object _gate = new();
     private readonly IForegroundNativeApi _native;
+    private readonly Action<string> _reportDiagnostic;
     private ProcessIdentity? _identity;
     private string? _targetProcess;
     private bool _disposed;
@@ -20,7 +21,11 @@ public sealed class ForegroundDetector : IDisposable
 
     public ForegroundDetector() : this(ForegroundNativeApi.Instance) { }
 
-    internal ForegroundDetector(IForegroundNativeApi native) => _native = native;
+    internal ForegroundDetector(IForegroundNativeApi native, Action<string>? reportDiagnostic = null)
+    {
+        _native = native;
+        _reportDiagnostic = reportDiagnostic ?? Diag.Log;
+    }
 
     /// <summary>目标进程名（带 .exe，如 "PathOfExile.exe"）。空时拒绝启动自动操作。</summary>
     public string? TargetProcess
@@ -48,11 +53,15 @@ public sealed class ForegroundDetector : IDisposable
     public static string? GetForegroundProcessName()
     {
         using var detector = new ForegroundDetector();
-        lock (detector._gate) return detector.ReadForegroundName();
+        List<string>? diagnostics = null;
+        string? result;
+        lock (detector._gate) result = detector.ReadForegroundName(ref diagnostics);
+        detector.ReportDiagnostics(diagnostics);
+        return result;
     }
 
     // 调用方持有 _gate。只缓存由存活进程句柄绑定的身份；每次仍读取并复核当前 HWND/PID。
-    private string? ReadForegroundName()
+    private string? ReadForegroundName(ref List<string>? diagnostics)
     {
         try
         {
@@ -60,7 +69,7 @@ public sealed class ForegroundDetector : IDisposable
             if (hwnd == 0)
             {
                 ClearIdentity();
-                Diag.Log("[前台] GetForegroundWindow 返回 0（无前台窗口）");
+                AddDiagnostic(ref diagnostics, "[前台] GetForegroundWindow 返回 0（无前台窗口）");
                 return null;
             }
 
@@ -68,7 +77,7 @@ public sealed class ForegroundDetector : IDisposable
             if (pid == 0)
             {
                 ClearIdentity();
-                Diag.Log($"[前台] GetWindowThreadProcessId 返回 pid=0, hwnd=0x{hwnd:X}");
+                AddDiagnostic(ref diagnostics, $"[前台] GetWindowThreadProcessId 返回 pid=0, hwnd=0x{hwnd:X}");
                 return null;
             }
 
@@ -76,7 +85,7 @@ public sealed class ForegroundDetector : IDisposable
             {
                 // PID 可复用，但一个仍未退出的旧进程不能被同 PID 的新进程替代。
                 // 退出或等待失败本次直接拒绝，绝不借旧名称或降级路径继续放行。
-                if (!StillForeground(hwnd, pid) || !current.Handle.IsAlive())
+                if (!StillForeground(hwnd, pid) || !IsAlive(current.Handle, ref diagnostics))
                 {
                     ClearIdentity();
                     return null;
@@ -85,17 +94,19 @@ public sealed class ForegroundDetector : IDisposable
             }
 
             ClearIdentity();
-            var process = _native.OpenProcess(pid, verifyLifetime: true);
+            var process = _native.OpenProcess(pid, verifyLifetime: true, out var diagnostic);
+            AddDiagnostic(ref diagnostics, diagnostic);
             if (process is not null)
             {
                 try
                 {
-                    var name = process.ReadImageName();
-                    if (!process.IsAlive()) return null;
+                    var name = process.ReadImageName(out diagnostic);
+                    AddDiagnostic(ref diagnostics, diagnostic);
+                    if (!IsAlive(process, ref diagnostics)) return null;
                     if (!string.IsNullOrEmpty(name))
                     {
                         // 查名称期间可能切窗或发生 HWND 复用；一致后才接纳缓存并返回身份。
-                        if (!StillForeground(hwnd, pid) || !process.IsAlive()) return null;
+                        if (!StillForeground(hwnd, pid) || !IsAlive(process, ref diagnostics)) return null;
                         _identity = new ProcessIdentity(pid, name, process);
                         process = null; // 所有权转交缓存，之后由替换/目标变更/Dispose 释放。
                         return name;
@@ -105,17 +116,24 @@ public sealed class ForegroundDetector : IDisposable
             }
 
             // SYNCHRONIZE 权限不足或名称查询失败时保留旧查询路径，但绝不缓存该结果。
-            using var transient = _native.OpenProcess(pid, verifyLifetime: false);
-            var result = transient?.ReadImageName();
-            if (string.IsNullOrEmpty(result))
+            using var transient = _native.OpenProcess(pid, verifyLifetime: false, out diagnostic);
+            AddDiagnostic(ref diagnostics, diagnostic);
+            string? result = null;
+            if (transient is not null)
             {
-                result = _native.GetManagedProcessName(pid);
-                if (result is not null)
-                    Diag.Log($"[前台] Win32 失败，托管 API 成功: pid={pid}, name={result}");
+                result = transient.ReadImageName(out diagnostic);
+                AddDiagnostic(ref diagnostics, diagnostic);
             }
             if (string.IsNullOrEmpty(result))
             {
-                Diag.Log($"[前台] 两种方法均失败, pid={pid}");
+                result = _native.GetManagedProcessName(pid, out diagnostic);
+                AddDiagnostic(ref diagnostics, diagnostic);
+                if (result is not null)
+                    AddDiagnostic(ref diagnostics, $"[前台] Win32 失败，托管 API 成功: pid={pid}, name={result}");
+            }
+            if (string.IsNullOrEmpty(result))
+            {
+                AddDiagnostic(ref diagnostics, $"[前台] 两种方法均失败, pid={pid}");
                 return null;
             }
             return StillForeground(hwnd, pid) ? result : null;
@@ -123,7 +141,7 @@ public sealed class ForegroundDetector : IDisposable
         catch (Exception ex)
         {
             ClearIdentity();
-            Diag.Log($"[前台] GetForegroundProcessName 异常: {ex.Message}");
+            AddDiagnostic(ref diagnostics, $"[前台] GetForegroundProcessName 异常: {ex.Message}");
             return null;
         }
     }
@@ -137,11 +155,50 @@ public sealed class ForegroundDetector : IDisposable
     /// <summary>目标进程是否在前台。TargetProcess 为空 → False（危险输入采用 fail-closed）。</summary>
     public bool IsTargetForeground()
     {
+        List<string>? diagnostics = null;
+        bool result;
         lock (_gate)
         {
             if (_disposed || string.IsNullOrWhiteSpace(_targetProcess)) return false;
-            var current = ReadForegroundName();
-            return current is not null && string.Equals(current, _targetProcess, StringComparison.OrdinalIgnoreCase);
+            var current = ReadForegroundName(ref diagnostics);
+            result = current is not null && string.Equals(current, _targetProcess, StringComparison.OrdinalIgnoreCase);
+        }
+        ReportDiagnostics(diagnostics);
+        if (result && diagnostics is not null)
+        {
+            // 降级成功的诊断可能受日志背压影响；不能把等待前的允许结果用于发送输入。
+            // 正常缓存命中没有诊断，不进入此额外路径。重复的成功诊断不再次输出。
+            List<string>? finalDiagnostics = null;
+            lock (_gate)
+            {
+                if (_disposed || string.IsNullOrWhiteSpace(_targetProcess)) return false;
+                var current = ReadForegroundName(ref finalDiagnostics);
+                result = current is not null && string.Equals(current, _targetProcess, StringComparison.OrdinalIgnoreCase);
+            }
+            if (!result) ReportDiagnostics(finalDiagnostics);
+        }
+        return result;
+    }
+
+    private static bool IsAlive(IForegroundProcessHandle process, ref List<string>? diagnostics)
+    {
+        var alive = process.IsAlive(out var diagnostic);
+        AddDiagnostic(ref diagnostics, diagnostic);
+        return alive;
+    }
+
+    private static void AddDiagnostic(ref List<string>? diagnostics, string? diagnostic)
+    {
+        if (diagnostic is not null) (diagnostics ??= []).Add(diagnostic);
+    }
+
+    private void ReportDiagnostics(List<string>? diagnostics)
+    {
+        if (diagnostics is null) return;
+        foreach (var diagnostic in diagnostics)
+        {
+            try { _reportDiagnostic(diagnostic); }
+            catch { /* 诊断失败不能改变前台身份判定，也不能进入持有身份锁的回退。 */ }
         }
     }
 

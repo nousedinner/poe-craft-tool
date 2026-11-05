@@ -14,7 +14,7 @@ namespace ShiKe.Tools.Settings;
 /// 宿主设置抽屉。Id 使用 host，因此 settings.json 仍保持既定的五分节结构，
 /// Settings 页面本身不创建额外持久化分节。
 /// </summary>
-public sealed class SettingsTool : ITool, IEditableHotkeyProvider
+public sealed class SettingsTool : ITool, IEditableHotkeyProvider, IPassiveTool
 {
     private readonly CraftTool _craft;
     private readonly ClickerTool _clicker;
@@ -67,8 +67,8 @@ public sealed class SettingsTool : ITool, IEditableHotkeyProvider
     internal SettingsApplyResult BeginHotkeyCapture()
     {
         var host = _host ?? throw new InvalidOperationException("SettingsTool 尚未初始化");
-        if (HasActiveAutomation())
-            return SettingsApplyResult.Fail("请先停止正在运行的工具，再修改热键");
+        if (RunningToolsMessage("修改热键") is { } runningMessage)
+            return SettingsApplyResult.Fail(runningMessage);
         if (_hotkeysSuspendedForCapture)
             return SettingsApplyResult.Ok("正在捕获热键");
 
@@ -161,8 +161,8 @@ public sealed class SettingsTool : ITool, IEditableHotkeyProvider
         var hotkeysChanged = !previous.Hotkeys.HasSameBindings(candidate.Hotkeys);
         var targetChanged = !string.Equals(previous.TargetProcess, candidate.TargetProcess,
             StringComparison.OrdinalIgnoreCase);
-        if ((hotkeysChanged || targetChanged) && HasActiveAutomation())
-            return SettingsApplyResult.Fail("请先停止正在运行的工具，再修改热键或目标进程");
+        if ((hotkeysChanged || targetChanged) && RunningToolsMessage("修改热键或目标进程") is { } runningMessage)
+            return SettingsApplyResult.Fail(runningMessage);
 
         if (hotkeysChanged)
         {
@@ -247,8 +247,15 @@ public sealed class SettingsTool : ITool, IEditableHotkeyProvider
         _page?.RefreshFromTool(refreshLists: false);
     }
 
-    private bool HasActiveAutomation()
-        => ToolCapabilities.HasActiveAutomation(_host?.RegisteredTools ?? []);
+    private string? RunningToolsMessage(string action)
+    {
+        var running = (_host?.RegisteredTools ?? []).Where(tool => tool is IToolRuntime { IsRunning: true }).ToArray();
+        if (running.Length == 0) return null;
+        var names = string.Join("、", running.Select(tool => tool.Name).Distinct(StringComparer.Ordinal));
+        return running.All(tool => tool.Id == "hideout")
+            ? $"{names}正在执行，请等待完成后重试{action}。"
+            : $"当前仍在运行：{names}。请停止相关工具或等待执行完成后，再{action}。";
+    }
 
     private void ApplyRuntime(SettingsDraft draft)
     {

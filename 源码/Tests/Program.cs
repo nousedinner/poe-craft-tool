@@ -16,6 +16,19 @@ Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false
 
 var tests = new (string Name, Action Run)[]
 {
+    ("工具必须明确声明唯一的运行或纯页面能力", LifecycleDeclarationChecks.RegistrationRequiresExactlyOneLifecycleDeclaration),
+    ("未知生命周期不能默认放行运行设置或更新", LifecycleDeclarationChecks.UndeclaredLifecyclesFailClosedEvenWithoutRegistry),
+    ("新工具ID不能覆盖旧配置字段", LifecycleDeclarationChecks.LegacySettingsNamesCannotBeUsedAsToolIds),
+    ("配置修正仅在实际告知后确认", LifecycleDeclarationChecks.ConfigurationWarningRequiresActualPresentation),
+    ("越界延迟确认前保留原配置且运行值受限", ConfigurationReviewChecks.DelayNormalizationWaitsForAcknowledgement),
+    ("设置门禁明确指出正在运行的工具", ConfigurationReviewChecks.SettingsGateNamesActiveTools),
+    ("Release默认日志故障通道可观测且恢复摘要保持", DiagnosticFailureChecks.DefaultFailureReporterIsObservableInReleaseAndRecoveryRemainsIntact),
+    ("日志故障通知有界限频且观察者失败隔离", DiagnosticFailureChecks.FailureNotificationsAreBoundedThrottledAndObserverSafe),
+    ("日志故障回调不持有状态锁", DiagnosticFailureChecks.FailureCallbacksRunOutsideTheStateLock),
+    ("前台诊断背压不持有身份锁", ForegroundPerformanceChecks.DiagnosticBackpressureDoesNotHoldForegroundIdentityLock),
+    ("慢诊断后的前台允许结果重新确认", ForegroundPerformanceChecks.ForegroundIsRecheckedAfterSlowSuccessfulFallbackDiagnostics),
+    ("前台诊断回调异常不改变拒绝条件", ForegroundPerformanceChecks.DiagnosticCallbackFailureCannotChangeForegroundDecision),
+    ("更新说明声明版本必须匹配当前程序", ReleaseNotesChecks.ContentVersionMustMatchExecutable),
     ("更新说明纯文本规范化与长度边界", ReleaseNotesChecks.ContentIsBoundedNormalizedPlainText),
     ("更新说明读取失败不传播且释放资源", ReleaseNotesChecks.ReadFailuresAreNonFatalAndStreamsAreDisposed),
     ("仅成功自动更新允许显示说明", ReleaseNotesChecks.DisplayGateRequiresCommittedAutomaticUpdate),

@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="..\Services\Updates\UpdateManifest.cs" Link="Protocol\UpdateManifest.cs" />
     <Compile Include="..\Services\Updates\ReleaseTrust.cs" Link="Protocol\ReleaseTrust.cs" />
+    <Compile Include="..\Services\Updates\ReleaseNotesFormat.cs" Link="Protocol\ReleaseNotesFormat.cs" />
     <None Include="..\scripts\publish-remote.py" Link="publish-remote.py" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

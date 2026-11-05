@@ -6,24 +6,24 @@ internal static class ReleaseNotesChecks
 {
     public static void ContentIsBoundedNormalizedPlainText()
     {
-        Require(ReleaseNotesContent.Parse("\uFEFF  修复一\r\n\r\n改进二\r\t说明🙂  ") == "修复一\n\n改进二\n\t说明🙂",
+        Require(ReleaseNotesContent.Parse("\uFEFF" + Document("  修复一\r\n\r\n改进二\r\t说明🙂  ")) == "修复一\n\n改进二\n\t说明🙂",
             "BOM、换行和首尾空白应规范化，正文段落和Unicode应保留");
-        Require(ReleaseNotesContent.Parse("<b>只是纯文本</b>") == "<b>只是纯文本</b>",
+        Require(ReleaseNotesContent.Parse(Document("<b>只是纯文本</b>")) == "<b>只是纯文本</b>",
             "说明不应解析或转换为标记内容");
         foreach (var empty in new string?[] { null, "", " \t\r\n", "\uFEFF \r\n" })
             Require(ReleaseNotesContent.Parse(empty) is null, "空说明应跳过");
-        Require(ReleaseNotesContent.Parse(new string('字', ReleaseNotesContent.MaximumCharacters))?.Length ==
+        Require(ReleaseNotesContent.Parse(Document(new string('字', ReleaseNotesContent.MaximumCharacters)))?.Length ==
             ReleaseNotesContent.MaximumCharacters, "长度边界内应保留完整正文");
-        Require(ReleaseNotesContent.Parse(new string('字', ReleaseNotesContent.MaximumCharacters + 1)) is null,
+        Require(ReleaseNotesContent.Parse(Document(new string('字', ReleaseNotesContent.MaximumCharacters + 1))) is null,
             "超长正文应跳过，不能截断关键信息");
         foreach (var invalid in new[] { "正文\0后续", "正文\u0001后续", "正文\ud800", "正文\udc00" })
-            Require(ReleaseNotesContent.Parse(invalid) is null, "控制字符和不完整Unicode应拒绝");
+            Require(ReleaseNotesContent.Parse(Document(invalid)) is null, "控制字符和不完整Unicode应拒绝");
     }
 
     public static void ReadFailuresAreNonFatalAndStreamsAreDisposed()
     {
         var messages = new List<string>();
-        var stream = new ObservedStream(Encoding.UTF8.GetBytes("\uFEFF说明\r\n第二行"));
+        var stream = new ObservedStream(Encoding.UTF8.GetBytes("\uFEFF" + Document("说明\r\n第二行")));
         Require(ReleaseNotesContent.Read(() => stream, messages.Add) == "说明\n第二行" && stream.WasDisposed,
             "正常读取应返回正文并释放资源流");
         Require(messages.Count == 0, "正常正文不应产生失败日志");
@@ -33,7 +33,7 @@ internal static class ReleaseNotesChecks
         var invalidUtf8 = new ObservedStream([0xC3, 0x28]);
         Require(ReleaseNotesContent.Read(() => invalidUtf8, messages.Add) is null && invalidUtf8.WasDisposed,
             "无效UTF-8应跳过并释放流");
-        var tooLong = new ObservedStream(Encoding.UTF8.GetBytes(new string('x', ReleaseNotesContent.MaximumCharacters + 1)));
+        var tooLong = new ObservedStream(Encoding.UTF8.GetBytes(Document(new string('x', ReleaseNotesContent.MaximumCharacters + 1))));
         Require(ReleaseNotesContent.Read(() => tooLong, messages.Add) is null && tooLong.WasDisposed,
             "读取长度也必须受限");
         Require(messages.Count == 4, "每次读取失败应记录简短诊断");
@@ -57,6 +57,29 @@ internal static class ReleaseNotesChecks
         Require(ReleaseNotesContent.CurrentVersion == AppIdentity.Version.ToString(3),
             "版本标题必须跟随应用入口版本，不能读取Core默认版本");
     }
+
+    public static void ContentVersionMustMatchExecutable()
+    {
+        Require(ReleaseNotesContent.Parse(Document("当前正文")) == "当前正文", "有效版本头应剥除后显示正文");
+        foreach (var document in new[] { "无版本的旧正文", "Version: 0.0.0\n旧正文",
+                     " Version: " + ReleaseNotesContent.CurrentVersion + "\n正文",
+                     "Version: " + ReleaseNotesContent.CurrentVersion, Document(" \r\n\t") })
+            Require(ReleaseNotesContent.Parse(document) is null, "缺失、不匹配或无正文的版本声明必须拒绝");
+        var reports = new List<string>();
+        using var old = new MemoryStream(Encoding.UTF8.GetBytes("Version: 0.0.0\n旧正文"));
+        Require(ReleaseNotesContent.Read(() => old, reports.Add) is null && reports.Count == 1,
+            "不匹配的说明只记录并跳过，不能影响已提交更新");
+        var manyCrLf = Document(string.Concat(Enumerable.Repeat("字\r\n", 6000)));
+        Require(ReleaseNotesContent.Parse(manyCrLf) is null,
+            "归一后正文不过长，但原始CRLF文本超过总长度时仍须拒绝");
+        var prefix = Document("正文");
+        var rawBoundary = prefix + new string(' ', ReleaseNotesFormat.MaximumDocumentCharacters - prefix.Length);
+        Require(ReleaseNotesContent.Parse(rawBoundary) == "正文" &&
+                ReleaseNotesContent.Parse("\uFEFF" + rawBoundary) is null,
+            "原始总长度边界包含BOM，必须与发布预检一致");
+    }
+
+    private static string Document(string body) => "Version: " + ReleaseNotesContent.CurrentVersion + "\n\n" + body;
 
     public static void DisplayStatePreventsReentryAndConsumesOnlyRenderedWindow()
     {

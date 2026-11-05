@@ -42,7 +42,7 @@ internal static class ArchitectureBoundaryChecks
         navigation.SelectedItem = previous;
     }
 
-    private sealed class CountTool : ITool
+    private sealed class CountTool : ITool, IPassiveTool
     {
         public string Id => "architecture-count-probe";
         public string Name => "虚拟计数工具";

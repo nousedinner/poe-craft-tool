@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 using System.Windows;
 using ShiKe.Host;
 
-internal sealed class StubTool(string id, JsonNode? settings) : ITool
+internal sealed class StubTool(string id, JsonNode? settings) : ITool, IPassiveTool
 {
     public string Id => id;
     public string Name => id;

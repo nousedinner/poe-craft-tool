@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$NoRestore, [switch]$PackageOnly)
+param([switch]$NoRestore, [switch]$PackageOnly, [string]$ReleaseNotesFile='')
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -10,6 +10,10 @@ $projectPath = Join-Path $projectRoot '拾刻.csproj'
 $projectXml = [xml](Get-Content -LiteralPath $projectPath -Raw -Encoding UTF8)
 $version = [string]$projectXml.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw '项目版本格式无效' }
+. (Join-Path $PSScriptRoot 'ReleaseNotes-Validation.ps1')
+if (-not $ReleaseNotesFile) { $ReleaseNotesFile = Join-Path $projectRoot 'ReleaseNotes.txt' }
+$ReleaseNotesFile = [IO.Path]::GetFullPath($ReleaseNotesFile)
+$null = Assert-ReleaseNotes $ReleaseNotesFile $version
 
 # 只打包版本库中的内置资源，日常 data 和个人音效不作为发布来源。
 $tracked = @(& git -C $projectRoot -c core.quotepath=false ls-files -- sounds data/presets)
@@ -28,6 +32,7 @@ $stage = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '发布暂存'
 $archivePath = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '拾刻-win-x64.zip')
 $temporaryArchive = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '发布暂存.zip')
 $dailyProgram = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '拾刻.exe')
+if ($PackageOnly) { $null = Assert-ReleaseNotes $ReleaseNotesFile $version $dailyProgram }
 $allowed = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $null = $allowed.Add('拾刻.exe')
 $null = $allowed.Add('.shike-output.json')
@@ -61,7 +66,7 @@ if ($PackageOnly) {
     }
 }
 else {
-    $arguments = @('publish', $projectPath, '-c', 'Release', '-p:PublishProfile=FrameworkDependent', '--output', $stage)
+    $arguments = @('publish', $projectPath, '-c', 'Release', '-p:PublishProfile=FrameworkDependent', ('-p:ReleaseNotesFile='+$ReleaseNotesFile), '--output', $stage)
     if ($NoRestore) { $arguments += '--no-restore' }
     & dotnet @arguments
     if ($LASTEXITCODE -ne 0) { throw '发布编译失败，旧发布包保持' }
@@ -69,6 +74,7 @@ else {
 
 $program = Join-Path $stage '拾刻.exe'
 if ((Get-Item -LiteralPath $program).VersionInfo.FileVersion -ne "$version.0") { throw '程序版本与项目不一致' }
+$null = Assert-ReleaseNotes $ReleaseNotesFile $version $program
 foreach ($resource in $resources) {
     $name = $resource.FullName.Substring($projectRoot.Length + 1)
     $published = Assert-ArtifactPath $stage (Join-Path $stage $name)

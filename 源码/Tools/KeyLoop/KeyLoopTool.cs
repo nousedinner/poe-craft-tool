@@ -76,27 +76,6 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
         },
     ];
 
-    public void ToggleFromPage()
-    {
-        if (_engine is null || _host is null) return;
-        if (!_enabled)
-        {
-            _host.Notification.ShowError("按键循环当前未启用，请先打开功能开关");
-            return;
-        }
-        if (IsRunning)
-        {
-            _engine.Stop();
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess))
-        {
-            _host.Notification.ShowError("尚未锁定游戏进程，无法启动按键循环");
-            return;
-        }
-        StartValidated();
-    }
-
     public void Stop() => _engine?.Stop();
 
     private void NotifyMissingTarget()

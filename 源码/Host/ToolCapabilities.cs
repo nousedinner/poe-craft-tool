@@ -8,6 +8,9 @@ public interface IToolRuntime
     void RequestStop();
 }
 
+/// <summary>明确声明纯页面工具：没有需要停止或等待清理的后台自动操作。</summary>
+public interface IPassiveTool { }
+
 /// <summary>settings.json 之外的兼容数据；仅由宿主在配置已加载且允许写入时保存。</summary>
 public interface IToolAuxiliaryState
 {
@@ -28,10 +31,23 @@ public interface IEditableHotkeyProvider
 public static class ToolCapabilities
 {
     public static bool HasActiveAutomation(IEnumerable<ITool> tools)
-        => tools.OfType<IToolRuntime>().Any(tool => tool.IsRunning);
+        => tools.Any(tool => (tool is IToolRuntime) == (tool is IPassiveTool) ||
+                             tool is IToolRuntime runtime && runtime.IsRunning);
 
     public static bool AllShutdownCompleted(IEnumerable<ITool> tools)
-        => tools.OfType<IToolRuntime>().All(tool => tool.ShutdownCompleted);
+        => tools.All(tool => tool switch
+        {
+            IToolRuntime when tool is IPassiveTool => false,
+            IToolRuntime runtime => runtime.ShutdownCompleted,
+            IPassiveTool => true,
+            _ => false,
+        });
+
+    internal static void ValidateLifecycle(ITool tool)
+    {
+        if ((tool is IToolRuntime) == (tool is IPassiveTool))
+            throw new InvalidOperationException($"工具“{tool.Name}”必须明确声明运行能力或纯页面能力，且只能选择一种");
+    }
 
     public static IReadOnlyList<EditableHotkey> CollectEditableHotkeys(IEnumerable<ITool> tools)
     {

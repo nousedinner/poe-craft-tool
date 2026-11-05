@@ -19,7 +19,9 @@
     <InformationalVersion>1.0.53</InformationalVersion>
     <AssemblyTitle>拾刻</AssemblyTitle>
     <Product>拾刻</Product>
-    <Description>PoE 洗词缀自动化 + 连点器 + 按键循环 + 一键回城聚合工具（C# 重构版）</Description>
+    <BaseDescription>PoE 洗词缀自动化 + 连点器 + 按键循环 + 一键回城聚合工具（C# 重构版）</BaseDescription>
+    <Description>$(BaseDescription)</Description>
+    <ReleaseNotesFile Condition="'$(ReleaseNotesFile)' == ''">$(MSBuildProjectDirectory)\ReleaseNotes.txt</ReleaseNotesFile>
   </PropertyGroup>
 
   <!-- WPF 项目的隐式 using 不含 System.IO / System.Net.Http（WindowsDesktop SDK 默认列表差异），显式加回 -->
@@ -36,7 +38,7 @@
   <ItemGroup>
     <Resource Include="poe.ico" />
     <!-- 更新说明随EXE受包哈希保护，不扩展旧客户端严格校验的清单字段。 -->
-    <EmbeddedResource Include="ReleaseNotes.txt" LogicalName="ShiKe.ReleaseNotes.txt" />
+    <EmbeddedResource Include="$(ReleaseNotesFile)" LogicalName="ShiKe.ReleaseNotes.txt" />
   </ItemGroup>
 
   <!-- sounds/ 目录复制到输出目录（SoundService 从 AppContext.BaseDirectory/sounds/ 查找音效文件） -->
@@ -55,4 +57,5 @@
     <ProjectReference Include="Core\ShiKe.Core.csproj" />
   </ItemGroup>
 
+  <Import Project="scripts\ReleaseNotes.targets" />
 </Project>

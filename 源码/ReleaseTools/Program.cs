@@ -20,8 +20,9 @@ try
         }
         case "prepare":
         {
-            options.Only("zip", "exe", "version", "key-path", "key-id", "output", "mode", "min-app-version", "min-updater-version", "runtime-major", "platform", "config-schema", "managed-files", "base-packages", "base-manifests");
+            options.Only("zip", "exe", "version", "key-path", "key-id", "output", "mode", "min-app-version", "min-updater-version", "runtime-major", "platform", "config-schema", "managed-files", "base-packages", "base-manifests", "notes");
             var version = options.Required("version");
+            ReleaseNotesArtifact.Validate(options.Required("notes"), options.Required("exe"), version);
             var mode = options.Get("mode", "exe-only");
             var artifact = ReleasePreparation.Inspect(options.Required("zip"), options.Required("exe"), version,
                 mode, options.Optional("managed-files"), options.Optional("base-packages"), options.Optional("base-manifests"));

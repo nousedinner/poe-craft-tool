@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param()
+param([switch]$NoRestore)
 
 # 用户已允许助手自行运行；实际通过仍须完整结果与日志，不能由编译推断。
 $ErrorActionPreference = 'Stop'
@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'Artifact-Paths.ps1')
 $artifactRoot = Get-ArtifactRoot $projectRoot
-$resultDirectory = New-CheckResultDirectory $artifactRoot '内部用例' @('build.log', 'tests.log', 'result.json')
+$resultDirectory = New-CheckResultDirectory $artifactRoot '内部用例' @('build.log', 'tests.log', 'core-build.log', 'core-tests.log', 'result.json')
 $encoding = [Text.UTF8Encoding]::new($true)
 $report = [ordered]@{
     schemaVersion = 1
@@ -23,10 +23,14 @@ $report = [ordered]@{
     passed = $null
     failed = $null
     testExitCode = $null
+    buildExitCode = $null
+    mainSuiteStatus = 'not_run'
+    noRestore = [bool]$NoRestore
+    coreSuite = [ordered]@{ status='not_run'; expectedCases=$null; total=$null; passed=$null; failed=$null; buildExitCode=$null; testExitCode=$null; error=$null }
     programSha256 = $null
     testsSha256 = $null
     testSourceSha256 = $null
-    validationScope = 'internal_cases_only; real_game_audio_and_network_not_run'
+    validationScope = 'desktop_internal_and_independent_core_suites; suites_reported_separately_with_shared_cases_not_unique_coverage; real_game_audio_and_network_not_run'
     error = $null
 }
 
@@ -62,6 +66,7 @@ function Invoke-LoggedDotnet([string]$Arguments, [string]$LogName) {
 }
 
 $scriptExitCode = 1
+$suiteErrors = [Collections.Generic.List[string]]::new()
 try {
     $dotnetPath = (Get-Command dotnet -CommandType Application -ErrorAction Stop).Source
     $projectXml = [xml](Get-Content -LiteralPath (Join-Path $projectRoot '拾刻.csproj') -Raw -Encoding UTF8)
@@ -84,10 +89,14 @@ try {
         }
     }
 
-    Write-Host '正在编译内部用例，不启动日常拾刻或游戏；通知用例会短暂显示独立测试窗口。'
+    $restoreOption = if ($NoRestore) { ' --no-restore' } else { '' }
+    try {
+    $report.mainSuiteStatus = 'building'
+    Write-Host '正在编译内部用例，默认检查并恢复所需依赖；不启动日常拾刻或游戏。'
     $report.status = 'building'
-    $build = Invoke-LoggedDotnet ('build "{0}" -c Release --no-restore --nologo' -f $testProject) 'build.log'
-    if ($build.ExitCode -ne 0) { throw '编译失败，请查看 build.log；首次检出需先恢复项目依赖，并安装 .NET 10 SDK' }
+    $build = Invoke-LoggedDotnet ('build "{0}" -c Release{1} --nologo' -f $testProject,$restoreOption) 'build.log'
+    $report.buildExitCode = $build.ExitCode
+    if ($build.ExitCode -ne 0) { throw '主套件编译失败，请查看 build.log；需要 .NET 10 SDK，-NoRestore 模式需事先恢复依赖' }
 
     $testOutput = Join-Path $artifactRoot '内部用例\Release\net10.0-windows'
     $programDll = Join-Path $testOutput '拾刻.dll'
@@ -107,9 +116,51 @@ try {
     $report.failed = [int]$summaries[0].Groups[3].Value
     if ($testRun.ExitCode -ne 0 -or $report.total -ne $report.expectedCases -or
         $report.passed -ne $report.total -or $report.failed -ne 0) { throw '内部用例未全部通过，请查看 tests.log' }
+    $report.mainSuiteStatus = 'passed'
+    Write-Host "主套件通过：$($report.passed)/$($report.total)。" -ForegroundColor Green
+    } catch {
+        $report.mainSuiteStatus = 'failed'
+        $suiteErrors.Add($_.Exception.Message)
+    }
+
+    try {
+        $coreProject = Join-Path $projectRoot 'CoreTests\ShiKe.CoreTests.csproj'
+        $coreProgram = Get-Content -LiteralPath (Join-Path $projectRoot 'CoreTests\Program.cs') -Raw -Encoding UTF8
+        $coreExpected = 0
+        foreach ($suite in @([regex]::Matches($coreProgram, 'typeof\(([A-Z]\w*)\)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)) {
+            $suitePath = Join-Path $projectRoot ('CoreTests\'+$suite+'.cs')
+            if (-not (Test-Path -LiteralPath $suitePath)) { $suitePath = Join-Path $projectRoot ('Tests\'+$suite+'.cs') }
+            $suiteText = Get-Content -LiteralPath $suitePath -Raw -Encoding UTF8
+            $coreExpected += [regex]::Matches($suiteText, 'public\s+static\s+void\s+\w+\s*\(\s*\)').Count
+        }
+        if ($coreExpected -lt 1) { throw '无法确认独立核心套件用例清单' }
+        $report.coreSuite.expectedCases = $coreExpected
+        $report.coreSuite.status = 'building'
+        $coreBuild = Invoke-LoggedDotnet ('build "{0}" -c Release{1} --nologo' -f $coreProject,$restoreOption) 'core-build.log'
+        $report.coreSuite.buildExitCode = $coreBuild.ExitCode
+        if ($coreBuild.ExitCode -ne 0) { throw '独立核心套件编译失败，请查看 core-build.log' }
+        $report.coreSuite.status = 'running'
+        $coreDll = Join-Path $artifactRoot '核心用例\Release\net10.0\ShiKe.CoreTests.dll'
+        $coreRun = Invoke-LoggedDotnet ('"{0}"' -f $coreDll) 'core-tests.log'
+        $report.coreSuite.testExitCode = $coreRun.ExitCode
+        $coreSummaries = [regex]::Matches($coreRun.Stdout, '(?m)^RESULT total=(\d+), passed=(\d+), failed=(\d+)\r?$')
+        if ($coreSummaries.Count -ne 1) { throw '独立核心套件未返回唯一完整摘要' }
+        $report.coreSuite.total = [int]$coreSummaries[0].Groups[1].Value
+        $report.coreSuite.passed = [int]$coreSummaries[0].Groups[2].Value
+        $report.coreSuite.failed = [int]$coreSummaries[0].Groups[3].Value
+        if ($coreRun.ExitCode -ne 0 -or $report.coreSuite.total -ne $coreExpected -or
+            $report.coreSuite.passed -ne $coreExpected -or $report.coreSuite.failed -ne 0) { throw '独立核心套件未全部通过，请查看 core-tests.log' }
+        $report.coreSuite.status = 'passed'
+        Write-Host "独立核心套件通过：$($report.coreSuite.passed)/$($report.coreSuite.total)（含复用主套件的16项，不合计为新增覆盖）。" -ForegroundColor Green
+    } catch {
+        $report.coreSuite.status = 'failed'
+        $report.coreSuite.error = $_.Exception.Message
+        $suiteErrors.Add($_.Exception.Message)
+    }
+    if ($suiteErrors.Count -gt 0) { throw ($suiteErrors -join '；') }
     $report.status = 'passed'
     $scriptExitCode = 0
-    Write-Host "内部用例通过：$($report.passed)/$($report.total)。不代表真实游戏、音频或联网验收。" -ForegroundColor Green
+    Write-Host '两套验证均通过；不代表真实游戏、音频或联网验收。' -ForegroundColor Green
 }
 catch {
     $report.status = 'failed'

@@ -26,7 +26,7 @@ internal sealed class BufferedDiagnosticLog
     private readonly string _path;
     private readonly DiagnosticLogOptions _options;
     private readonly IDiagnosticLogFiles _files;
-    private readonly Action<string> _reportFailure;
+    private readonly Action<string>? _reportFailure;
     private readonly Thread _writer;
     private bool _closing, _abandon, _stopped, _urgent, _lastWriteFailed;
     private long _lastSequence, _completedSequence, _acceptedLines, _writtenLines, _failedLines;
@@ -43,7 +43,7 @@ internal sealed class BufferedDiagnosticLog
         if (_options.QueueCapacity < 1 || _options.BatchSize < 1 || _options.BatchDelayMs < 0)
             throw new ArgumentOutOfRangeException(nameof(options));
         _files = files ?? new DiagnosticLogFiles();
-        _reportFailure = reportFailure ?? (message => Debug.WriteLine(message));
+        _reportFailure = reportFailure;
         _writer = new Thread(WriteLoop) { IsBackground = true, Name = "拾刻诊断日志" };
         _writer.Start();
     }
@@ -67,7 +67,7 @@ internal sealed class BufferedDiagnosticLog
             }
             if (line is not null) _lateLines++;
         }
-        Report("[日志] 写入器已关闭，晚到消息仅保留在调试输出；未重新启动线程。");
+        Report(DiagnosticFailureKind.LateMessage, "[日志] 写入器已关闭，晚到消息未写入文件；未重新启动线程。");
         return 0;
     }
 
@@ -118,7 +118,7 @@ internal sealed class BufferedDiagnosticLog
             _queue.Clear();
             Monitor.PulseAll(_gate);
         }
-        Report("[日志] 退出排空超过预算，已放弃尚未写出的队列；正在进行的系统写入由后台线程结束。");
+        Report(DiagnosticFailureKind.Shutdown, "[日志] 退出排空超过预算，已放弃尚未写出的队列；正在进行的系统写入由后台线程结束。");
         return false;
     }
 
@@ -191,7 +191,8 @@ internal sealed class BufferedDiagnosticLog
                     }
                     Monitor.PulseAll(_gate);
                 }
-                if (failure is not null) Report($"[日志] 磁盘写入失败，{lineCount} 条消息未保存：{failure.Message}");
+                if (failure is not null) Report(DiagnosticFailureKind.StorageWrite,
+                    $"[日志] 磁盘写入失败，{lineCount} 条消息未保存：{failure.Message}");
             }
         }
         finally
@@ -200,9 +201,13 @@ internal sealed class BufferedDiagnosticLog
         }
     }
 
-    private void Report(string message)
+    private void Report(DiagnosticFailureKind kind, string message)
     {
-        try { _reportFailure(message); }
+        try
+        {
+            if (_reportFailure is not null) _reportFailure(message);
+            else DiagnosticFailureReporter.Report(kind, message);
+        }
         catch { }
     }
 

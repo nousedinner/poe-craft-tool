@@ -24,6 +24,9 @@ public partial class App : Application
     private bool _ownsSingleInstanceMutex;
     private bool _isShuttingDown;
     private bool _settingsLoadedSuccessfully;
+    private bool _diagnosticNotificationsAttached;
+    private long _lastDiagnosticNotification;
+    private bool _showingConfigurationWarnings;
     private readonly ReleaseNotesDisplayState _releaseNotesDisplay = new();
     private readonly CancellationTokenSource _backgroundCts = new();
     private readonly StartupPerformance _startup;
@@ -140,6 +143,11 @@ public partial class App : Application
         _mainWindow.ContentRendered += OnMainWindowFirstRender;
         if (_startupProfile || _updateAcceptance is not null) _mainWindow.ShowActivated = false;
         MainWindow = _mainWindow;
+        if (!_startupProfile && _updateAcceptance is null)
+        {
+            DiagnosticFailureReporter.NotificationRequested += OnDiagnosticFailure;
+            _diagnosticNotificationsAttached = true;
+        }
         MarkStartup("主窗口构造与事件连接完成");
 
         // X / Alt+F4 关闭主窗口后由 OnMainWindowClose 正式退出；先取消后台任务。
@@ -223,10 +231,13 @@ public partial class App : Application
                     }
                     ShowPostUpdateReleaseNotes();
                     if (_isShuttingDown) return;
+                    ShowLoadedConfigurationWarnings();
+                    if (_isShuttingDown) return;
                     _host.AutomationSuspendedForUpdate = false;
                     _mainWindow.IsEnabled = true;
                     _host.Hotkeys.AttachToWindow(_mainWindow);
                     RegisterHotkeys();
+                    if (DiagnosticFailureReporter.Latest is { } latest) OnDiagnosticFailure(latest);
                     var token = _backgroundCts.Token;
                     _ = Task.Run(() => RunBackgroundTasksAsync(token));
                 }
@@ -244,6 +255,9 @@ public partial class App : Application
                 _mainWindow.Close();
                 return;
             }
+            ShowLoadedConfigurationWarnings();
+            if (_isShuttingDown) return;
+            if (!_startupProfile && DiagnosticFailureReporter.Latest is { } failure) OnDiagnosticFailure(failure);
             if (!_startupProfile && _updateStartup is null && _updateAcceptance is null)
                 _ = Task.Run(() =>
                 {
@@ -285,6 +299,37 @@ public partial class App : Application
         {
             if (began) _releaseNotesDisplay.Complete(dialog?.RenderedOnce == true);
         }
+    }
+
+    private void OnDiagnosticFailure(DiagnosticFailure failure)
+    {
+        if (!failure.CanNotify || _isShuttingDown || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+        try
+        {
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() =>
+            {
+                if (_isShuttingDown || !_settingsLoadedSuccessfully || _host is null ||
+                    _host.Storage.ReadOnlyForUpdateValidation || failure.Sequence <= _lastDiagnosticNotification) return;
+                _lastDiagnosticNotification = failure.Sequence;
+                try { _host.Notification.Show("部分诊断日志未能保存，程序功能仍可使用。"); }
+                catch { /* 故障通道不能再递归调用日志或错误弹窗。 */ }
+            }));
+        }
+        catch (InvalidOperationException) { }
+    }
+
+    private void ShowLoadedConfigurationWarnings()
+    {
+        if (_showingConfigurationWarnings || _startupProfile || _updateAcceptance is not null ||
+            _isShuttingDown || !_settingsLoadedSuccessfully || _host is null ||
+            _host.Storage.ReadOnlyForUpdateValidation || _mainWindow is not { IsVisible: true }) return;
+        _showingConfigurationWarnings = true;
+        try
+        {
+            ConfigurationWarningPresenter.Show(_mainWindow, _host.RegisteredTools.OfType<IConfigurationWarnings>(),
+                () => !_isShuttingDown);
+        }
+        finally { _showingConfigurationWarnings = false; }
     }
 
     private TrayService EnsureTray()
@@ -519,6 +564,11 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         _isShuttingDown = true;
+        if (_diagnosticNotificationsAttached)
+        {
+            DiagnosticFailureReporter.NotificationRequested -= OnDiagnosticFailure;
+            _diagnosticNotificationsAttached = false;
+        }
         _backgroundCts.Cancel();
         Diag.Log("=== 拾刻退出 ===");
         var saveErrors = new List<string>();

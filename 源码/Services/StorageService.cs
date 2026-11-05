@@ -45,8 +45,7 @@ public sealed class StorageService
     {
         ArgumentNullException.ThrowIfNull(sectionIds);
         var ids = sectionIds.ToArray();
-        if (ids.Any(id => string.IsNullOrWhiteSpace(id) || id != id.Trim() || id == "schema_version"))
-            throw new ArgumentException("工具分节名不能为空、带首尾空格或占用 schema_version", nameof(sectionIds));
+        foreach (var id in ids) SettingsSectionIdentity.Validate(id);
         lock (_settingsGate) _toolSections.UnionWith(ids);
     }
 

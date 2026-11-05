@@ -21,6 +21,20 @@ internal static class ReleaseSelfTests
         var manifest = UpdateManifest.Verify(json, key.ExportSubjectPublicKeyInfoPem(), "test-key");
         var tests = new (string Name, Func<Task> Run)[]
         {
+            ("版本说明绑定版本与EXE元数据且拒绝旧EXE", () =>
+            {
+                var hash = new string('A', 64);
+                var marker = "描述 [ReleaseNotesVersion=1.0.60;Sha256=" + hash + "]";
+                ReleaseNotesArtifact.ValidateMetadata("1.0.60.0", marker, "1.0.60", hash);
+                Reject(() => ReleaseNotesArtifact.ValidateMetadata("1.0.60.0", "旧EXE无标记", "1.0.60", hash));
+                Reject(() => ReleaseNotesArtifact.ValidateMetadata("1.0.60.0", marker, "1.0.61", hash));
+                Reject(() => ReleaseNotesArtifact.ValidateMetadata("1.0.60.0", marker, "1.0.60", new string('B', 64)));
+                Reject(() => ReleaseNotesArtifact.ValidateMetadata("1.0.60.0", marker + marker, "1.0.60", hash));
+                Require(ReleaseNotesFormat.Parse("Version: 1.0.60\n\n说明", "1.0.60") == "说明" &&
+                        ReleaseNotesFormat.Parse("Version: 1.0.59\n说明", "1.0.60") is null,
+                    "准备端应使用和客户端相同的版本绑定格式");
+                return Task.CompletedTask;
+            }),
             ("签名清单由客户端同协议验证", () =>
             {
                 Require(manifest.VersionText == artifact.Version && manifest.PackageSha256 == artifact.PackageSha256 &&
