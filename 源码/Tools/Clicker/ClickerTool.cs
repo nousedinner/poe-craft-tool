@@ -6,7 +6,7 @@ using ShiKe.Services;
 
 namespace ShiKe.Tools.Clicker;
 
-public sealed class ClickerTool : ITool, IEnableableTool
+public sealed partial class ClickerTool : ITool, IEnableableTool
 {
     private ToolHost? _host;
     private ClickerEngine? _engine;
@@ -56,13 +56,11 @@ public sealed class ClickerTool : ITool, IEnableableTool
 
     public void OnDeactivate()
     {
-        _page?.CollectSettingsFromUi();
         SaveSettingsToStorage();
     }
 
     public void OnShutdown()
     {
-        _page?.CollectSettingsFromUi();
         if (_engine is not null && !_engine.Shutdown(TimeSpan.FromSeconds(1)))
             Diag.Log("[连点] OnShutdown: 1 秒内未完成关闭");
     }
@@ -92,7 +90,6 @@ public sealed class ClickerTool : ITool, IEnableableTool
 
     public void ToggleFromPage()
     {
-        _page?.CollectSettingsFromUi();
         if (_engine is null || _host is null) return;
         if (!_enabled)
         {
@@ -120,7 +117,6 @@ public sealed class ClickerTool : ITool, IEnableableTool
     private void ToggleFromHotkey()
     {
         if (!_enabled) return;
-        _page?.CollectSettingsFromUi();
         _holdStarted = false;
         _engine?.Toggle(MouseButton, IntervalMs);
     }
@@ -128,7 +124,6 @@ public sealed class ClickerTool : ITool, IEnableableTool
     private void StartHoldFromHotkey()
     {
         if (!_enabled) return;
-        _page?.CollectSettingsFromUi();
         _holdStarted = _engine?.Start(MouseButton, IntervalMs) == true;
     }
 

@@ -36,6 +36,7 @@ public partial class KeyLoopPage : UserControl
             tool.IsRunning ? "按键循环运行中..." : "按键循环就绪"));
         _loading = false;
         RefreshEnabledPresentation();
+        CollectSettingsFromUi(); // 使初始显示的延时格式与后续运行配置一致，不提前落盘。
         tool.StatusUpdated += status => Dispatcher.BeginInvoke(() => ApplyStatus(status));
     }
 
@@ -132,6 +133,7 @@ public partial class KeyLoopPage : UserControl
             enabled.Unchecked += (_, _) => SaveRowChange();
             keyButton.Click += (_, _) => StartCapture(capturedIndex);
             clearButton.Click += (_, _) => ClearKey(capturedIndex);
+            delay.TextChanged += (_, _) => SynchronizeDelay(capturedIndex);
             delay.LostFocus += (_, _) => CommitDelay(capturedIndex);
             delay.PreviewKeyDown += (_, e) =>
             {
@@ -247,6 +249,14 @@ public partial class KeyLoopPage : UserControl
         _tool.Slots[index].DelaySeconds = seconds;
         row.Delay.Text = seconds.ToString("0.0", CultureInfo.InvariantCulture);
         SaveRowChange();
+    }
+
+    // 编辑值进入工具的配置状态；仍只在原来的提交/切页/退出时机落盘。
+    private void SynchronizeDelay(int index)
+    {
+        if (_loading) return;
+        if (TryParseDelay(_rows[index].Delay.Text, out var seconds))
+            _tool.Slots[index].DelaySeconds = Math.Clamp(seconds, 0.1, 999.0);
     }
 
     internal static bool TryParseDelay(string text, out double seconds)

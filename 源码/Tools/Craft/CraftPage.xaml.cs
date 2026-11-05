@@ -1,5 +1,4 @@
 ﻿using System.Diagnostics;
-using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -46,6 +45,10 @@ public partial class CraftPage : UserControl
     public CraftPage(ToolHost host, CraftTool tool)
     {
         InitializeComponent();
+        Resources.MergedDictionaries.Add(new ResourceDictionary
+        {
+            Source = new Uri("/拾刻;component/Tools/Craft/CraftComponentResources.xaml", UriKind.Relative),
+        });
         _host = host;
         _tool = tool;
         // 在模板首次应用前设置开关，Loaded 仍负责较重的卡片/规则初始化。
@@ -112,10 +115,18 @@ public partial class CraftPage : UserControl
         RefreshPresetCombo();
 
         // 延迟滑块绑定
-        DelaySlider.ValueChanged += (_, _) => DelayValue.Text = $"{(int)DelaySlider.Value} ms";
         DelaySlider.Value = _tool.DelayMs;
         DelayValue.Text = $"{_tool.DelayMs} ms";
+        DelaySlider.ValueChanged += (_, _) =>
+        {
+            DelayValue.Text = $"{(int)DelaySlider.Value} ms";
+            SynchronizeEditedRules();
+        };
         RefreshEnabledPresentation();
+        // 恢复时控件可能采用已有的币种/数量后备值；运行配置必须与首次显示保持一致。
+        // 这里只同步内存，不改变原来在启动、切页或退出时才写盘的时机。
+        SynchronizeEditedRules();
+        _tool.MarkEditorReady();
         var startupElapsedMs = startupTimer.ElapsedMilliseconds;
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle,
             new Action(() => Diag.Log($"[启动性能] Craft 首次页面初始化完成={startupElapsedMs}ms")));
@@ -157,24 +168,14 @@ public partial class CraftPage : UserControl
             var clearBtn = new Button
             {
                 Content = "✕",
-                Width = 26,
-                Padding = new Thickness(2),
+                Style = (Style)FindResource("CraftCoordinateClear"),
                 Visibility = Visibility.Collapsed,
-                Cursor = System.Windows.Input.Cursors.Hand,
-                FontSize = 10,
-                Background = new SolidColorBrush(Color.FromArgb(0x14, 0xC0, 0x39, 0x2B)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0x33, 0xC0, 0x39, 0x2B)),
-                BorderThickness = new Thickness(1),
-                Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xC0, 0x39, 0x2B)),
             };
 
             var nameLabel = new TextBlock
             {
                 Text = Currency.Label(key),
-                FontSize = 13,
-                FontWeight = FontWeights.Bold,
-                Foreground = (Brush)FindResource("TextPrimary"),
-                HorizontalAlignment = HorizontalAlignment.Center,
+                Style = (Style)FindResource("CraftCurrencyLabel"),
             };
 
             var coordRow = new Grid { Margin = new Thickness(0, 8, 0, 0) };
@@ -186,12 +187,7 @@ public partial class CraftPage : UserControl
 
             var root = new Border
             {
-                Background = (Brush)FindResource("CardBackground"),
-                BorderBrush = (Brush)FindResource("CardBorder"),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(8, 6, 8, 6),
-                Margin = new Thickness(3),
+                Style = (Style)FindResource("CraftCurrencyCard"),
                 Tag = key,
                 Child = new StackPanel
                 {
@@ -229,6 +225,7 @@ public partial class CraftPage : UserControl
         if (!IsLoaded || _loadingState || SingleCurrencyCombo.SelectedValue is not string key) return;
         _selectedCurrency = key;
         _dirty = true;
+        SynchronizeEditedRules();
     }
 
     // ── 坐标录制（三态按钮；信号分离坑 #10）──
@@ -281,10 +278,10 @@ public partial class CraftPage : UserControl
         if (pt is { } p)
         {
             coordBtn.Content = $"✓ ({p.X}, {p.Y})";
-            coordBtn.Background = new SolidColorBrush(Color.FromArgb(0x14, 0x1B, 0x8A, 0x3E));
-            coordBtn.BorderBrush = new SolidColorBrush(Color.FromArgb(0x4D, 0x1B, 0x8A, 0x3E));
+            coordBtn.Background = (Brush)FindResource("CraftCoordinateBackground");
+            coordBtn.BorderBrush = (Brush)FindResource("CraftCoordinateBorder");
             coordBtn.BorderThickness = new Thickness(1);
-            coordBtn.Foreground = new SolidColorBrush(Color.FromRgb(0x1B, 0x8A, 0x3E));
+            coordBtn.Foreground = (Brush)FindResource("CraftCoordinateForeground");
             coordBtn.FontWeight = FontWeights.Normal;
             clearBtn.Visibility = Visibility.Visible;
         }
@@ -371,6 +368,7 @@ public partial class CraftPage : UserControl
         }
 
         AddAffixTag(type, text);
+        SynchronizeEditedRules();
         return true;
     }
 
@@ -387,11 +385,11 @@ public partial class CraftPage : UserControl
 
     private void AddAffixTag(string type, string text)
     {
-        var (bg, border, target) = type switch
+        var (resourcePrefix, target) = type switch
         {
-            "primary" => ((Color)ColorConverter.ConvertFromString("#E9F7F3"), (Color)ColorConverter.ConvertFromString("#C4E4DB"), _primaryTags),
-            "secondary" => ((Color)ColorConverter.ConvertFromString("#EAF5FC"), (Color)ColorConverter.ConvertFromString("#D4E6F0"), _secondaryTags),
-            _ => ((Color)ColorConverter.ConvertFromString("#FCF0F2"), (Color)ColorConverter.ConvertFromString("#EED4DA"), _excludeTags),
+            "primary" => ("CraftPrimaryTag", _primaryTags),
+            "secondary" => ("CraftSecondaryTag", _secondaryTags),
+            _ => ("CraftExcludeTag", _excludeTags),
         };
         var panel = type switch
         {
@@ -403,29 +401,18 @@ public partial class CraftPage : UserControl
         var label = new TextBlock
         {
             Text = text,
-            FontSize = 12,
-            Foreground = (Brush)FindResource("TextPrimary"),
-            MaxWidth = 190,
-            TextWrapping = TextWrapping.Wrap,
-            VerticalAlignment = VerticalAlignment.Center,
+            Style = (Style)FindResource("CraftAffixLabel"),
         };
         var removeBtn = new TextBlock
         {
             Text = "✕",
-            FontSize = 11,
-            Foreground = Brushes.Gray,
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Margin = new Thickness(6, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center,
+            Style = (Style)FindResource("CraftAffixRemove"),
         };
         var root = new Border
         {
-            Background = new SolidColorBrush(bg),
-            BorderBrush = new SolidColorBrush(border),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(8, 2, 6, 2),
-            Margin = new Thickness(0, 2, 4, 2),
+            Style = (Style)FindResource("CraftAffixTag"),
+            Background = (Brush)FindResource(resourcePrefix + "Background"),
+            BorderBrush = (Brush)FindResource(resourcePrefix + "Border"),
             Child = new StackPanel { Orientation = Orientation.Horizontal, Children = { label, removeBtn } },
         };
 
@@ -437,6 +424,7 @@ public partial class CraftPage : UserControl
             target.Remove(tag);
             panel.Children.Remove(root);
             _dirty = true;
+            SynchronizeEditedRules();
         };
     }
 
@@ -449,6 +437,7 @@ public partial class CraftPage : UserControl
         tags.Clear();
         panel.Children.Clear();
         _dirty = true;
+        SynchronizeEditedRules();
     }
 
     // ── 命中数：编辑时保留选择，Mode2/3 上限统一在启动前校验 ──
@@ -457,6 +446,7 @@ public partial class CraftPage : UserControl
     {
         if (!IsLoaded || _loadingState || _restoringHitCount) return;
         _dirty = true;
+        SynchronizeEditedRules();
     }
 
     private void RefreshHitCountPresentation()
@@ -499,20 +489,23 @@ public partial class CraftPage : UserControl
         ApplyModeVisibility();
         RefreshHitCountPresentation();
         _dirty = true;
+        SynchronizeEditedRules();
     }
 
     private void Mode2Option_Changed(object sender, RoutedEventArgs e)
     {
-        if (!IsLoaded) return;
+        if (!IsLoaded || _loadingState) return;
         _tool.Mode2ScourAlch = Mode2ScourAlch.IsChecked == true;
         _dirty = true;
+        SynchronizeEditedRules();
     }
 
     private void ExaltCheck_Changed(object sender, RoutedEventArgs e)
     {
-        if (!IsLoaded) return;
+        if (!IsLoaded || _loadingState) return;
         _tool.UseExalt = ExaltCheck.IsChecked == true;
         _dirty = true;
+        SynchronizeEditedRules();
     }
 
     private CraftMode CurrentModeFromRadio()
@@ -532,7 +525,7 @@ public partial class CraftPage : UserControl
         {
             PresetCombo.Items.Clear();
             PresetCombo.Items.Add("无");
-            foreach (var name in _host.Storage.ListPresets()) PresetCombo.Items.Add(name);
+            foreach (var name in _tool.ListPresets()) PresetCombo.Items.Add(name);
         }
         catch (StorageException error)
         {
@@ -567,8 +560,8 @@ public partial class CraftPage : UserControl
             }
         }
 
-        JsonObject? data;
-        try { data = _host.Storage.LoadPreset(name); }
+        CraftPreset? data;
+        try { data = _tool.LoadPreset(name); }
         catch (StorageException error)
         {
             NotificationService.ShowConfigurationError(error.Message, Window.GetWindow(this));
@@ -588,37 +581,24 @@ public partial class CraftPage : UserControl
         }
     }
 
-    private void ApplyPreset(JsonObject data)
+    private void ApplyPreset(CraftPreset data)
     {
-        ClearPool(_primaryTags, PrimaryTags);
-        ClearPool(_secondaryTags, SecondaryTags);
-        ClearPool(_excludeTags, ExcludeTags);
-
-        foreach (var text in ReadStringArray(data, "primary_affixes")) AddAffixTag("primary", text);
-        foreach (var text in ReadStringArray(data, "secondary_affixes")) AddAffixTag("secondary", text);
-        ApplyHitCounts(
-            ReadInt(data, "primary_hit_count", 0),
-            ReadInt(data, "secondary_hit_count", 0));
-        foreach (var text in ReadStringArray(data, "exclude_affixes")) AddAffixTag("exclude", text);
-    }
-
-    private static IEnumerable<string> ReadStringArray(JsonObject obj, string key)
-    {
-        if (obj[key] is not JsonArray arr) yield break;
-        foreach (var item in arr)
+        _loadingState = true;
+        try
         {
-            var text = item switch
-            {
-                JsonValue v when v.TryGetValue<string>(out var s) => s,
-                JsonObject o when o["text"] is JsonValue v && v.TryGetValue<string>(out var s) => s,
-                _ => null,
-            };
-            if (!string.IsNullOrWhiteSpace(text)) yield return text;
-        }
-    }
+            ClearPool(_primaryTags, PrimaryTags);
+            ClearPool(_secondaryTags, SecondaryTags);
+            ClearPool(_excludeTags, ExcludeTags);
 
-    private static int ReadInt(JsonObject obj, string key, int fallback)
-        => obj[key] is JsonValue v && v.TryGetValue<int>(out var i) ? i : fallback;
+            foreach (var text in data.PrimaryAffixes) AddAffixTag("primary", text);
+            foreach (var text in data.SecondaryAffixes) AddAffixTag("secondary", text);
+            ApplyHitCounts(data.PrimaryHitCount, data.SecondaryHitCount);
+            foreach (var text in data.ExcludeAffixes) AddAffixTag("exclude", text);
+        }
+        finally { _loadingState = false; }
+        RefreshHitCountPresentation();
+        SynchronizeEditedRules();
+    }
 
     private static void SetHitRadio(RadioButton r0, RadioButton r1, RadioButton r2, RadioButton r3, int value)
         => (value switch { 0 => r0, 1 => r1, 2 => r2, _ => r3 }).IsChecked = true;
@@ -656,22 +636,14 @@ public partial class CraftPage : UserControl
             return;
         }
 
-        if (_host.Storage.ListPresets().Contains(name, StringComparer.OrdinalIgnoreCase))
+        if (_tool.ListPresets().Contains(name, StringComparer.OrdinalIgnoreCase))
         {
             var reply = ThemedMessageBox.Show($"已存在同名预设「{name}」，是否覆盖？",
                 "覆盖确认", MessageBoxButton.YesNo, MessageBoxImage.Question);
             if (reply != MessageBoxResult.Yes) return;
         }
 
-        var data = new JsonObject
-        {
-            ["primary_affixes"] = new JsonArray(_primaryTags.Select(t => (JsonNode)t.Text).ToArray()),
-            ["primary_hit_count"] = CurrentPrimaryHit,
-            ["secondary_affixes"] = new JsonArray(_secondaryTags.Select(t => (JsonNode)t.Text).ToArray()),
-            ["secondary_hit_count"] = CurrentSecondaryHit,
-            ["exclude_affixes"] = new JsonArray(_excludeTags.Select(t => (JsonNode)t.Text).ToArray()),
-        };
-        _host.Storage.SavePreset(name, data);
+        _tool.SavePreset(name);
         _dirty = false;
         RefreshPresetCombo();
         PresetCombo.SelectedItem = name;
@@ -686,7 +658,7 @@ public partial class CraftPage : UserControl
         if (reply != MessageBoxResult.Yes) return;
         try
         {
-            _host.Storage.DeletePreset(name);
+            _tool.DeletePreset(name);
             RefreshPresetCombo();
         }
         catch (StorageException error) { NotificationService.ShowConfigurationError(error.Message, owner); }
@@ -696,7 +668,7 @@ public partial class CraftPage : UserControl
     {
         try
         {
-            Process.Start(new ProcessStartInfo(Path.Combine(_host.Storage.DataDir, "presets"))
+            Process.Start(new ProcessStartInfo(_tool.PresetDirectory)
             {
                 UseShellExecute = true,
             });
@@ -707,16 +679,20 @@ public partial class CraftPage : UserControl
     // ── 启停（快捷键 F5/F6 触发；无按钮，对齐用户反馈）──
 
     /// <summary>
-    /// 收集全部页面状态并保存。F5、切换抽屉和退出共用此入口，
-    /// 避免规则、模式与 Craft 设置分别处于不同版本。
+    /// 保留给旧页面验证的显式提交入口；正常编辑已即时同步，工具运行不再调用页面。
     /// </summary>
     public void CollectRulesFromUi()
     {
         // 窗口首帧前关闭时 Loaded 尚未把已有规则填入控件，不能用空标签/默认值覆盖。
         if (!_initialized) return;
         UpdateRulesFromUi();
-        _tool.SaveRulesToStorage();
-        _tool.SaveSettingsToStorage();
+        _tool.SaveEditedState();
+    }
+
+    private void SynchronizeEditedRules()
+    {
+        if (!_initialized || _loadingState) return;
+        UpdateRulesFromUi();
     }
 
     /// <summary>收集 UI → Rules（对齐 Python update_rules）。</summary>

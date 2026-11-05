@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <BaseOutputPath>..\..\bin\Release\net10.0-windows\核心用例\</BaseOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Core\ShiKe.Core.csproj" />
+    <Compile Include="..\Tests\AffixAllocationChecks.cs" Link="Existing\AffixAllocationChecks.cs" />
+    <Compile Include="..\Tests\CraftLoopChecks.cs" Link="Existing\CraftLoopChecks.cs" />
+  </ItemGroup>
+</Project>

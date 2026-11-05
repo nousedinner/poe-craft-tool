@@ -14,6 +14,10 @@ namespace ShiKe.Services;
 public sealed class StorageService
 {
     private readonly object _settingsGate = new();
+    private readonly HashSet<string> _toolSections = new(StringComparer.Ordinal)
+    {
+        "craft", "clicker", "keyloop", "hideout", "host",
+    };
 
     public string DataDir { get; }
 
@@ -35,6 +39,16 @@ public sealed class StorageService
     }
 
     // ── settings.json：分节加载 + 旧版迁移 ──
+
+    /// <summary>宿主在首次加载前声明工具分节；仅更新内存，不修改现有 JSON 格式。</summary>
+    internal void RegisterToolSections(IEnumerable<string> sectionIds)
+    {
+        ArgumentNullException.ThrowIfNull(sectionIds);
+        var ids = sectionIds.ToArray();
+        if (ids.Any(id => string.IsNullOrWhiteSpace(id) || id != id.Trim() || id == "schema_version"))
+            throw new ArgumentException("工具分节名不能为空、带首尾空格或占用 schema_version", nameof(sectionIds));
+        lock (_settingsGate) _toolSections.UnionWith(ids);
+    }
 
     /// <summary>
     /// 加载 settings.json。若为旧版平铺格式（顶层无分节键）则自动迁移：
@@ -90,9 +104,8 @@ public sealed class StorageService
         }
     }
 
-    private static bool IsSectionedSettings(JsonObject root)
-        => root.ContainsKey("craft") || root.ContainsKey("clicker") || root.ContainsKey("keyloop") ||
-           root.ContainsKey("hideout") || root.ContainsKey("host") || root.ContainsKey("schema_version");
+    private bool IsSectionedSettings(JsonObject root)
+        => _toolSections.Any(root.ContainsKey) || root.ContainsKey("schema_version");
 
     private static bool IsFileError(Exception ex)
         => ex is JsonException or InvalidDataException or IOException or UnauthorizedAccessException;
@@ -133,7 +146,7 @@ public sealed class StorageService
                 new InvalidOperationException("新版尚未完成启动确认，原配置保持只读"));
     }
 
-    private static void ValidateSettings(JsonObject root)
+    private void ValidateSettings(JsonObject root)
     {
         if (!IsSectionedSettings(root))
         {
@@ -147,7 +160,7 @@ public sealed class StorageService
             ValidateSettings(MigrateLegacySettings(root));
             return;
         }
-        foreach (var key in new[] { "craft", "clicker", "keyloop", "hideout", "host" })
+        foreach (var key in _toolSections)
             if (root.TryGetPropertyValue(key, out var section) && section is not JsonObject)
                 throw new InvalidDataException($"设置分节“{key}”必须是对象");
         ValidateIntFields(root, "schema_version");

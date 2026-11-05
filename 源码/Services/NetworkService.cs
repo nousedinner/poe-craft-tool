@@ -1,5 +1,4 @@
 using System.Net.Http;
-using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -54,8 +53,7 @@ public sealed class NetworkService : IDisposable
     }
 
     /// <summary>当前程序版本（csproj Version 单一来源）。</summary>
-    public static Version CurrentVersion =>
-        Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 0);
+    public static Version CurrentVersion => AppIdentity.Version;
 
     /// <summary>版本检查。null = 已最新或请求失败；非 null = 需更新（latest, url）。</summary>
     public async Task<VersionCheckResult?> CheckVersionAsync(CancellationToken cancellationToken = default)

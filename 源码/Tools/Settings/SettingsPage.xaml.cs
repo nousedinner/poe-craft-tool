@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using ShiKe.Services;
+using ShiKe.Host;
 
 namespace ShiKe.Tools.Settings;
 
@@ -12,7 +13,8 @@ public partial class SettingsPage : UserControl
     private const string StatisticsUrl = "https://open.cancanneed.top/share/poe-craft-tool-5c9767d3";
 
     private readonly SettingsTool _tool;
-    private readonly Dictionary<string, Button> _hotkeyButtons;
+    private readonly Dictionary<string, Button> _hotkeyButtons = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, HotkeyMode> _hotkeyModes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _hotkeyValues = new(StringComparer.OrdinalIgnoreCase);
     private string? _capturing;
     private bool _capturedMainKey;
@@ -28,18 +30,35 @@ public partial class SettingsPage : UserControl
     {
         _tool = tool;
         InitializeComponent();
-        _hotkeyButtons = new Dictionary<string, Button>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["craft_start"] = CraftStartButton,
-            ["craft_stop"] = CraftStopButton,
-            ["coordinate"] = CoordinateButton,
-            ["clicker_toggle"] = ClickerToggleButton,
-            ["clicker_hold"] = ClickerHoldButton,
-            ["keyloop"] = KeyLoopButton,
-            ["hideout"] = HideoutButton,
-        };
+        BuildHotkeyRows();
         RefreshFromTool(refreshLists: true);
         Loaded += SettingsPage_Loaded;
+    }
+
+    private void BuildHotkeyRows()
+    {
+        HotkeyRows.ColumnDefinitions.Add(new ColumnDefinition());
+        HotkeyRows.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        HotkeyRows.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        foreach (var binding in _tool.EditableHotkeys)
+        {
+            var row = HotkeyRows.RowDefinitions.Count;
+            HotkeyRows.RowDefinitions.Add(new RowDefinition { Height = new GridLength(34) });
+            var label = new TextBlock { Text = binding.Name, Style = (Style)FindResource("SettingLabel") };
+            var button = new Button { Tag = binding.Id, Style = (Style)FindResource("HotkeyButton") };
+            var clear = new Button { Tag = binding.Id, Content = "清空", Style = (Style)FindResource("ClearHotkeyButton") };
+            button.Click += BeginHotkeyCapture_Click;
+            clear.Click += ClearHotkey_Click;
+            foreach (var element in new FrameworkElement[] { label, button, clear })
+            {
+                Grid.SetRow(element, row);
+                HotkeyRows.Children.Add(element);
+            }
+            Grid.SetColumn(button, 1);
+            Grid.SetColumn(clear, 2);
+            _hotkeyButtons.Add(binding.Id, button);
+            _hotkeyModes.Add(binding.Id, binding.Mode);
+        }
     }
 
     internal void ActivatePage()
@@ -82,13 +101,7 @@ public partial class SettingsPage : UserControl
         try
         {
             var draft = _tool.CaptureDraft();
-            SetHotkey("craft_start", draft.Hotkeys.CraftStart);
-            SetHotkey("craft_stop", draft.Hotkeys.CraftStop);
-            SetHotkey("coordinate", draft.Hotkeys.Coordinate);
-            SetHotkey("clicker_toggle", draft.Hotkeys.ClickerToggle);
-            SetHotkey("clicker_hold", draft.Hotkeys.ClickerHold);
-            SetHotkey("keyloop", draft.Hotkeys.KeyLoop);
-            SetHotkey("hideout", draft.Hotkeys.Hideout);
+            foreach (var entry in draft.Hotkeys.GetEntries()) SetHotkey(entry.Id, entry.Key);
 
             if (refreshLists)
             {
@@ -209,7 +222,7 @@ public partial class SettingsPage : UserControl
         if (_capturing is null || _capturedMainKey) return;
         var key = ResolveKey(e);
         if (!IsModifier(key)) return;
-        if (!string.Equals(_capturing, "clicker_hold", StringComparison.OrdinalIgnoreCase))
+        if (_hotkeyModes.GetValueOrDefault(_capturing) != HotkeyMode.Hold)
         {
             ShowResult("这个热键还需要一个主键，例如 Ctrl+F8", success: false);
             e.Handled = true;
@@ -273,16 +286,11 @@ public partial class SettingsPage : UserControl
     private SettingsDraft BuildDraft()
     {
         var current = _tool.CaptureDraft();
+        var hotkeys = current.Hotkeys;
+        foreach (var (id, value) in _hotkeyValues) hotkeys = hotkeys.WithKey(id, value);
         return current with
         {
-            Hotkeys = new HotkeySettings(
-                _hotkeyValues["craft_start"],
-                _hotkeyValues["craft_stop"],
-                _hotkeyValues["coordinate"],
-                _hotkeyValues["clicker_toggle"],
-                _hotkeyValues["clicker_hold"],
-                _hotkeyValues["keyloop"],
-                _hotkeyValues["hideout"]),
+            Hotkeys = hotkeys,
             TargetProcess = SelectedValue(ProcessCombo),
             AutoDetectPoe = AutoDetectCheck.IsChecked == true,
             CraftSoundEnabled = CraftSoundCheck.IsChecked == true,
@@ -309,14 +317,7 @@ public partial class SettingsPage : UserControl
     private void RestoreDefaultHotkeys_Click(object sender, RoutedEventArgs e)
     {
         CancelCapture();
-        var defaults = new HotkeySettings(
-            SettingsDefaults.HotkeyStart,
-            SettingsDefaults.HotkeyStop,
-            SettingsDefaults.HotkeySetCoord,
-            SettingsDefaults.ClickerHotkey,
-            SettingsDefaults.ClickerHoldHotkey,
-            SettingsDefaults.KeyLoopHotkey,
-            SettingsDefaults.HideoutHotkey);
+        var defaults = _tool.DefaultHotkeys();
         var result = _tool.ApplyDraft(_tool.CaptureDraft() with { Hotkeys = defaults });
         ShowResult(result.Success ? "默认热键已恢复并立即生效" : result.Message, result.Success);
         RefreshFromTool(refreshLists: false);

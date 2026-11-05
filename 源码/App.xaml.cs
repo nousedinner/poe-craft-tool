@@ -33,10 +33,6 @@ public partial class App : Application
     private UpdateSession? _installUpdate;
     private bool _updatePrepared;
     private bool _updateHealthConfirmed;
-    private CraftTool? _craftTool;
-    private ClickerTool? _clickerTool;
-    private KeyLoopTool? _keyLoopTool;
-    private HideoutTool? _hideoutTool;
 
     public App() : this(new StartupPerformance(), false) { }
 
@@ -102,10 +98,6 @@ public partial class App : Application
         var clickerTool = new ClickerTool();
         var keyLoopTool = new KeyLoopTool();
         var hideoutTool = new HideoutTool();
-        _craftTool = craftTool;
-        _clickerTool = clickerTool;
-        _keyLoopTool = keyLoopTool;
-        _hideoutTool = hideoutTool;
         _settingsTool = new SettingsTool(craftTool, clickerTool, keyLoopTool, hideoutTool);
         registry.Register(craftTool);
         registry.Register(clickerTool);
@@ -416,6 +408,7 @@ public partial class App : Application
             _host!.AutomationSuspendedForUpdate = true;
             _host.Hotkeys.UnregisterAll();
             _host.TriggerEmergencyStop();
+            foreach (var runtime in _host.RegisteredTools.OfType<IToolRuntime>()) runtime.RequestStop();
             _mainWindow!.IsEnabled = false;
             _mainWindow.Hide();
             _updateAcceptance?.Record("forced-update-blocked-old-ui", new { visible = _mainWindow.IsVisible,
@@ -457,7 +450,9 @@ public partial class App : Application
             await session.PrepareCandidateAsync(candidate, updateCancellation.Token);
             updateCancellation.Token.ThrowIfCancellationRequested();
             progress.SetMessage("正在保存配置并准备退出…");
-            foreach (var tool in _host.RegisteredTools) tool.OnDeactivate();
+            if (!_settingsLoadedSuccessfully || _host.Storage.ReadOnlyForUpdateValidation)
+                throw new InvalidOperationException("配置尚未完整加载或当前禁止写入，不能准备更新退出。");
+            ToolCapabilities.SaveAuxiliaryStates(_host.RegisteredTools);
             ToolSettingsPersistence.SaveSections(_host.Storage, _host.RegisteredTools);
             _host.Hotkeys.UnregisterAll();
             await UpdateBootstrap.StartHelperAsync(session, updateCancellation.Token);
@@ -502,13 +497,8 @@ public partial class App : Application
                 {
                     try
                     {
-                        // 未获提交许可的新版只需停止引擎，不收集并保存玩家页面配置。
-                        if (_host.Storage.ReadOnlyForUpdateValidation && tool is CraftTool craft)
-                        {
-                            if (craft.Engine is not null && !craft.Engine.Shutdown(TimeSpan.FromSeconds(2)))
-                                saveErrors.Add("新版启动验证的洗装任务未完成关闭");
-                        }
-                        else tool.OnShutdown();
+                        // 工具关闭只负责停止运行；配置保存由宿主在允许写入时统一执行。
+                        tool.OnShutdown();
                     }
                     catch (Exception error)
                     {
@@ -520,6 +510,15 @@ public partial class App : Application
                 // 初始化失败时，各抽屉可能只加载了一部分；这时完全跳过退出保存。
                 if (_settingsLoadedSuccessfully && !_host.Storage.ReadOnlyForUpdateValidation)
                 {
+                    foreach (var auxiliary in _host.RegisteredTools.OfType<IToolAuxiliaryState>())
+                    {
+                        try { auxiliary.SaveAuxiliaryState(); }
+                        catch (Exception error)
+                        {
+                            Diag.Log($"[退出] 工具额外数据保存失败: {error}");
+                            saveErrors.Add(error.Message);
+                        }
+                    }
                     try
                     {
                         ToolSettingsPersistence.SaveSections(_host.Storage, _host.RegisteredTools);
@@ -562,9 +561,7 @@ public partial class App : Application
             Cleanup("后台任务令牌", _backgroundCts.Dispose);
             if (_installUpdate is not null)
             {
-                var stopped = (_craftTool?.Engine?.ShutdownCompleted ?? true) &&
-                    (_clickerTool?.ShutdownCompleted ?? true) && (_keyLoopTool?.ShutdownCompleted ?? true) &&
-                    (_hideoutTool?.ShutdownCompleted ?? true);
+                var stopped = _host is not null && ToolCapabilities.AllShutdownCompleted(_host.RegisteredTools);
                 try
                 {
                     if (UpdateReadiness.CanApproveExit(_updatePrepared, _settingsLoadedSuccessfully, stopped, saveErrors))

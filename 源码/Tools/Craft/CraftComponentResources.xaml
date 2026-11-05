@@ -1,0 +1,57 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 动态生成的通货卡与词缀标签也由资源控制外观，值保持原页面一致。 -->
+    <SolidColorBrush x:Key="CraftPrimaryTagBackground" Color="#E9F7F3"/>
+    <SolidColorBrush x:Key="CraftPrimaryTagBorder" Color="#C4E4DB"/>
+    <SolidColorBrush x:Key="CraftSecondaryTagBackground" Color="#EAF5FC"/>
+    <SolidColorBrush x:Key="CraftSecondaryTagBorder" Color="#D4E6F0"/>
+    <SolidColorBrush x:Key="CraftExcludeTagBackground" Color="#FCF0F2"/>
+    <SolidColorBrush x:Key="CraftExcludeTagBorder" Color="#EED4DA"/>
+    <SolidColorBrush x:Key="CraftCoordinateBackground" Color="#141B8A3E"/>
+    <SolidColorBrush x:Key="CraftCoordinateBorder" Color="#4D1B8A3E"/>
+    <SolidColorBrush x:Key="CraftCoordinateForeground" Color="#1B8A3E"/>
+    <Style x:Key="CraftCoordinateClear" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Width" Value="26"/>
+        <Setter Property="Padding" Value="2"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FontSize" Value="10"/>
+        <Setter Property="Background" Value="#14C0392B"/>
+        <Setter Property="BorderBrush" Value="#33C0392B"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Foreground" Value="#C0392B"/>
+    </Style>
+    <Style x:Key="CraftCurrencyCard" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource CardBackground}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="Margin" Value="3"/>
+    </Style>
+    <Style x:Key="CraftCurrencyLabel" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+    </Style>
+    <Style x:Key="CraftAffixTag" TargetType="Border">
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="12"/>
+        <Setter Property="Padding" Value="8,2,6,2"/>
+        <Setter Property="Margin" Value="0,2,4,2"/>
+    </Style>
+    <Style x:Key="CraftAffixLabel" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+        <Setter Property="MaxWidth" Value="190"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+    <Style x:Key="CraftAffixRemove" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="Foreground" Value="Gray"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Margin" Value="6,0,0,0"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+</ResourceDictionary>

@@ -14,7 +14,7 @@ namespace ShiKe.Tools.Settings;
 /// 宿主设置抽屉。Id 使用 host，因此 settings.json 仍保持既定的五分节结构，
 /// Settings 页面本身不创建额外持久化分节。
 /// </summary>
-public sealed class SettingsTool : ITool
+public sealed class SettingsTool : ITool, IEditableHotkeyProvider
 {
     private readonly CraftTool _craft;
     private readonly ClickerTool _clicker;
@@ -52,11 +52,23 @@ public sealed class SettingsTool : ITool
 
     public IReadOnlyList<HotkeyRequest> GetHotkeyRequests() => [];
 
+    public IReadOnlyList<EditableHotkey> GetEditableHotkeys() =>
+    [
+        new("coordinate", "坐标录制", HotkeyMode.Toggle, SettingsDefaults.HotkeySetCoord,
+            () => _host?.CoordinateHotkey ?? SettingsDefaults.HotkeySetCoord,
+            key => _host!.CoordinateHotkey = key, 30),
+    ];
+
+    internal IReadOnlyList<EditableHotkey> EditableHotkeys
+        => ToolCapabilities.CollectEditableHotkeys(_host?.RegisteredTools ?? []);
+
+    public HotkeySettings DefaultHotkeys() => HotkeySettings.Capture(EditableHotkeys, defaults: true);
+
     internal SettingsApplyResult BeginHotkeyCapture()
     {
         var host = _host ?? throw new InvalidOperationException("SettingsTool 尚未初始化");
         if (HasActiveAutomation())
-            return SettingsApplyResult.Fail("请先停止洗装、连点器和按键循环，再修改热键");
+            return SettingsApplyResult.Fail("请先停止正在运行的工具，再修改热键");
         if (_hotkeysSuspendedForCapture)
             return SettingsApplyResult.Ok("正在捕获热键");
 
@@ -89,14 +101,7 @@ public sealed class SettingsTool : ITool
     {
         var host = _host ?? throw new InvalidOperationException("SettingsTool 尚未初始化");
         return new SettingsDraft(
-            new HotkeySettings(
-                _craft.HotkeyStart,
-                _craft.HotkeyStop,
-                host.CoordinateHotkey,
-                _clicker.Hotkey,
-                _clicker.HoldHotkey,
-                _keyLoop.Hotkey,
-                _hideout.Hotkey),
+            HotkeySettings.Capture(EditableHotkeys),
             host.Foreground.TargetProcess ?? string.Empty,
             host.AutoDetectPoe,
             _craft.SoundEnabled,
@@ -140,16 +145,24 @@ public sealed class SettingsTool : ITool
         Func<IReadOnlyList<string>> registerCurrent, Action saveSections)
     {
         var candidate = requested.Normalize();
+        // 从注册表恢复可信描述；兼容旧调用方只提交既有字段，新工具未提交的绑定保持原值。
+        try
+        {
+            var bindings = HotkeySettings.Capture(EditableHotkeys);
+            foreach (var entry in candidate.Hotkeys.GetEntries()) bindings = bindings.WithKey(entry.Id, entry.Key);
+            candidate = candidate with { Hotkeys = bindings };
+        }
+        catch (ArgumentException error) { return SettingsApplyResult.Fail(error.Message); }
         var validationErrors = SettingsValidation.Validate(candidate);
         if (validationErrors.Count > 0)
             return SettingsApplyResult.Fail(string.Join("\n", validationErrors));
 
         var previous = CaptureDraft().Normalize();
-        var hotkeysChanged = previous.Hotkeys != candidate.Hotkeys;
+        var hotkeysChanged = !previous.Hotkeys.HasSameBindings(candidate.Hotkeys);
         var targetChanged = !string.Equals(previous.TargetProcess, candidate.TargetProcess,
             StringComparison.OrdinalIgnoreCase);
         if ((hotkeysChanged || targetChanged) && HasActiveAutomation())
-            return SettingsApplyResult.Fail("请先停止洗装、连点器和按键循环，再修改热键或目标进程");
+            return SettingsApplyResult.Fail("请先停止正在运行的工具，再修改热键或目标进程");
 
         if (hotkeysChanged)
         {
@@ -235,7 +248,7 @@ public sealed class SettingsTool : ITool
     }
 
     private bool HasActiveAutomation()
-        => _craft.IsRunning || _clicker.IsRunning || _keyLoop.IsRunning;
+        => ToolCapabilities.HasActiveAutomation(_host?.RegisteredTools ?? []);
 
     private void ApplyRuntime(SettingsDraft draft)
     {
@@ -253,27 +266,20 @@ public sealed class SettingsTool : ITool
 
     private void ApplyHotkeys(HotkeySettings hotkeys)
     {
-        var host = _host!;
-        _craft.HotkeyStart = hotkeys.CraftStart;
-        _craft.HotkeyStop = hotkeys.CraftStop;
-        host.CoordinateHotkey = hotkeys.Coordinate;
-        _clicker.Hotkey = hotkeys.ClickerToggle;
-        _clicker.HoldHotkey = hotkeys.ClickerHold;
-        _keyLoop.Hotkey = hotkeys.KeyLoop;
-        _hideout.ApplySharedSettings(_hideout.IsEnabled, hotkeys.Hideout, _hideout.Command);
+        var values = hotkeys.GetEntries().ToDictionary(entry => entry.Id, entry => entry.Key, StringComparer.Ordinal);
+        foreach (var binding in EditableHotkeys) binding.Apply(values[binding.Id]);
     }
 
     private void RefreshPresentations()
     {
-        _craft.RefreshSettingsPresentation();
-        _clicker.RefreshSettingsPresentation();
-        _keyLoop.RefreshSettingsPresentation();
+        foreach (var provider in _host!.RegisteredTools.OfType<IEditableHotkeyProvider>())
+            provider.RefreshSettingsPresentation();
         _page?.RefreshFromTool(refreshLists: false);
     }
 
-    private void SaveAllSections()
+    internal void SaveAllSections()
     {
-        ToolSettingsPersistence.SaveSections(_host!.Storage, [this, _craft, _clicker, _keyLoop, _hideout]);
+        ToolSettingsPersistence.SaveSections(_host!.Storage, _host.RegisteredTools);
     }
 
     private void SaveHostSection()

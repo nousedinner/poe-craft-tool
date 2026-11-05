@@ -1,5 +1,7 @@
 using ShiKe.Services;
 using System.Text.Json.Nodes;
+using ShiKe.Runtime;
+using ShiKe.Tools.Clicker;
 
 namespace ShiKe.Host;
 
@@ -7,7 +9,7 @@ namespace ShiKe.Host;
 /// 宿主门面：所有抽屉通过它访问公共服务，不直接引用 Service 实例。
 /// 阶段2：注入 8 个服务（Tray 依赖 Window 生命周期，由 App 直接管理）。
 /// </summary>
-public sealed class ToolHost
+public sealed class ToolHost : IClickerEnvironment, IKeyLoopEnvironment, ICraftEnvironment
 {
     private readonly ToolRegistry _registry;
     private CancellationTokenSource _emergencyCts = new();
@@ -20,6 +22,7 @@ public sealed class ToolHost
         // InputSimulator 动态取当前 EmergencyCts（审查 D：Reset 后不再持有旧 CTS）+ 前台检测（审查 B）
         Input = new InputSimulator(() => _emergencyCts, Foreground);
         Storage = storage ?? new StorageService();
+        Storage.RegisterToolSections(registry.Tools.Select(tool => tool.Id));
         Notification = new NotificationService();
         Hotkeys.RuntimeErrorOccurred += Notification.ShowError;
         Sound = new SoundService();
@@ -28,6 +31,19 @@ public sealed class ToolHost
     }
 
     public CancellationTokenSource EmergencyCts => _emergencyCts;
+    CancellationToken IAutomationRuntime.EmergencyToken => _emergencyCts.Token;
+    void IAutomationRuntime.Log(string message) => Diag.Log(message);
+    bool IClickerEnvironment.IsTargetForeground() => Foreground.IsTargetForeground();
+    Task IClickerEnvironment.ClickAsync(ClickerMouseButton button, CancellationToken token)
+        => button == ClickerMouseButton.Left ? Input.ClickAsync(0, token) : Input.RightClickAsync(0, token);
+    void IClickerEnvironment.ReleaseMouseButtons() => Input.ReleaseMouseButtons();
+    bool IKeyLoopEnvironment.IsTargetForeground() => Foreground.IsTargetForeground();
+    bool IKeyLoopEnvironment.IsSupportedKey(string key) => KeyCode.Parse(key) != 0;
+    Task IKeyLoopEnvironment.PressAndReleaseAsync(string key, CancellationToken token)
+        => Input.PressAndReleaseAsync(key, token);
+    string ICraftEnvironment.DataDirectory => Storage.DataDir;
+    void ICraftEnvironment.PlayCompletionSound(string name) => Sound.Play(name);
+    void ICraftEnvironment.ShowCompletionNotification(string message) => Notification.Show(message);
     internal bool AutomationSuspendedForUpdate { get; set; }
 
     /// <summary>宿主级坐标录制热键；由 SettingsTool 读写 host.hotkeys.coordinate。</summary>

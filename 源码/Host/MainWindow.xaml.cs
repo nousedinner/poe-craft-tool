@@ -145,7 +145,7 @@ public partial class MainWindow : Window
             string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess) ? "就绪" : $"已锁定: {_host.Foreground.TargetProcess}");
         if (selected is { Running: false } && anyRunning) text += "；另有工具运行中";
         SetStatus(text, anyRunning);
-        SetUseCount(_currentTool?.Id == "craft" ? selected?.UseCount ?? 0 : 0);
+        SetUseCount(selected?.UseCount ?? 0);
     }
 
     private void SetStatus(string text, bool active)
@@ -154,7 +154,7 @@ public partial class MainWindow : Window
         StatusDot.Foreground = active ? ActiveStatusBrush : IdleStatusBrush;
     }
 
-    /// <summary>已使用次数（洗装模式下显示）。</summary>
+    /// <summary>工具声明的可选使用次数；没有计数的工具保持隐藏。</summary>
     public void SetUseCount(int count)
     {
         UseCountLabel.Text = $"已使用 {count} 次";

@@ -26,6 +26,7 @@ public partial class ClickerPage : UserControl
             tool.IsRunning ? "连点中..." : "连点器就绪"));
         _loading = false;
         RefreshEnabledPresentation();
+        CollectSettingsFromUi(); // 仅同步控件已有的范围约束，不在首次显示时保存。
 
         tool.StatusUpdated += status => Dispatcher.BeginInvoke(() => ApplyStatus(status));
     }

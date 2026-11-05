@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
-using ShiKe.Host;
 using ShiKe.Services;
 
 namespace ShiKe.Tools.Craft;
@@ -19,7 +18,7 @@ public sealed record CraftStatus(string Text, int UseCount, int MatchCount, bool
 /// </summary>
 public sealed class CraftEngine
 {
-    private readonly ToolHost _host;
+    private readonly ICraftEnvironment _environment;
     private readonly Func<CraftRules, IReadOnlyDictionary<string, Point>, CancellationToken, Task>? _craftAction;
     private readonly Func<CancellationToken, Task> _releaseKeys;
     private readonly Func<CancellationToken, Task> _pollStopKey;
@@ -79,24 +78,24 @@ public sealed class CraftEngine
     /// <summary>错误（线程已停止后触发，坑 #17）。</summary>
     public event Action<string>? ErrorOccurred;
 
-    public CraftEngine(ToolHost host)
-        : this(host, null, host.Input.ReleaseAllKeysAsync)
+    public CraftEngine(ICraftEnvironment environment)
+        : this(environment, null, environment.Input.ReleaseAllKeysAsync)
     {
     }
 
     /// <summary>内部验证可注入无输入动作；正式构造仍使用原输入、洗装和停止键轮询。</summary>
-    internal CraftEngine(ToolHost host,
+    internal CraftEngine(ICraftEnvironment environment,
         Func<CraftRules, IReadOnlyDictionary<string, Point>, CancellationToken, Task>? craftAction,
         Func<CancellationToken, Task> releaseKeys,
         Func<CancellationToken, Task>? pollStopKey = null,
         Action? runClaimed = null)
     {
-        _host = host;
+        _environment = environment;
         _craftAction = craftAction;
         _releaseKeys = releaseKeys;
         _pollStopKey = pollStopKey ?? PollStopKeyAsync;
         _runClaimed = runClaimed;
-        Diag.Log("[引擎] CraftEngine 构造，常驻线程启动");
+        _environment.Log("[引擎] CraftEngine 构造，常驻线程启动");
         _thread = Task.Run(Loop); // 单常驻线程，启动即建
     }
 
@@ -117,10 +116,10 @@ public sealed class CraftEngine
 
             // 上次紧急停止（光标到角落误触发）残留的取消状态会令本次启动立即失效，
             // CTS 不可重置（Python Event.clear() 差异），故每次启动前重置（修复：启动后只动鼠标就停）
-            if (_host.EmergencyCts.IsCancellationRequested)
+            if (_environment.EmergencyToken.IsCancellationRequested)
             {
-                Diag.Log("[引擎] Start: EmergencyCts 已取消，重置");
-                _host.ResetEmergencyStop();
+                _environment.Log("[引擎] Start: EmergencyCts 已取消，重置");
+                _environment.ResetEmergencyStop();
             }
 
             var missing = CheckCoordinates(rules, coordinates, mode2ScourAlch, useExalt);
@@ -136,10 +135,10 @@ public sealed class CraftEngine
                 coordinates.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
                 delayMs, soundEnabled, popupEnabled, selectedSound, exhaustionThreshold,
                 mode2ScourAlch, useExalt, _configuredStopKeyVk, _configuredStopKeyModifiers,
-                CancellationTokenSource.CreateLinkedTokenSource(_host.EmergencyCts.Token));
+                CancellationTokenSource.CreateLinkedTokenSource(_environment.EmergencyToken));
             _running = true;
             _wakeSignal.Set();
-            Diag.Log($"[引擎] Start: runId={_runId}, mode={rules.Mode}, delay={delayMs}ms, 坐标数={coordinates.Count}");
+            _environment.Log($"[引擎] Start: runId={_runId}, mode={rules.Mode}, delay={delayMs}ms, 坐标数={coordinates.Count}");
         }
     }
 
@@ -147,8 +146,8 @@ public sealed class CraftEngine
     {
         lock (this)
         {
-            Diag.Log($"[引擎] Stop: runId={_runId}, _workCts={(_workCts != null ? "存在" : "null")}, " +
-                     $"EmergencyCts.IsCancellationRequested={_host.EmergencyCts.IsCancellationRequested}");
+            _environment.Log($"[引擎] Stop: runId={_runId}, _workCts={(_workCts != null ? "存在" : "null")}, " +
+                     $"EmergencyCts.IsCancellationRequested={_environment.EmergencyToken.IsCancellationRequested}");
             _running = false;
             _workCts?.Cancel();
             var cancelledPending = _pendingRun is not null;
@@ -212,7 +211,7 @@ public sealed class CraftEngine
         _completionReason = null;
         _activeCurrency = null;
         _activeCurrencyCoordinate = default;
-        _host.Input.ResetCraftClickInterval();
+        _environment.Input.ResetCraftClickInterval();
         UseCount = 0;
         MatchCount = 0;
     }
@@ -306,9 +305,9 @@ public sealed class CraftEngine
                 copyShortcut = "Ctrl+C",
                 rules = _rules.CreateSnapshot(),
             };
-            Diag.Log($"[洗装时序] 稳健组合：首次等待{_timing.FirstWaitMs(_delayMs)}ms，装备移动{_timing.ItemMovementMs}ms，" +
+            _environment.Log($"[洗装时序] 稳健组合：首次等待{_timing.FirstWaitMs(_delayMs)}ms，装备移动{_timing.ItemMovementMs}ms，" +
                      $"复制前后{_timing.CopyBeforeMs}+{_timing.CopyAfterMs}ms，读取间隔{_timing.ClipboardPollMs}ms");
-            Diag.Log($"[引擎] Loop: 开始运行, runId={myRunId}");
+            _environment.Log($"[引擎] Loop: 开始运行, runId={myRunId}");
             try
             {
                 _runClaimed?.Invoke();
@@ -323,12 +322,12 @@ public sealed class CraftEngine
                 {
                     await _releaseKeys(token); // 释放键盘修饰键（对齐 Python _release_all）
                     token.ThrowIfCancellationRequested();
-                    Diag.Log("[引擎] Loop: ReleaseAllKeys 完成，进入 DoCrafting");
+                    _environment.Log("[引擎] Loop: ReleaseAllKeys 完成，进入 DoCrafting");
                     if (_craftAction is not null)
                         await _craftAction(_rules, _coordinates, token);
                     else
                         await DoCraftingAsync(token);
-                    Diag.Log("[引擎] Loop: DoCrafting 正常结束");
+                    _environment.Log("[引擎] Loop: DoCrafting 正常结束");
                 }
                 finally
                 {
@@ -342,15 +341,15 @@ public sealed class CraftEngine
             {
                 // 诊断：区分取消来源
                 var workCancelled = request.Cancellation.IsCancellationRequested;
-                var emergCancelled2 = _host.EmergencyCts.IsCancellationRequested;
-                Diag.Log($"[引擎] Loop: OperationCanceledException, runId={myRunId}, " +
+                var emergCancelled2 = _environment.EmergencyToken.IsCancellationRequested;
+                _environment.Log($"[引擎] Loop: OperationCanceledException, runId={myRunId}, " +
                          $"_workCts.Cancelled={workCancelled}, EmergencyCts.Cancelled={emergCancelled2}, " +
                          $"message={ex.Message}");
             }
             catch (Exception ex)
             {
                 // 先停线程再发错误信号（坑 #17）
-                Diag.Log($"[引擎] Loop: 异常 runId={myRunId}: {ex}");
+                _environment.Log($"[引擎] Loop: 异常 runId={myRunId}: {ex}");
                 lock (this)
                 {
                     if (_runId == myRunId)
@@ -369,11 +368,11 @@ public sealed class CraftEngine
                 // 用 CancellationToken.None 保证释放不被取消中断（否则 Shift 残留）。
                 // 不释放鼠标按键（对齐 Python _release_all：只释放 shift/ctrl/alt）。
                 try { await _releaseKeys(CancellationToken.None); } catch { }
-                Diag.Log($"[引擎] Loop: finally 兜底释放完成, runId={myRunId}");
+                _environment.Log($"[引擎] Loop: finally 兜底释放完成, runId={myRunId}");
                 var runReport = runMeasurement.SaveReport(runSummary, runContext,
-                    _host.Storage.DataDir);
+                    _environment.DataDirectory);
                 if (ReferenceEquals(_runMeasurement, runMeasurement)) _runMeasurement = null;
-                Diag.Log($"[洗装报告] {runReport.Text} report={runReport.Path ?? "未保存"}");
+                _environment.Log($"[洗装报告] {runReport.Text} report={runReport.Path ?? "未保存"}");
 
                 lock (this)
                 {
@@ -384,7 +383,7 @@ public sealed class CraftEngine
                     {
                         _running = false;
                         var reason = _completionReason ?? "已停止";
-                        Diag.Log($"[引擎] Loop: Stopped 事件触发, runId={myRunId}, reason={reason}");
+                        _environment.Log($"[引擎] Loop: Stopped 事件触发, runId={myRunId}, reason={reason}");
                         Stopped?.Invoke(reason);
                     }
                     if (_pendingRun is not null) _wakeSignal.Set();
@@ -411,7 +410,7 @@ public sealed class CraftEngine
                     {
                         // 上次轮询不能越过取消边界去停止已经排队的新运行。
                         if (token.IsCancellationRequested || _runId != _activeRunId) return;
-                        Diag.Log("[引擎] PollStopKey: 检测到停止键物理按下，触发 Stop");
+                        _environment.Log("[引擎] PollStopKey: 检测到停止键物理按下，触发 Stop");
                         Stop();
                     }
                     return;
@@ -442,10 +441,10 @@ public sealed class CraftEngine
 
     private async Task AwaitForegroundAsync(CancellationToken token)
     {
-        if (_host.Foreground.IsTargetForeground()) return;
-        ReportStatus($"⏳ 等待切换至游戏窗口（{_host.Foreground.TargetProcess}）...");
+        if (_environment.Foreground.IsTargetForeground()) return;
+        ReportStatus($"⏳ 等待切换至游戏窗口（{_environment.Foreground.TargetProcess}）...");
         _runMeasurement?.PauseForeground();
-        var wait = await _host.Input.WaitForTargetForegroundAsync(token);
+        var wait = await _environment.Input.WaitForTargetForegroundAsync(token);
         _runMeasurement?.ResumeForeground();
         if (!wait.ShiftWasHeld) return;
 
@@ -453,13 +452,13 @@ public sealed class CraftEngine
             throw new InputSimulationException("返回游戏后无法确定当前通货，已停止以避免空点");
 
         ReportStatus($"已返回游戏，重新选择{Currency.Label(_activeCurrency)}...");
-        Diag.Log($"[引擎] 前台恢复: 重新选择 {_activeCurrency} " +
+        _environment.Log($"[引擎] 前台恢复: 重新选择 {_activeCurrency} " +
                  $"({_activeCurrencyCoordinate.X},{_activeCurrencyCoordinate.Y}) 并恢复 Shift");
-        await _host.Input.ReleaseAllKeysAsync(token);
-        await _host.Input.RightClickAsync((int)_activeCurrencyCoordinate.X,
+        await _environment.Input.ReleaseAllKeysAsync(token);
+        await _environment.Input.RightClickAsync((int)_activeCurrencyCoordinate.X,
             (int)_activeCurrencyCoordinate.Y, 0, token);
         await Task.Delay(200, token);
-        await _host.Input.HoldShiftAsync(token);
+        await _environment.Input.HoldShiftAsync(token);
     }
 
     /// <summary>
@@ -469,13 +468,13 @@ public sealed class CraftEngine
     private async Task SelectCurrencyAsync(string currency, Point coordinate, CancellationToken token)
     {
         await AwaitForegroundAsync(token);
-        await _host.Input.ReleaseAllKeysAsync(token);
-        Diag.Log($"[引擎] 选择通货开始: {currency} ({coordinate.X},{coordinate.Y})");
-        await _host.Input.RightClickAsync((int)coordinate.X, (int)coordinate.Y, 0, token);
+        await _environment.Input.ReleaseAllKeysAsync(token);
+        _environment.Log($"[引擎] 选择通货开始: {currency} ({coordinate.X},{coordinate.Y})");
+        await _environment.Input.RightClickAsync((int)coordinate.X, (int)coordinate.Y, 0, token);
         await Task.Delay(200, token);
         _activeCurrency = currency;
         _activeCurrencyCoordinate = coordinate;
-        Diag.Log($"[引擎] 选择通货完成: {currency}");
+        _environment.Log($"[引擎] 选择通货完成: {currency}");
     }
 
     private async Task<string?> TryCopyClipboardOnceAsync(int timeoutMs, bool throwOnClearFailure,
@@ -484,7 +483,7 @@ public sealed class CraftEngine
         await AwaitForegroundAsync(token);
         _runMeasurement?.CopyAttempt();
         var item = _coordinates["item"];
-        await _host.Input.MoveToAsync((int)item.X, (int)item.Y, _timing.ItemMovementMs, token);
+        await _environment.Input.MoveToAsync((int)item.X, (int)item.Y, _timing.ItemMovementMs, token);
         if (!ClipboardHelper.TryClear())
         {
             if (throwOnClearFailure)
@@ -494,7 +493,7 @@ public sealed class CraftEngine
         }
 
         var stopwatch = Stopwatch.StartNew();
-        await _host.Input.CtrlCAsync(_timing.CopyBeforeMs, _timing.CopyAfterMs, token);
+        await _environment.Input.CtrlCAsync(_timing.CopyBeforeMs, _timing.CopyAfterMs, token);
         while (stopwatch.ElapsedMilliseconds < timeoutMs)
         {
             token.ThrowIfCancellationRequested();
@@ -502,13 +501,13 @@ public sealed class CraftEngine
             var text = ClipboardHelper.GetText();
             if (ClipboardHelper.IsItemText(text))
             {
-                Diag.Log($"[剪贴板] 获取新物品文本成功: {stopwatch.ElapsedMilliseconds}ms, {text.Length} chars");
+                _environment.Log($"[剪贴板] 获取新物品文本成功: {stopwatch.ElapsedMilliseconds}ms, {text.Length} chars");
                 return text;
             }
             await Task.Delay(_timing.ClipboardPollMs, token);
         }
 
-        Diag.Log($"[剪贴板] 本次复制未收到物品文本: {stopwatch.ElapsedMilliseconds}ms");
+        _environment.Log($"[剪贴板] 本次复制未收到物品文本: {stopwatch.ElapsedMilliseconds}ms");
         _runMeasurement?.EmptyCopy();
         return null;
     }
@@ -519,7 +518,7 @@ public sealed class CraftEngine
         var text = await TryCopyClipboardOnceAsync(clipboardTimeoutMs, throwOnClearFailure: true, token);
         if (text is not null) return text;
 
-        Diag.Log($"[剪贴板] 获取新物品文本超时: {clipboardTimeoutMs}ms");
+        _environment.Log($"[剪贴板] 获取新物品文本超时: {clipboardTimeoutMs}ms");
         throw new InvalidOperationException("复制物品信息超时；请确认鼠标位于装备上且游戏支持 Ctrl+C 高级物品文本");
     }
 
@@ -538,7 +537,7 @@ public sealed class CraftEngine
                 CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token);
             if (text is not null)
             {
-                Diag.Log($"[同步] {context} 启动基线已建立: total={stopwatch.ElapsedMilliseconds}ms, " +
+                _environment.Log($"[同步] {context} 启动基线已建立: total={stopwatch.ElapsedMilliseconds}ms, " +
                          $"attempts={attempts}, {text.Length} chars");
                 var snapshot = new CraftItemSnapshot(text);
                 _runMeasurement?.RecordBaseline(text);
@@ -549,7 +548,7 @@ public sealed class CraftEngine
             await Task.Delay(CraftStateSync.RetryBackoffMs, token);
         }
 
-        Diag.Log($"[同步] {context} 启动基线复制超时: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}");
+        _environment.Log($"[同步] {context} 启动基线复制超时: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}");
         throw new InvalidOperationException(
             $"启动时连续复制物品信息失败（{timeoutMs}ms）；已安全停止，请确认鼠标位于装备上");
     }
@@ -582,7 +581,7 @@ public sealed class CraftEngine
             {
                 if (baseline.HasChangedTo(candidate))
                 {
-                    Diag.Log($"[同步] Mode1 物品状态已变化: total={stopwatch.ElapsedMilliseconds}ms, " +
+                    _environment.Log($"[同步] Mode1 物品状态已变化: total={stopwatch.ElapsedMilliseconds}ms, " +
                              $"attempts={attempts}, unchanged={unchangedCopies}, empty={emptyCopies}");
                     var snapshot = new CraftItemSnapshot(candidate);
                     _runMeasurement?.ConfirmTransition(candidate);
@@ -591,10 +590,10 @@ public sealed class CraftEngine
 
                 unchangedCopies++;
                 _runMeasurement?.RejectCopy(unchanged: true);
-                Diag.Log($"[同步] Mode1 仍为点击前状态: total={stopwatch.ElapsedMilliseconds}ms, attempt={attempts}");
+                _environment.Log($"[同步] Mode1 仍为点击前状态: total={stopwatch.ElapsedMilliseconds}ms, attempt={attempts}");
                 if (unchangedCopies >= Math.Max(1, _exhaustionThreshold))
                 {
-                    Diag.Log($"[同步] Mode1 达到未变确认阈值: {unchangedCopies}");
+                    _environment.Log($"[同步] Mode1 达到未变确认阈值: {unchangedCopies}");
                     break;
                 }
             }
@@ -607,7 +606,7 @@ public sealed class CraftEngine
             await Task.Delay(CraftStateSync.RetryBackoffMs, token);
         }
 
-        Diag.Log($"[同步] Mode1 等待状态变化超时: total={stopwatch.ElapsedMilliseconds}ms, " +
+        _environment.Log($"[同步] Mode1 等待状态变化超时: total={stopwatch.ElapsedMilliseconds}ms, " +
                  $"attempts={attempts}, unchanged={unchangedCopies}, empty={emptyCopies}");
         _runMeasurement?.SyncFailed();
         if (unchangedCopies > 0)
@@ -657,7 +656,7 @@ public sealed class CraftEngine
                 var check = CraftStateSync.CheckTransition(operation, before, after, changed);
                 if (check.Accepted)
                 {
-                    Diag.Log($"[同步] {operationLabel} 状态转换已确认: " +
+                    _environment.Log($"[同步] {operationLabel} 状态转换已确认: " +
                              $"{before.Rarity}/{before.ExplicitAffixCount}→{after.Rarity}/{after.ExplicitAffixCount}, " +
                              $"total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}, " +
                              $"rejected={rejectedCopies}, empty={emptyCopies}");
@@ -668,7 +667,7 @@ public sealed class CraftEngine
                 rejectedCopies++;
                 _runMeasurement?.RejectCopy(unchanged: !changed);
                 lastReason = check.Reason;
-                Diag.Log($"[同步] {operationLabel} 尚未观察到预期转换: " +
+                _environment.Log($"[同步] {operationLabel} 尚未观察到预期转换: " +
                          $"total={stopwatch.ElapsedMilliseconds}ms, attempt={attempts}, reason={lastReason}");
                 if (rejectedCopies >= Math.Max(1, _exhaustionThreshold)) break;
             }
@@ -677,7 +676,7 @@ public sealed class CraftEngine
             await Task.Delay(CraftStateSync.RetryBackoffMs, token);
         }
 
-        Diag.Log($"[同步] {operationLabel} 状态转换确认失败: total={stopwatch.ElapsedMilliseconds}ms, " +
+        _environment.Log($"[同步] {operationLabel} 状态转换确认失败: total={stopwatch.ElapsedMilliseconds}ms, " +
                  $"attempts={attempts}, rejected={rejectedCopies}, empty={emptyCopies}, reason={lastReason}");
         _runMeasurement?.SyncFailed();
         throw new InvalidOperationException(
@@ -690,7 +689,7 @@ public sealed class CraftEngine
         var result = AffixEngine.CheckAffixes(parsed, _rules);
         if (result.HasAnyHit || result.HasExclude)
         {
-            Diag.Log($"[词缀] rarity={parsed.Rarity}, affixes={parsed.ExplicitAffixCount}, " +
+            _environment.Log($"[词缀] rarity={parsed.Rarity}, affixes={parsed.ExplicitAffixCount}, " +
                      $"primary={result.PrimaryHits}[{string.Join(',', result.MatchedPrimaryRules)}], " +
                      $"secondary={result.SecondaryHits}[{string.Join(',', result.MatchedSecondaryRules)}], " +
                      $"exclude={result.HasExclude}[{string.Join(',', result.MatchedExcludeRules)}]");
@@ -703,7 +702,7 @@ public sealed class CraftEngine
     {
         token.ThrowIfCancellationRequested();
         _runMeasurement?.BeginClick(_activeCurrency is null ? "未确认通货" : Currency.Label(_activeCurrency));
-        await _host.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0,
+        await _environment.Input.ShiftClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0,
             _timing.ItemMovementMs, token);
         _runMeasurement?.ClickSent();
     }
@@ -713,7 +712,7 @@ public sealed class CraftEngine
         await AwaitForegroundAsync(token);
         token.ThrowIfCancellationRequested();
         _runMeasurement?.BeginClick(Currency.Label(currency));
-        await _host.Input.ShiftAltClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0,
+        await _environment.Input.ShiftAltClickAsync((int)itemCoord.X, (int)itemCoord.Y, 0,
             _timing.ItemMovementMs, token);
         _runMeasurement?.ClickSent();
         // 常驻通货保持改造/点金，前台恢复时重选它，不能重选 Alt 配对通货。
@@ -738,13 +737,13 @@ public sealed class CraftEngine
             token.ThrowIfCancellationRequested();
             if (!_running || _activeRunId != _runId) throw new OperationCanceledException(token);
             _completionReason = $"匹配成功! 共{UseCount}次";
-            Diag.Log($"[引擎] OnSuccess: 匹配成功! 共{UseCount}次, soundEnabled={_soundEnabled}, selectedSound={_selectedSound}");
+            _environment.Log($"[引擎] OnSuccess: 匹配成功! 共{UseCount}次, soundEnabled={_soundEnabled}, selectedSound={_selectedSound}");
             ReportStatus($"匹配成功! 共{UseCount}次", force: true);
             // 状态订阅者可能同步停止/重启；可重入锁不能替代回调后的取消检查。
             token.ThrowIfCancellationRequested();
             if (!_running || _activeRunId != _runId) throw new OperationCanceledException(token);
-            if (_soundEnabled) _host.Sound.Play(_selectedSound);
-            if (_popupEnabled) _host.Notification.Show($"匹配成功!\n使用次数: {UseCount}");
+            if (_soundEnabled) _environment.PlayCompletionSound(_selectedSound);
+            if (_popupEnabled) _environment.ShowCompletionNotification($"匹配成功!\n使用次数: {UseCount}");
             MatchFound?.Invoke();
         }
     }
@@ -757,11 +756,11 @@ public sealed class CraftEngine
         var itemCoord = _coordinates["item"];
 
         ReportStatus("启动单通货模式...", force: true);
-        Diag.Log($"[引擎] Mode1: 开始, 通货={_rules.SingleCurrency} ({currCoord.X},{currCoord.Y}), 物品 ({itemCoord.X},{itemCoord.Y})");
+        _environment.Log($"[引擎] Mode1: 开始, 通货={_rules.SingleCurrency} ({currCoord.X},{currCoord.Y}), 物品 ({itemCoord.X},{itemCoord.Y})");
 
         await SelectCurrencyAsync(_rules.SingleCurrency, currCoord, token);
-        await _host.Input.HoldShiftAsync(token);
-        Diag.Log("[引擎] Mode1: HoldShift 完成，复制启动基线（不判定命中）");
+        await _environment.Input.HoldShiftAsync(token);
+        _environment.Log("[引擎] Mode1: HoldShift 完成，复制启动基线（不判定命中）");
 
         // 启动时的装备可能已命中，但 Mode 1 的产品语义是 F5 后仍先使用一次通货。
         // 因此此处只建立点击前基线，不调用 CheckItem。
@@ -795,7 +794,7 @@ public sealed class CraftEngine
         }
         finally
         {
-            try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
+            try { await _environment.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
         }
     }
 
@@ -823,12 +822,12 @@ public sealed class CraftEngine
             async workToken =>
             {
                 await SelectCurrencyAsync(Currency.Alteration, altCoord, workToken);
-                await _host.Input.HoldShiftAsync(workToken);
-                Diag.Log("[引擎] Mode2: 常驻改造石并保持Shift，Alt临时使用增幅石");
+                await _environment.Input.HoldShiftAsync(workToken);
+                _environment.Log("[引擎] Mode2: 常驻改造石并保持Shift，Alt临时使用增幅石");
             },
             async cleanupToken =>
             {
-                try { await _host.Input.ReleaseShiftAsync(cleanupToken); } catch { }
+                try { await _environment.Input.ReleaseShiftAsync(cleanupToken); } catch { }
             },
             async workToken =>
             {
@@ -885,12 +884,12 @@ public sealed class CraftEngine
             async workToken =>
             {
                 await SelectCurrencyAsync(Currency.Alchemy, alchCoord, workToken);
-                await _host.Input.HoldShiftAsync(workToken);
-                Diag.Log("[引擎] Mode2: 常驻点金石并保持Shift，Alt临时使用重铸石");
+                await _environment.Input.HoldShiftAsync(workToken);
+                _environment.Log("[引擎] Mode2: 常驻点金石并保持Shift，Alt临时使用重铸石");
             },
             async cleanupToken =>
             {
-                try { await _host.Input.ReleaseShiftAsync(cleanupToken); } catch { }
+                try { await _environment.Input.ReleaseShiftAsync(cleanupToken); } catch { }
             },
             async workToken =>
             {
@@ -946,7 +945,7 @@ public sealed class CraftEngine
 
         var initialItem = initialText.Parsed;
         var startDecision = CraftDecisions.BeforeMode3(initialItem.Rarity);
-        Diag.Log($"[引擎] Mode3 初始预检: rarity={initialItem.Rarity}, decision={startDecision}, " +
+        _environment.Log($"[引擎] Mode3 初始预检: rarity={initialItem.Rarity}, decision={startDecision}, " +
                  $"affixes={initialItem.ExplicitAffixCount}");
         if (startDecision == Mode3StartDecision.StopUnsupported)
             throw new InvalidOperationException($"Mode 3 无法处理当前物品稀有度（{initialItem.Rarity}），未执行通货操作");
@@ -957,7 +956,7 @@ public sealed class CraftEngine
         {
             ReportStatus("当前为魔法/稀有物品，先重铸为普通物品...", force: true);
             await SelectCurrencyAsync(Currency.Scouring, scourCoord, token);
-            await _host.Input.HoldShiftAsync(token);
+            await _environment.Input.HoldShiftAsync(token);
             try
             {
                 await AwaitForegroundAsync(token);
@@ -968,7 +967,7 @@ public sealed class CraftEngine
             }
             finally
             {
-                try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
+                try { await _environment.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
             }
         }
 
@@ -979,7 +978,7 @@ public sealed class CraftEngine
 
             // Phase 1: 蜕变（白→蓝）
             await SelectCurrencyAsync(Currency.Transmutation, transCoord, token);
-            await _host.Input.HoldShiftAsync(token);
+            await _environment.Input.HoldShiftAsync(token);
             try
             {
                 await AwaitForegroundAsync(token);
@@ -990,7 +989,7 @@ public sealed class CraftEngine
             }
             finally
             {
-                try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
+                try { await _environment.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
             }
 
             // 蜕变本身可能直接生成 1～2 条可用词缀，必须在任何改造点击前判定。
@@ -1002,7 +1001,7 @@ public sealed class CraftEngine
                 transmutationResult.TotalHits,
                 threshold,
                 transmutationResult.HasExclude);
-            Diag.Log($"[引擎] Mode3 蜕变后判定: affixes={transmutationAffixCount}, " +
+            _environment.Log($"[引擎] Mode3 蜕变后判定: affixes={transmutationAffixCount}, " +
                      $"hits={transmutationResult.TotalHits}, exclude={transmutationResult.HasExclude}, " +
                      $"threshold={threshold}, decision={transmutationDecision}");
 
@@ -1035,7 +1034,7 @@ public sealed class CraftEngine
                 {
                     // Phase 2: 改造（右键一次，shift+click 循环）
                     await SelectCurrencyAsync(Currency.Alteration, altCoord, token);
-                    await _host.Input.HoldShiftAsync(token);
+                    await _environment.Input.HoldShiftAsync(token);
                     try
                     {
                         while (true)
@@ -1090,7 +1089,7 @@ public sealed class CraftEngine
                     }
                     finally
                     {
-                        try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
+                        try { await _environment.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
                     }
                 }
 
@@ -1102,7 +1101,7 @@ public sealed class CraftEngine
 
                 // 只有 1 词缀且命中 ≥1 → 增幅
                 await SelectCurrencyAsync(Currency.Augmentation, augCoord, token);
-                await _host.Input.HoldShiftAsync(token);
+                await _environment.Input.HoldShiftAsync(token);
                 try
                 {
                     await AwaitForegroundAsync(token);
@@ -1125,13 +1124,13 @@ public sealed class CraftEngine
                 }
                 finally
                 {
-                    try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
+                    try { await _environment.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
                 }
             }
 
             // ===== Phase 4: 富豪（蓝→黄）=====
             await SelectCurrencyAsync(Currency.Regal, regalCoord, token);
-            await _host.Input.HoldShiftAsync(token);
+            await _environment.Input.HoldShiftAsync(token);
             try
             {
                 await AwaitForegroundAsync(token);
@@ -1152,14 +1151,14 @@ public sealed class CraftEngine
             }
             finally
             {
-                try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
+                try { await _environment.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
             }
 
             // ===== Phase 4.5: 崇高（可选）=====
             if (_useExalt)
             {
                 await SelectCurrencyAsync(Currency.Exalted, exaltCoord, token);
-                await _host.Input.HoldShiftAsync(token);
+                await _environment.Input.HoldShiftAsync(token);
                 try
                 {
                     await AwaitForegroundAsync(token);
@@ -1180,14 +1179,14 @@ public sealed class CraftEngine
                 }
                 finally
                 {
-                    try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
+                    try { await _environment.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
                 }
             }
 
             // ===== Phase 5: 重铸（黄→白）→ 回外层循环（蜕变）=====
             ReportStatus($"#{UseCount} 富豪失败，重铸重来...");
             await SelectCurrencyAsync(Currency.Scouring, scourCoord, token);
-            await _host.Input.HoldShiftAsync(token);
+            await _environment.Input.HoldShiftAsync(token);
             try
             {
                 await AwaitForegroundAsync(token);
@@ -1198,7 +1197,7 @@ public sealed class CraftEngine
             }
             finally
             {
-                try { await _host.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
+                try { await _environment.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
             }
         }
     }

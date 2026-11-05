@@ -13,7 +13,7 @@ namespace ShiKe.Tools.Hideout;
 ///   Enter → sleep(0.1s) → 输入 /hideout → Enter
 /// - 存储：hideout 节 {enabled, hotkey}，默认 false / F2（storage.py:123-124）
 /// </summary>
-public sealed class HideoutTool : ITool, IEnableableTool
+public sealed partial class HideoutTool : ITool, IEnableableTool
 {
     private ToolHost? _host;
     private HideoutPage? _page;

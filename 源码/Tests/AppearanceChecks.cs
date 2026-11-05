@@ -306,6 +306,9 @@ internal static class AppearanceChecks
             Pump();
             Require(Find<StackPanel>(window, "TopAdPanel").Children.Count == 2 && Find<Button>(window, "BottomAdButton").IsVisible,
                     "广告区仍应承载多条 top 与一条 bottom 数据");
+            UiArchitectureChecks.CheckPages(page, craft, (ClickerPage)clicker.CreatePage(), clicker,
+                (KeyLoopPage)keyLoop.CreatePage(), keyLoop, host.Storage);
+            ArchitectureBoundaryChecks.CheckDeclaredCount(window, registry, host);
             window.WindowState = WindowState.Minimized;
             Pump();
             Require(panels.All(panel => !FlowingGradient.IsAnimating(panel)), "最小化后应暂停动画");

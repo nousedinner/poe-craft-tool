@@ -13,11 +13,12 @@ namespace ShiKe.Tools.Craft;
 /// - 坐标槽位：物品 + 10 种通货（divine 占位永不显示，对齐 config_tab.py）
 /// - 存储：craft 节 settings + rules.json/coordinates.json 兼容旧版
 /// </summary>
-public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
+public sealed partial class CraftTool : ITool, ICoordinateProvider, IEnableableTool
 {
     private ToolHost? _host;
     private CraftEngine? _engine;
     private CraftPage? _page;
+    private bool _editorReady;
 
     public string Id => "craft";
     public string Name => "洗词缀";
@@ -129,6 +130,35 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
 
     public FrameworkElement CreatePage() => _page ??= new CraftPage(_host!, this);
 
+    // 页面只在首次恢复完成后通知就绪；运行和保存始终读取工具持有的配置，不回读控件。
+    internal void MarkEditorReady() => _editorReady = true;
+
+    internal void SaveEditedState()
+    {
+        if (!_editorReady) return;
+        SaveRulesToStorage();
+        SaveSettingsToStorage();
+    }
+
+    public void SaveAuxiliaryState()
+    {
+        if (_editorReady) SaveRulesToStorage();
+    }
+
+    public IReadOnlyList<string> ListPresets() => _host?.Storage.ListPresets() ?? [];
+
+    public CraftPreset? LoadPreset(string name)
+    {
+        var data = _host?.Storage.LoadPreset(name);
+        return data is null ? null : CraftPreset.FromJson(data);
+    }
+
+    public void SavePreset(string name) => _host?.Storage.SavePreset(name, CraftPreset.FromRules(Rules).ToJson());
+
+    public void DeletePreset(string name) => _host?.Storage.DeletePreset(name);
+
+    public string PresetDirectory => Path.Combine(_host?.Storage.DataDir ?? Path.Combine(AppContext.BaseDirectory, "data"), "presets");
+
     /// <summary>Settings 页修改共享热键后，刷新已经创建的 Craft 页面提示。</summary>
     internal void RefreshSettingsPresentation()
         => _page?.RefreshHotkeyHints(HotkeyStart, HotkeyStop, _host?.CoordinateHotkey ?? SettingsDefaults.HotkeySetCoord);
@@ -233,8 +263,8 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
             return;
         }
         Diag.Log("[洗装] StartFromHotkey: 前台检查通过");
-        // 启动前从 UI 收集最新规则（用户在页面配置后切到游戏按 F5，规则必须是最新的）
-        _page?.CollectRulesFromUi();
+        // 页面编辑已同步到配置；保持原来在启动热键处保存的时机。
+        SaveEditedState();
         Start();
     }
 
@@ -286,19 +316,14 @@ public sealed class CraftTool : ITool, ICoordinateProvider, IEnableableTool
 
     public void OnDeactivate()
     {
-        // 切换到其他抽屉时也保存当前页面，不能只依赖 F5 或最终退出。
-        _page?.CollectRulesFromUi();
+        // 切页保存工具配置，不依赖页面仍在可视树中。
+        SaveEditedState();
     }
 
     public void OnShutdown()
     {
-        // 退出前收集页面最新值；CollectRulesFromUi 只更新/保存配置，不会启动输入。
-        try { _page?.CollectRulesFromUi(); }
-        finally
-        {
-            if (_engine is not null && !_engine.Shutdown(TimeSpan.FromSeconds(2)))
-                Diag.Log("[引擎] Shutdown: 2 秒内未完成关闭");
-        }
+        if (_engine is not null && !_engine.Shutdown(TimeSpan.FromSeconds(2)))
+            Diag.Log("[引擎] Shutdown: 2 秒内未完成关闭");
     }
 
     // ── 存储（craft 节）──

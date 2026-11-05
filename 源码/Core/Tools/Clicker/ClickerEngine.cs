@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using ShiKe.Host;
+using ShiKe.Runtime;
 using ShiKe.Services;
 
 namespace ShiKe.Tools.Clicker;
@@ -18,7 +18,7 @@ public sealed record ClickerStatus(bool Running, int ClickCount, string Text);
 /// </summary>
 public sealed class ClickerEngine
 {
-    private readonly ToolHost _host;
+    private readonly IAutomationRuntime _host;
     private readonly Func<bool> _isTargetForeground;
     private readonly Func<ClickerMouseButton, CancellationToken, Task> _clickAction;
     private readonly Action _releaseMouseButtons;
@@ -41,17 +41,13 @@ public sealed class ClickerEngine
     public event Action<ClickerStatus>? StatusUpdated;
     public event Action<string>? ErrorOccurred;
 
-    public ClickerEngine(ToolHost host)
-        : this(host, host.Foreground.IsTargetForeground,
-            (button, token) => button == ClickerMouseButton.Left
-                ? host.Input.ClickAsync(0, token)
-                : host.Input.RightClickAsync(0, token),
-            host.Input.ReleaseMouseButtons)
+    public ClickerEngine(IClickerEnvironment host)
+        : this(host, host.IsTargetForeground, host.ClickAsync, host.ReleaseMouseButtons)
     {
     }
 
     internal ClickerEngine(
-        ToolHost host,
+        IAutomationRuntime host,
         Func<bool> isTargetForeground,
         Func<ClickerMouseButton, CancellationToken, Task> clickAction,
         Action? releaseMouseButtons = null)
@@ -91,14 +87,14 @@ public sealed class ClickerEngine
         lock (_gate)
         {
             if (_running || _shutdownRequested) return false;
-            if (_host.EmergencyCts.IsCancellationRequested)
+            if (_host.EmergencyToken.IsCancellationRequested)
                 _host.ResetEmergencyStop();
 
             _button = button;
             _intervalMs = Math.Clamp(intervalMs, 10, 200);
             _clickCount = 0;
             runId = ++_runId;
-            _emergencyToken = _host.EmergencyCts.Token;
+            _emergencyToken = _host.EmergencyToken;
             _runCts = CancellationTokenSource.CreateLinkedTokenSource(
                 _shutdownCts.Token, _emergencyToken);
             _workerOwnsRun = false;
@@ -108,7 +104,7 @@ public sealed class ClickerEngine
         }
 
         ReportStatus("连点中...", running: true, force: true, runId: runId);
-        Diag.Log($"[连点] 启动: button={button}, interval={Math.Clamp(intervalMs, 10, 200)}ms");
+        _host.Log($"[连点] 启动: button={button}, interval={Math.Clamp(intervalMs, 10, 200)}ms");
         return true;
     }
 
@@ -129,7 +125,7 @@ public sealed class ClickerEngine
 
         CancelRun(runCts, dispose);
         ReportStatus(reason, running: false, force: true, runId: runId);
-        Diag.Log($"[连点] 停止: reason={reason}, count={ClickCount}");
+        _host.Log($"[连点] 停止: reason={reason}, count={ClickCount}");
         return true;
     }
 
@@ -210,7 +206,7 @@ public sealed class ClickerEngine
             catch (Exception ex)
             {
                 error = $"连点器运行失败：{ex.Message}";
-                Diag.Log($"[连点] 运行异常: {ex}");
+                _host.Log($"[连点] 运行异常: {ex}");
             }
             finally
             {
@@ -229,7 +225,7 @@ public sealed class ClickerEngine
 
                         // 检查、鼠标释放与发布在同一锁内，不能被新 Start 插入。
                         try { _releaseMouseButtons(); }
-                        catch (Exception ex) { Diag.Log($"[连点] 释放鼠标按键失败: {ex.Message}"); }
+                        catch (Exception ex) { _host.Log($"[连点] 释放鼠标按键失败: {ex.Message}"); }
 
                         if (reportStop)
                         {

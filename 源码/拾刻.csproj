@@ -47,7 +47,10 @@
   <ItemGroup>
     <Compile Remove="Tests\**\*.cs" />
     <Compile Remove="ReleaseTools\**\*.cs" />
+    <Compile Remove="Core\**\*.cs" />
+    <Compile Remove="CoreTests\**\*.cs" />
     <InternalsVisibleTo Include="ShiKe.InternalTests" />
+    <ProjectReference Include="Core\ShiKe.Core.csproj" />
   </ItemGroup>
 
 </Project>

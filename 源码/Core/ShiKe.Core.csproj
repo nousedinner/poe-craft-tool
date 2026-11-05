@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- 保持正式七文件包契约；Release 类库不额外输出调试符号文件。 -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <BaseOutputPath>..\..\bin\Release\net10.0-windows\构建\Core\</BaseOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="拾刻" />
+    <InternalsVisibleTo Include="ShiKe.InternalTests" />
+    <InternalsVisibleTo Include="ShiKe.CoreTests" />
+  </ItemGroup>
+</Project>

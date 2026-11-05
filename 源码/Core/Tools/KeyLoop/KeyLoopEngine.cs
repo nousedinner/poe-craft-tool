@@ -1,6 +1,5 @@
 using System.Diagnostics;
-using ShiKe.Host;
-using ShiKe.Services;
+using ShiKe.Runtime;
 
 namespace ShiKe.Tools.KeyLoop;
 
@@ -39,7 +38,7 @@ public sealed class KeyLoopEngine
         public Task Worker { get; set; } = Task.CompletedTask;
     }
 
-    private readonly ToolHost _host;
+    private readonly IKeyLoopEnvironment _host;
     private readonly Func<bool> _isTargetForeground;
     private readonly Func<string, CancellationToken, Task> _pressAction;
     private readonly object _gate = new();
@@ -53,13 +52,13 @@ public sealed class KeyLoopEngine
     public event Action<KeyLoopStatus>? StatusUpdated;
     public event Action<string>? ErrorOccurred;
 
-    public KeyLoopEngine(ToolHost host)
-        : this(host, host.Foreground.IsTargetForeground, host.Input.PressAndReleaseAsync)
+    public KeyLoopEngine(IKeyLoopEnvironment host)
+        : this(host, host.IsTargetForeground, host.PressAndReleaseAsync)
     {
     }
 
     internal KeyLoopEngine(
-        ToolHost host,
+        IKeyLoopEnvironment host,
         Func<bool> isTargetForeground,
         Func<string, CancellationToken, Task> pressAction)
     {
@@ -106,11 +105,11 @@ public sealed class KeyLoopEngine
         lock (_gate)
         {
             if (_running || _shutdownRequested) return false;
-            if (_host.EmergencyCts.IsCancellationRequested)
+            if (_host.EmergencyToken.IsCancellationRequested)
                 _host.ResetEmergencyStop();
 
             runId = ++_runId;
-            var emergencyToken = _host.EmergencyCts.Token;
+            var emergencyToken = _host.EmergencyToken;
             for (var index = 0; index < MaxSlots; index++)
             {
                 var runtime = _slots[index];
@@ -118,7 +117,7 @@ public sealed class KeyLoopEngine
                 runtime.Configuration = configuration;
                 runtime.Count = 0;
                 runtime.RunId = _runId;
-                runtime.Active = configuration.Enabled && KeyCode.Parse(configuration.Key) != 0;
+                runtime.Active = configuration.Enabled && _host.IsSupportedKey(configuration.Key);
                 runtime.WorkerOwnsRun = false;
                 runtime.EmergencyToken = emergencyToken;
                 runtime.RunCts = runtime.Active
@@ -134,7 +133,7 @@ public sealed class KeyLoopEngine
 
         foreach (var index in activeIndexes) _slots[index].WakeSignal.Release();
         ReportStatus("按键循环运行中...", running: true, force: true, runId: runId);
-        Diag.Log($"[按键循环] 启动: active={string.Join(',', activeIndexes.Select(i => i + 1))}");
+        _host.Log($"[按键循环] 启动: active={string.Join(',', activeIndexes.Select(i => i + 1))}");
         return true;
     }
 
@@ -152,7 +151,7 @@ public sealed class KeyLoopEngine
 
         CancelSlots(tokens);
         ReportStatus(reason, running: false, force: true, runId: runId);
-        Diag.Log($"[按键循环] 停止: reason={reason}");
+        _host.Log($"[按键循环] 停止: reason={reason}");
         return true;
     }
 
@@ -228,7 +227,7 @@ public sealed class KeyLoopEngine
             catch (Exception ex)
             {
                 error = $"按键槽位 {runtime.Index + 1}（{configuration.Key}）运行失败：{ex.Message}";
-                Diag.Log($"[按键循环] 槽位 {runtime.Index + 1} 异常: {ex}");
+                _host.Log($"[按键循环] 槽位 {runtime.Index + 1} 异常: {ex}");
             }
             finally
             {

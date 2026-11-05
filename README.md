@@ -55,7 +55,9 @@ CHANGELOG.md                版本变化
 .gitignore / .gitattributes  入库边界与文本格式
 .githooks/                  提交、推送前的文件范围检查
 源码/
-  拾刻.csproj               主程序项目
+  拾刻.csproj               WPF 桌面项目与单 EXE 发布入口
+  Core/                    独立 net10.0 核心：规则、预设、连点/按键循环引擎及运行接口
+  CoreTests/               仅依赖 Core 的无界面验证
   App.xaml / Bootstrapper.cs 启动入口
   Host/                     宿主、工具注册、导航与生命周期
   Services/                 输入、热键、存储、声音与网络等共享服务
@@ -69,7 +71,9 @@ CHANGELOG.md                版本变化
   sounds/ / poe.ico         内置音效与图标
 ```
 
-宿主统一管理热键、共享服务和分节存储；工具实现 `Host/ITool.cs`，通过 `Host/ToolRegistry.cs` 注册。坐标录制使用独立的 `ICoordinateProvider` 能力接口。
+宿主统一管理热键、共享服务和分节存储；工具实现 `Host/ITool.cs`，通过 `Host/ToolRegistry.cs` 注册。坐标录制使用独立的 `ICoordinateProvider` 能力接口。需要后台工作的工具实现 `IToolRuntime`，明确区分正在运行和清理已完成；可编辑热键通过 `IEditableHotkeyProvider` 声明，设置页自动生成对应条目。独立数据文件通过 `IToolAuxiliaryState` 参与宿主的可写退出保存。
+
+Core 不引用 WPF 或桌面项目。页面编辑即时更新配置，运行入口读取本轮快照，不反向读取页面控件；切页和退出仍按原时机保存。连点和按键循环通过 `Core/Runtime` 中的接口请求 Windows 能力。洗装的输入/剪贴板编排保留在桌面项目，依赖 `ICraftEnvironment`；词缀、模式决策、预设和状态同步位于 Core。`ITool` 是 WPF 抽屉接口，不作为纯核心接口。项目拆分后仍使用原单 EXE 发布及更新方式。
 
 ## 构建与验证
 
@@ -82,6 +86,7 @@ CHANGELOG.md                版本变化
 ```powershell
 git config --local core.hooksPath .githooks
 dotnet restore ".\源码\Tests\ShiKe.InternalTests.csproj"
+dotnet run --project ".\源码\CoreTests\ShiKe.CoreTests.csproj" -c Release
 dotnet build ".\源码\拾刻.csproj" -c Release --no-restore
 .\源码\验证内部用例.cmd
 ```

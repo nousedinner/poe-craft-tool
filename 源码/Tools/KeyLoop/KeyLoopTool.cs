@@ -6,7 +6,7 @@ using ShiKe.Services;
 
 namespace ShiKe.Tools.KeyLoop;
 
-public sealed class KeyLoopTool : ITool, IEnableableTool
+public sealed partial class KeyLoopTool : ITool, IEnableableTool
 {
     private ToolHost? _host;
     private KeyLoopEngine? _engine;
@@ -54,13 +54,11 @@ public sealed class KeyLoopTool : ITool, IEnableableTool
 
     public void OnDeactivate()
     {
-        _page?.CollectSettingsFromUi();
         SaveSettingsToStorage();
     }
 
     public void OnShutdown()
     {
-        _page?.CollectSettingsFromUi();
         if (_engine is not null && !_engine.Shutdown(TimeSpan.FromSeconds(1)))
             Diag.Log("[按键循环] OnShutdown: 1 秒内未完成关闭");
     }
@@ -80,7 +78,6 @@ public sealed class KeyLoopTool : ITool, IEnableableTool
 
     public void ToggleFromPage()
     {
-        _page?.CollectSettingsFromUi();
         if (_engine is null || _host is null) return;
         if (!_enabled)
         {
@@ -112,7 +109,6 @@ public sealed class KeyLoopTool : ITool, IEnableableTool
     private void ToggleFromHotkey()
     {
         if (!_enabled) return;
-        _page?.CollectSettingsFromUi();
         if (_engine is null) return;
         if (IsRunning)
         {

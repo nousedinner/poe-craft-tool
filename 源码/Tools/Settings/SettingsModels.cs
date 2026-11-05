@@ -4,6 +4,8 @@ using ShiKe.Tools.Hideout;
 
 namespace ShiKe.Tools.Settings;
 
+public sealed record HotkeyEntry(string Id, string Name, string Key, HotkeyMode Mode);
+
 public sealed record HotkeySettings(
     string CraftStart,
     string CraftStop,
@@ -13,6 +15,18 @@ public sealed record HotkeySettings(
     string KeyLoop,
     string Hideout)
 {
+    // 既有具名字段保留调用兼容性；生产清单由注册工具的能力描述提供。
+    public IReadOnlyList<HotkeyEntry>? RegisteredEntries { get; init; }
+
+    public static HotkeySettings Capture(IReadOnlyList<EditableHotkey> bindings, bool defaults = false)
+    {
+        var entries = bindings.Select(binding => new HotkeyEntry(binding.Id, binding.Name,
+            defaults ? binding.DefaultKey : binding.Read(), binding.Mode)).ToArray();
+        string Key(string id) => entries.FirstOrDefault(entry => entry.Id == id)?.Key ?? string.Empty;
+        return new(Key("craft_start"), Key("craft_stop"), Key("coordinate"), Key("clicker_toggle"),
+            Key("clicker_hold"), Key("keyloop"), Key("hideout")) { RegisteredEntries = entries };
+    }
+
     public HotkeySettings Normalize() => this with
     {
         CraftStart = CraftStart.Trim(),
@@ -22,18 +36,40 @@ public sealed record HotkeySettings(
         ClickerHold = ClickerHold.Trim(),
         KeyLoop = KeyLoop.Trim(),
         Hideout = Hideout.Trim(),
+        RegisteredEntries = RegisteredEntries?.Select(entry => entry with { Key = entry.Key.Trim() }).ToArray(),
     };
 
-    internal IReadOnlyList<(string Id, string Name, string Key, HotkeyMode Mode)> GetEntries() =>
-    [
-        ("craft_start", "启动洗装", CraftStart, HotkeyMode.Toggle),
-        ("craft_stop", "停止洗装", CraftStop, HotkeyMode.Toggle),
-        ("coordinate", "坐标录制", Coordinate, HotkeyMode.Toggle),
-        ("clicker_toggle", "连点器切换", ClickerToggle, HotkeyMode.Toggle),
-        ("clicker_hold", "连点器按住", ClickerHold, HotkeyMode.Hold),
-        ("keyloop", "按键循环", KeyLoop, HotkeyMode.Toggle),
-        ("hideout", "一键回城", Hideout, HotkeyMode.Toggle),
-    ];
+    internal IReadOnlyList<HotkeyEntry> GetEntries()
+    {
+        IReadOnlyList<HotkeyEntry> entries = RegisteredEntries ??
+        [
+            new("craft_start", "启动洗装", CraftStart, HotkeyMode.Toggle),
+            new("craft_stop", "停止洗装", CraftStop, HotkeyMode.Toggle),
+            new("coordinate", "坐标录制", Coordinate, HotkeyMode.Toggle),
+            new("clicker_toggle", "连点器切换", ClickerToggle, HotkeyMode.Toggle),
+            new("clicker_hold", "连点器按住", ClickerHold, HotkeyMode.Hold),
+            new("keyloop", "按键循环", KeyLoop, HotkeyMode.Toggle),
+            new("hideout", "一键回城", Hideout, HotkeyMode.Toggle),
+        ];
+        return entries.Select(entry => entry with { Key = entry.Id switch
+        {
+            "craft_start" => CraftStart, "craft_stop" => CraftStop, "coordinate" => Coordinate,
+            "clicker_toggle" => ClickerToggle, "clicker_hold" => ClickerHold,
+            "keyloop" => KeyLoop, "hideout" => Hideout, _ => entry.Key,
+        } }).ToArray();
+    }
+
+    internal bool HasSameBindings(HotkeySettings other) => GetEntries().SequenceEqual(other.GetEntries());
+
+    // 快照按条目值比较；集合实例不同不代表配置变化，兼容原七字段草稿的值语义。
+    public bool Equals(HotkeySettings? other) => other is not null && HasSameBindings(other);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        foreach (var entry in GetEntries()) hash.Add(entry);
+        return hash.ToHashCode();
+    }
 
     internal HotkeySettings WithKey(string id, string key) => id switch
     {
@@ -44,6 +80,11 @@ public sealed record HotkeySettings(
         "clicker_hold" => this with { ClickerHold = key },
         "keyloop" => this with { KeyLoop = key },
         "hideout" => this with { Hideout = key },
+        _ when RegisteredEntries?.Any(entry => entry.Id == id) == true => this with
+        {
+            RegisteredEntries = RegisteredEntries!.Select(entry => entry.Id == id
+                ? entry with { Key = key } : entry).ToArray(),
+        },
         _ => throw new ArgumentException("未知的热键项", nameof(id)),
     };
 }

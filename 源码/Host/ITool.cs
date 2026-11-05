@@ -4,8 +4,8 @@ using System.Windows;
 namespace ShiKe.Host;
 
 /// <summary>
-/// 抽屉标准接口（核心扩展点）。
-/// 新增功能 = 实现本接口 + 注册表加一行，宿主零改动。
+/// WPF 抽屉适配接口；无界面的规则和运行引擎位于 Core。
+/// 新工具注册后通过可选能力接入运行、热键设置和附属配置保存。
 /// </summary>
 public interface ITool
 {
@@ -27,7 +27,7 @@ public interface ITool
     /// <summary>导航切走时调用。</summary>
     void OnDeactivate();
 
-    /// <summary>程序退出时调用：停线程、保存设置、注销热键。</summary>
+    /// <summary>程序退出时停止并清理自身运行任务；不得读取页面或写入配置。宿主随后统一保存并注销热键。</summary>
     void OnShutdown();
 
     // ── 热键声明（宿主统一注册 + 冲突检测，抽屉不自己注册）──

@@ -16,6 +16,14 @@ Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false
 
 var tests = new (string Name, Action Run)[]
 {
+    ("业务核心独立于桌面且版本身份保持", ArchitectureBoundaryChecks.CoreIsIndependentOfDesktop),
+    ("新工具自动接入热键设置与失败回滚", ToolCapabilityChecks.RegisteredToolJoinsHotkeySettingsAndRollback),
+    ("新工具运行与关闭完成参与设置和更新保护", ToolCapabilityChecks.RegisteredRuntimeProtectsSettingsAndUpdateExit),
+    ("辅助配置保存通过能力声明接入", ToolCapabilityChecks.AuxiliaryStateIsAnExplicitCapability),
+    ("仅含新工具分节的配置按声明识别且不迁移", ToolCapabilityChecks.RegisteredOnlySectionLoadsWithoutMigration),
+    ("新工具首次单独保存后重启仍保留原配置", ToolCapabilityChecks.FirstNewToolSectionSurvivesHostReload),
+    ("新工具损坏分节拒绝读取和覆盖", ToolCapabilityChecks.MalformedRegisteredSectionCannotBeOverwritten),
+    ("无界面配置预设与只读关闭保持", UiArchitectureChecks.Run),
     ("装备名参与匹配但不计入词缀数", ItemNameMatchesWithoutIncreasingAffixCount),
     ("一条显式词缀准确计数", OneExplicitAffixIsCounted),
     ("实机弓样本识别为一条基础物理前缀", RealBowSampleIsOnePhysicalPrefix),
@@ -124,7 +132,7 @@ var tests = new (string Name, Action Run)[]
     ("Ctrl+C按键失败仅清理C和Ctrl", Mode2ShortcutChecks.CtrlCUsesOnlyControlAndCAndCleansFailures),
     ("快捷Mode2坐标收紧且其他模式保持", Mode2ShortcutChecks.CoordinateRequirementsKeepOtherModes),
     ("正式时序保留原滑条范围", Mode2ShortcutChecks.FormalTimingKeepsOriginalDelayRange),
-    ("正式页面布局文字与v45逐项一致", FormalReleaseChecks.PresentationMatchesVersion45),
+    ("正式页面保留已确认的布局与文字", FormalReleaseChecks.PresentationKeepsAcceptedMarkup),
     ("等待有效复制时不跳过判定或使用下一通货", FormalReleaseChecks.PendingCopyDoesNotAdvanceCurrency),
     ("物品快照保留原文并复用解析对象", CraftLoopChecks.SnapshotKeepsOriginalTextAndReusesParsedObject),
     ("物品快照比较保留完整字段变化", CraftLoopChecks.SnapshotChangeComparisonPreservesCompleteFields),
