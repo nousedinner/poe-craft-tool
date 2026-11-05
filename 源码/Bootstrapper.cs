@@ -27,7 +27,7 @@ internal static class Bootstrapper
             var acceptance = UpdateAcceptanceContext.LoadFromEnvironment();
             if (acceptance is not null && (args.Contains("--startup-profile", StringComparer.Ordinal) ||
                     args.Contains("--startup-lifecycle-check", StringComparer.Ordinal) ||
-                    (acceptance.Role == "origin" ? args.Length != 0 : args.Length != 3 || args[0] != "--update-start")))
+                    (acceptance.IsOrdinaryLaunch ? args.Length != 0 : args.Length != 3 || args[0] != "--update-start")))
                 throw new InvalidDataException("更新验收参数不能与普通诊断或非本案启动混用");
             updateStartup = UpdateBootstrap.ReadStartup(args);
             if (updateStartup is null && !args.Contains("--startup-profile", StringComparer.Ordinal) &&

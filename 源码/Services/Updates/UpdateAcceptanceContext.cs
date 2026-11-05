@@ -26,6 +26,9 @@ internal sealed class UpdateAcceptanceContext
     private int _packageRequests;
     private int _unexpectedRequests;
     private int _dialogs;
+    private int _releaseNotesDialogs;
+    private bool _healthCommitted;
+    private readonly List<object> _releaseNotesEvidence = [];
     private bool _reported;
 
     private UpdateAcceptanceContext(CaseSettings settings, string directory, string stage, string role)
@@ -42,6 +45,8 @@ internal sealed class UpdateAcceptanceContext
     internal string Stage { get; }
     internal string Role { get; }
     internal bool IsWarmup => Stage == "warmup";
+    internal bool IsRestart => Stage == "restart";
+    internal bool IsOrdinaryLaunch => Role == "origin" || IsRestart;
     internal bool FailBeforeHealthy => Role == "candidate" && _settings.Scenario == "startup-failure";
     internal string MutexSuffix => ".WpfUpdateAcceptance." + Convert.ToHexString(SHA256.HashData(
         Encoding.UTF8.GetBytes(InstallationDirectory.ToUpperInvariant())))[..24];
@@ -54,7 +59,7 @@ internal sealed class UpdateAcceptanceContext
         var token = Environment.GetEnvironmentVariable(TokenVariable);
         var stage = Environment.GetEnvironmentVariable(StageVariable);
         if (path is null && token is null && stage is null) return null;
-        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(token) || stage is not ("warmup" or "upgrade"))
+        if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(token) || stage is not ("warmup" or "upgrade" or "restart"))
             throw new InvalidDataException("更新验收环境不完整，禁止退回普通启动");
         if (!Path.IsPathFullyQualified(path) || Path.GetFileName(path) != "acceptance.json")
             throw new InvalidDataException("更新验收配置路径无效");
@@ -100,6 +105,20 @@ internal sealed class UpdateAcceptanceContext
         var manifest = Path.Combine(caseDirectory, "release", "version.json");
         if (!UpdateSession.HashFile(manifest).Equals(settings.ManifestSha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("验收清单不是本案固定文件");
+        if (stage == "restart")
+        {
+            if (role != "candidate" || settings.Scenario != "success")
+                throw new InvalidDataException("普通重启验收仅允许成功更新后的本案候选程序");
+            var updateRoot = Path.Combine(Path.GetDirectoryName(expectedExecutable)!, ".shike-updates");
+            if (!Directory.Exists(updateRoot)) throw new InvalidDataException("普通重启验收缺少已完成的更新事务");
+            var completed = Directory.EnumerateDirectories(updateRoot)
+                .Where(directory => Guid.TryParseExact(Path.GetFileName(directory), "N", out _))
+                .Select(directory => UpdateSession.LoadOwned(Path.Combine(directory, "session.json"),
+                    ReleaseTrust.PublicKeyPem, ReleaseTrust.KeyId))
+                .Count(session => UpdateSession.SamePath(session.TargetPath, expectedExecutable) &&
+                    session.Manifest.Version == next && session.ReadPhase() == "completed" && session.HasCommitAcknowledgement);
+            if (completed != 1) throw new InvalidDataException("普通重启验收未确认本案唯一成功提交的更新");
+        }
         var context = new UpdateAcceptanceContext(settings, caseDirectory, stage, role);
         Current = context;
         context.Record("acceptance-validated", new { role, stage, executableSha256 = hash, scenario = settings.Scenario });
@@ -151,6 +170,50 @@ internal sealed class UpdateAcceptanceContext
         MainRendered.TrySetResult();
     }
 
+    internal void ObserveReleaseNotes(ReleaseNotesWindow dialog)
+    {
+        dialog.ShowActivated = false;
+        var responded = false;
+        dialog.ContentRendered += (_, _) =>
+        {
+            if (responded) return;
+            responded = true;
+            var count = Interlocked.Increment(ref _releaseNotesDialogs);
+            var notes = dialog.FindName("NotesText") as TextBox;
+            var versionLabel = dialog.FindName("VersionText") as TextBlock;
+            var button = dialog.FindName("AcknowledgeButton") as Button;
+            bool committed;
+            lock (_gate) committed = _healthCommitted;
+            var displayedVersion = versionLabel?.Text ?? "";
+            var text = notes?.Text ?? "";
+            var allowed = Role == "candidate" && Stage == "upgrade" && _settings.Scenario == "success" &&
+                committed && count == 1 && dialog.Title == "更新完成" && dialog.RenderedOnce &&
+                notes is { IsReadOnly: true, IsVisible: true } && notes.ActualWidth > 0 && notes.ActualHeight > 0 &&
+                !string.IsNullOrWhiteSpace(text) && displayedVersion == $"已更新至 v{_settings.CandidateVersion}" &&
+                button is { IsVisible: true } && button.Content as string == "知道了";
+            var evidence = new
+            {
+                version = NetworkService.CurrentVersion.ToString(3), displayedVersion, text,
+                textSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))),
+                dialog.Title, allowed, contentRendered = dialog.RenderedOnce, healthCommitted = committed,
+            };
+            lock (_gate) _releaseNotesEvidence.Add(evidence);
+            Record("release-notes-rendered", evidence);
+            dialog.Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+            {
+                if (!allowed || button is null)
+                {
+                    Record("unexpected-release-notes", evidence);
+                    dialog.Close();
+                    Application.Current.Shutdown(76);
+                    return;
+                }
+                button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Record("release-notes-acknowledged");
+            }));
+        };
+    }
+
     internal void BeforeExitPreparation()
     {
         if (Role != "origin" || IsWarmup || _settings.Scenario != "exit-save-failure") return;
@@ -162,7 +225,15 @@ internal sealed class UpdateAcceptanceContext
     internal void Record(string name, object? details = null)
     {
         lock (_gate)
+        {
+            if (name == "health-committed" && details is not null)
+            {
+                var values = JsonSerializer.SerializeToElement(details);
+                _healthCommitted = values.TryGetProperty("committed", out var committed) && committed.ValueKind == JsonValueKind.True &&
+                    values.TryGetProperty("readonlyReleased", out var released) && released.ValueKind == JsonValueKind.True;
+            }
             _events.Add(new { name, details, elapsedUtc = DateTimeOffset.UtcNow });
+        }
     }
 
     internal void WriteExitReport(int exitCode, bool settingsLoaded, bool healthConfirmed)
@@ -172,7 +243,8 @@ internal sealed class UpdateAcceptanceContext
         _reported = true;
         using var process = Process.GetCurrentProcess();
         object[] events;
-        lock (_gate) events = _events.ToArray();
+        object[] releaseNotesEvidence;
+        lock (_gate) { events = _events.ToArray(); releaseNotesEvidence = _releaseNotesEvidence.ToArray(); }
         var report = new
         {
             owner = Owner, role = Role, stage = Stage, scenario = _settings.Scenario,
@@ -181,6 +253,7 @@ internal sealed class UpdateAcceptanceContext
             exitCode, settingsLoaded, healthConfirmed, deniedNativeCalls = _deniedNativeCalls,
             versionRequests = _versionRequests, packageRequests = _packageRequests,
             unexpectedRequests = _unexpectedRequests, dialogs = _dialogs, events,
+            releaseNotesDialogs = _releaseNotesDialogs, releaseNotesEvidence,
             scope = "real production WPF App/Host/update flow; local HTTP adapters; native input/hotkeys disabled; no production network",
         };
         File.WriteAllText(Path.Combine(CaseDirectory, $"process-{Stage}-{Role}-{process.Id}.json"),
@@ -197,14 +270,15 @@ internal sealed class UpdateAcceptanceContext
             {
                 Interlocked.Increment(ref context._versionRequests);
                 await context.MainRendered.Task.WaitAsync(TimeSpan.FromSeconds(20), token).ConfigureAwait(false);
-                var text = context.IsWarmup
-                    ? JsonSerializer.Serialize(new { latest = context._settings.OriginalVersion, url = UpdateManifest.OfficialManualUrl })
+                var text = context.IsWarmup || context.IsRestart
+                    ? JsonSerializer.Serialize(new { latest = context.IsRestart ? context._settings.CandidateVersion : context._settings.OriginalVersion,
+                        url = UpdateManifest.OfficialManualUrl })
                     : await File.ReadAllTextAsync(Path.Combine(context.CaseDirectory, "release", "version.json"), token).ConfigureAwait(false);
                 context.Record("version-response");
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(text, Encoding.UTF8, "application/json") };
             }
             var expected = $"https://open.cancanneed.top/download/releases/{context._settings.CandidateVersion}/shike-win-x64.zip";
-            if (packageOnly && request.Method == HttpMethod.Get && request.RequestUri?.AbsoluteUri == expected && !context.IsWarmup)
+            if (packageOnly && request.Method == HttpMethod.Get && request.RequestUri?.AbsoluteUri == expected && context.Stage == "upgrade")
             {
                 Interlocked.Increment(ref context._packageRequests);
                 context.Record("package-response");

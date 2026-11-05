@@ -15,6 +15,8 @@ $projectVersion=[xml](Get-Content -LiteralPath (Join-Path $source '拾刻.csproj
 $version=[string]$projectVersion.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
 $parsedVersion=[Version]::Parse($version)
 $next=('{0}.{1}.{2}' -f $parsedVersion.Major,$parsedVersion.Minor,($parsedVersion.Build+1))
+$expectedReleaseNotes=[IO.File]::ReadAllText((Join-Path $source 'ReleaseNotes.txt')).TrimStart([char]0xFEFF).Replace("`r`n","`n").Replace("`r","`n").Trim()
+if([string]::IsNullOrWhiteSpace($expectedReleaseNotes)){throw '版本说明资源不能为空'}
 foreach($item in @(@($version,$original),@($next,$candidate))){
     & dotnet publish (Join-Path $source '拾刻.csproj') -c Release -p:PublishProfile=FrameworkDependent ("-p:Version="+$item[0]) ("-p:InformationalVersion="+$item[0]) --output $item[1] --nologo
     if($LASTEXITCODE -ne 0){throw '正式WPF候选构建失败'}
@@ -95,6 +97,7 @@ function Run-App([string]$CaseDirectory,[string]$Stage,[string]$Nonce){
 
 $protected=@('data\settings.json','data\rules.json','data\coordinates.json','data\presets\player.json','sounds\player-custom.mp3')
 $results=@()
+$restartResults=@()
 foreach($scenario in @('success','startup-failure','exit-save-failure','signature-failure')){
     $case=Join-Path $batch ('case-'+$scenario)
     $install=Join-Path $case 'installation with 中文 空格'
@@ -132,12 +135,15 @@ foreach($scenario in @('success','startup-failure','exit-save-failure','signatur
     })
     $warmup=@(Run-App $case 'warmup' $nonce)
     Require ($warmup.Count -eq 1 -and $warmup[0].exitCode -eq 0) 'WPF配置基线准备未完整结束'
+    $warmupReports=@(Get-ChildItem -LiteralPath $case -Filter 'process-warmup-*.json'|ForEach-Object{Get-Content -LiteralPath $_.FullName -Raw|ConvertFrom-Json})
+    Require ($warmupReports.Count -eq 1 -and $warmupReports[0].releaseNotesDialogs -eq 0 -and $warmupReports[0].dialogs -eq 0) '普通基线启动不应显示更新或版本说明'
     $baseline=@{};foreach($name in $protected){$baseline[$name]=(Get-FileHash -LiteralPath (Join-Path $install $name)).Hash}
     $processes=@(Run-App $case 'upgrade' $nonce)
     $reports=@(Get-ChildItem -LiteralPath $case -Filter 'process-upgrade-*.json'|ForEach-Object{Get-Content -LiteralPath $_.FullName -Raw|ConvertFrom-Json})
     $origin=@($reports|Where-Object role -eq origin)
     Require ($origin.Count -eq 1 -and $origin[0].settingsLoaded -and $origin[0].versionRequests -eq 1) '未贯通真实WPF配置加载与版本检查'
     Require ($origin[0].dialogs -eq 1) '未显示并响应唯一的真实更新提示'
+    Require ($origin[0].releaseNotesDialogs -eq 0) '旧版本不能显示更新完成说明'
     Require (@($origin[0].events|Where-Object name -eq 'forced-update-blocked-old-ui').Count -eq 1) '旧主页面未进入强更阻断'
     foreach($report in $reports){Require ($report.deniedNativeCalls -eq 0 -and $report.unexpectedRequests -eq 0) '验收触发了被禁止的原生或外部入口'}
     foreach($name in $protected){Require ((Get-FileHash -LiteralPath (Join-Path $install $name)).Hash -eq $baseline[$name]) "配置或自定义资源变化：$name"}
@@ -162,12 +168,41 @@ foreach($scenario in @('success','startup-failure','exit-save-failure','signatur
         Require (@($children[0].events|Where-Object name -eq 'wpf-main-rendered').Count -eq 1) '新版没有真实WPF首帧'
         Require ($children[0].healthConfirmed -eq ($scenario -eq 'success')) '健康确认结果不符'
         Require ($children[0].versionRequests -eq 0 -and $children[0].packageRequests -eq 0) '新版验收触发额外HTTP'
+        Require ($children[0].dialogs -eq 0) '新版不应重复显示旧更新提示'
+        if($scenario -eq 'success'){
+            Require ($children[0].releaseNotesDialogs -eq 1 -and @($children[0].releaseNotesEvidence).Count -eq 1) '成功更新后必须仅显示一次真实版本说明'
+            $notes=$children[0].releaseNotesEvidence[0]
+            Require ($notes.allowed -and $notes.contentRendered -and $notes.healthCommitted -and $notes.version -eq $next -and $notes.displayedVersion -eq "已更新至 v$next") '版本说明未在健康提交后正确显示版本'
+            $renderedNotes=([string]$notes.text).Replace("`r`n","`n").Replace("`r","`n").Trim()
+            Require ($renderedNotes -ceq $expectedReleaseNotes) '真实版本说明内容与本次内置资源不一致'
+            $eventNames=[string[]]@($children[0].events|ForEach-Object{$_.name})
+            $healthIndex=[Array]::IndexOf($eventNames,'health-committed')
+            $notesIndex=[Array]::IndexOf($eventNames,'release-notes-rendered')
+            $acknowledgedIndex=[Array]::IndexOf($eventNames,'release-notes-acknowledged')
+            Require ($healthIndex -ge 0 -and $notesIndex -gt $healthIndex -and $acknowledgedIndex -gt $notesIndex) '版本说明必须在健康提交之后渲染并通过知道了关闭'
+        }else{
+            Require ($children[0].releaseNotesDialogs -eq 0 -and @($children[0].releaseNotesEvidence).Count -eq 0) '启动失败回滚不能显示更新完成说明'
+        }
     }else{Require ($children.Count -eq 0) '拒绝更新时仍启动了新版'}
     $expectedHash=if($scenario -eq 'success'){$newHash}else{$oldHash}
     Require ((Get-FileHash -LiteralPath (Join-Path $install '拾刻.exe')).Hash -eq $expectedHash) '主EXE未正确更新或恢复'
+    if($scenario -eq 'success'){
+        $restartProcesses=@(Run-App $case 'restart' $nonce)
+        $restartReports=@(Get-ChildItem -LiteralPath $case -Filter 'process-restart-*.json'|ForEach-Object{Get-Content -LiteralPath $_.FullName -Raw|ConvertFrom-Json})
+        Require ($restartProcesses.Count -eq 1 -and $restartProcesses[0].exitCode -eq 0 -and $restartReports.Count -eq 1) '成功更新后的普通重启未完整退出'
+        $restarted=$restartReports[0]
+        Require ($restarted.role -eq 'candidate' -and $restarted.version -eq $next -and $restarted.settingsLoaded -and -not $restarted.healthConfirmed) '普通重启不应伪装成自动更新启动'
+        Require ($restarted.versionRequests -eq 1 -and $restarted.packageRequests -eq 0 -and $restarted.dialogs -eq 0 -and $restarted.releaseNotesDialogs -eq 0) '同一新版普通重启不能重复弹版本说明或启动更新'
+        Require ($restarted.deniedNativeCalls -eq 0 -and $restarted.unexpectedRequests -eq 0) '普通重启验收触发了未授权入口'
+        Require (@($restarted.events|Where-Object name -eq 'wpf-main-rendered').Count -eq 1 -and @($restarted.events|Where-Object name -eq 'health-committed').Count -eq 0) '普通重启必须完成真实首帧且没有更新提交事件'
+        foreach($name in $protected){Require ((Get-FileHash -LiteralPath (Join-Path $install $name)).Hash -eq $baseline[$name]) "普通重启改变了配置或资源：$name"}
+        Require ((Get-FileHash -LiteralPath (Join-Path $install '拾刻.exe')).Hash -eq $newHash) '普通重启改变了本次候选程序'
+        $restartResults += [pscustomobject]@{status='passed';processes=$restartProcesses;reports=$restartReports;mainExeSha256=$newHash}
+    }
     $results += [pscustomobject]@{scenario=$scenario;status='passed';phase=$phase;warmupProcesses=$warmup;processes=$processes;reports=$reports;protectedFileHashes=$baseline;mainExeSha256=$expectedHash}
     Write-Host "$scenario 正式WPF更新验收通过"
 }
-$summary=[ordered]@{status='passed';total=$results.Count;passed=$results.Count;originalVersion=$version;candidateVersion=$next;originalExe=$oldExe;candidateExe=$newExe;originalSha256=$oldHash;candidateSha256=$newHash;cases=$results;scope='production WPF App/Host/update dialogs/downloader/exit/helper/health flow; local HTTP transport adapters; native input and ordinary online services disabled; not original shipped v1.0.52 binary';productionSigningKeyUsed=$true;published=$false}
+Require ($restartResults.Count -eq 1) '必须完成一次成功候选的普通重启验证'
+$summary=[ordered]@{status='passed';total=$results.Count;passed=$results.Count;restartChecks=$restartResults.Count;restartResults=$restartResults;originalVersion=$version;candidateVersion=$next;originalExe=$oldExe;candidateExe=$newExe;originalSha256=$oldHash;candidateSha256=$newHash;cases=$results;scope='production WPF App/Host/update dialogs/release notes/downloader/exit/helper/health flow and candidate ordinary restart; local HTTP transport adapters; native input and ordinary online services disabled; not original shipped v1.0.52 binary';productionSigningKeyUsed=$true;published=$false}
 Write-JsonFile (Join-Path $batch 'result.json') $summary
 Write-Host "WPF_UPDATE_RESULT total=$($results.Count), passed=$($results.Count), failed=0; report=$batch\result.json"

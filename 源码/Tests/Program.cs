@@ -16,6 +16,16 @@ Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false
 
 var tests = new (string Name, Action Run)[]
 {
+    ("更新说明纯文本规范化与长度边界", ReleaseNotesChecks.ContentIsBoundedNormalizedPlainText),
+    ("更新说明读取失败不传播且释放资源", ReleaseNotesChecks.ReadFailuresAreNonFatalAndStreamsAreDisposed),
+    ("仅成功自动更新允许显示说明", ReleaseNotesChecks.DisplayGateRequiresCommittedAutomaticUpdate),
+    ("更新说明真实显示后只提示一次", ReleaseNotesChecks.DisplayStatePreventsReentryAndConsumesOnlyRenderedWindow),
+    ("更新说明并发请求只允许一个窗口", ReleaseNotesChecks.ConcurrentDisplayRequestsHaveOnlyOneWinner),
+    ("当前程序包含有效的内置更新说明", () =>
+    {
+        if (string.IsNullOrWhiteSpace(ShiKe.Services.Updates.ReleaseNotesContent.Read()))
+            throw new InvalidOperationException("当前EXE缺少有效更新说明资源");
+    }),
     ("预先取消不访问剪贴板", ClipboardPerformanceChecks.CancelledRequestsDoNotOpenClipboard),
     ("剪贴板优化保留重试预算与结果", ClipboardPerformanceChecks.RetryBudgetAndResultsStayUnchanged),
     ("剪贴板取消和异常均可靠关闭", ClipboardPerformanceChecks.CancellationAndFailureAlwaysCloseOpenedClipboard),

@@ -105,6 +105,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\源码\scripts\Build-
 
 ### 签名发布与文件更新
 
+成功自动更新并重启后，程序会显示一次本次更新说明；普通启动、手动替换 EXE、更新失败或回滚不会显示。说明可滚动和复制，点击“知道了”、右上关闭或按 Esc 继续。
+
+每次发布前同时更新 `源码/ReleaseNotes.txt` 中面向用户的本次更新内容。正文编译进 EXE，弹窗版本号取自应用版本；无需在服务器额外部署说明文件，也不修改签名清单格式。说明读取或显示失败只跳过提示，不改变已成功更新的结果。
+
 继续发布完整 ZIP。固定 `version.json` 保留旧客户端的 `latest/url`；新客户端验证其中 `autoUpdate` 的签名载荷，使用 `/download/releases/<版本>/shike-win-x64.zip` 不可变地址。发布包和文件清单均有大小及 SHA-256 校验；签名采用 RSA-PSS/SHA-256，公钥随客户端交付，私钥只在发布环境保存。
 
 维护者首次用 `Initialize-ReleaseKey.ps1 -KeyPath <仓库外路径>` 建立当前 Windows 用户 DPAPI 保护的发布私钥，并将配套公钥固定在 `ReleaseTrust.cs`。日常发布不得重新生成密钥；私钥不进 Git、ZIP、版本清单或 VPS。DPAPI 文件不能直接在另一台机器解密，需要妥善保管原发布用户环境。

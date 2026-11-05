@@ -311,6 +311,7 @@ internal static class AppearanceChecks
             ArchitectureBoundaryChecks.CheckDeclaredCount(window, registry, host);
             UiPerformanceChecks.CheckPages(window, page, (ClickerPage)clicker.CreatePage(),
                 (KeyLoopPage)keyLoop.CreatePage(), settings);
+            ReleaseNotesWindowChecks.Check(window);
             window.WindowState = WindowState.Minimized;
             Pump();
             Require(panels.All(panel => !FlowingGradient.IsAnimating(panel)), "最小化后应暂停动画");

@@ -35,6 +35,8 @@
   <!-- poe.ico 嵌入程序集资源：托盘/窗口图标运行时从资源加载，发布不依赖外部文件 -->
   <ItemGroup>
     <Resource Include="poe.ico" />
+    <!-- 更新说明随EXE受包哈希保护，不扩展旧客户端严格校验的清单字段。 -->
+    <EmbeddedResource Include="ReleaseNotes.txt" LogicalName="ShiKe.ReleaseNotes.txt" />
   </ItemGroup>
 
   <!-- sounds/ 目录复制到输出目录（SoundService 从 AppContext.BaseDirectory/sounds/ 查找音效文件） -->

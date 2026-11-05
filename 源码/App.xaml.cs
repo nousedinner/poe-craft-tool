@@ -24,6 +24,7 @@ public partial class App : Application
     private bool _ownsSingleInstanceMutex;
     private bool _isShuttingDown;
     private bool _settingsLoadedSuccessfully;
+    private readonly ReleaseNotesDisplayState _releaseNotesDisplay = new();
     private readonly CancellationTokenSource _backgroundCts = new();
     private readonly StartupPerformance _startup;
     private readonly bool _startupProfile;
@@ -216,9 +217,12 @@ public partial class App : Application
                             readonlyReleased = !_host.Storage.ReadOnlyForUpdateValidation,
                             nativeServicesStillSuppressed = _host.AutomationSuspendedForUpdate,
                         });
-                        _mainWindow.Close();
+                        ShowPostUpdateReleaseNotes();
+                        if (!_isShuttingDown) _mainWindow.Close();
                         return;
                     }
+                    ShowPostUpdateReleaseNotes();
+                    if (_isShuttingDown) return;
                     _host.AutomationSuspendedForUpdate = false;
                     _mainWindow.IsEnabled = true;
                     _host.Hotkeys.AttachToWindow(_mainWindow);
@@ -233,7 +237,7 @@ public partial class App : Application
                 }
                 return;
             }
-            if (_updateAcceptance?.IsWarmup == true)
+            if (_updateAcceptance is { IsWarmup: true } or { IsRestart: true })
             {
                 try { await _updateAcceptance.VersionChecked.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
                 catch (Exception error) { _updateAcceptance.Record("warmup-check-failed", error.Message); Shutdown(73); return; }
@@ -249,6 +253,38 @@ public partial class App : Application
             if (!_startupProfile) return;
             _mainWindow.Close(); // 与用户 X 共用真正的关闭路径，不直接调用 Shutdown 代替验证。
         }));
+    }
+
+    private void ShowPostUpdateReleaseNotes()
+    {
+        // 仅提交成功的自动更新启动触发。普通启动不读资源、不写seen文件、不额外联网。
+        if (_updateStartup is null || !_updateHealthConfirmed || _isShuttingDown ||
+            _mainWindow is not { IsVisible: true } || _releaseNotesDisplay.AlreadyShown) return;
+        ReleaseNotesWindow? dialog = null;
+        var began = false;
+        try
+        {
+            if (!_updateStartup.Session.HasCommitAcknowledgement) return;
+            var text = ReleaseNotesContent.Read();
+            began = _releaseNotesDisplay.TryBegin(true, _updateHealthConfirmed, _isShuttingDown, text);
+            if (!began) return;
+            dialog = new ReleaseNotesWindow(ReleaseNotesContent.CurrentVersion, text!)
+            {
+                Owner = _mainWindow,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            };
+            _updateAcceptance?.ObserveReleaseNotes(dialog);
+            dialog.ShowDialog();
+        }
+        catch (Exception error)
+        {
+            // 展示是已成功更新之后的附加步骤，不能因说明缺失/窗口异常误报更新失败。
+            Diag.Log($"[版本说明] 无法显示本次更新内容，继续正常启动：{error.Message}");
+        }
+        finally
+        {
+            if (began) _releaseNotesDisplay.Complete(dialog?.RenderedOnce == true);
+        }
     }
 
     private TrayService EnsureTray()

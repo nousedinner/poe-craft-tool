@@ -1,0 +1,65 @@
+<Window x:Class="ShiKe.Services.Updates.ReleaseNotesWindow" x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="更新完成" WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True"
+        Background="Transparent" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
+        SizeToContent="Height" Width="520" PreviewKeyDown="Window_PreviewKeyDown">
+    <Window.Resources>
+        <Style x:Key="NotesButton" TargetType="Button">
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Padding" Value="18,6"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Surface" CornerRadius="8" BorderThickness="1"
+                                Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.85"/></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="#244D63"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.65"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <Border x:Name="DialogSurface" Margin="10" Padding="24" CornerRadius="18"
+            BorderBrush="#CCDDE7" BorderThickness="1">
+        <Border.Effect><DropShadowEffect Color="#47677E" BlurRadius="14" ShadowDepth="2" Opacity="0.15"/></Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid Background="Transparent" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown" Margin="0,0,0,20">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="拾刻" FontSize="11" Foreground="#708898" Margin="0,0,0,5"/>
+                    <TextBlock x:Name="VersionText" FontSize="21" FontWeight="SemiBold" Foreground="#294F66" TextWrapping="Wrap"/>
+                </StackPanel>
+                <Button x:Name="CloseButton" Grid.Column="1" Content="×" Width="28" Height="28" Margin="12,0,0,0"
+                        VerticalAlignment="Top" Padding="0" FontSize="20" Background="Transparent" BorderBrush="Transparent"
+                        Foreground="#708898" Style="{StaticResource NotesButton}" AutomationProperties.Name="关闭"
+                        Click="Dismiss_Click"/>
+            </Grid>
+            <TextBlock Grid.Row="1" Text="本次更新内容" FontSize="14" FontWeight="SemiBold"
+                       Foreground="#294F66" Margin="0,0,0,12"/>
+            <ScrollViewer x:Name="NotesScroll" Grid.Row="2" MaxHeight="380"
+                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <TextBox x:Name="NotesText" Style="{x:Null}" IsReadOnly="True" IsReadOnlyCaretVisible="False"
+                         TextWrapping="Wrap" FontSize="14" Foreground="#294F66" Background="Transparent"
+                         BorderThickness="0" Padding="0" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled"/>
+            </ScrollViewer>
+            <Button x:Name="AcknowledgeButton" Grid.Row="3" Content="知道了" MinWidth="92"
+                    HorizontalAlignment="Right" Margin="0,24,0,0" Style="{StaticResource NotesButton}"
+                    Foreground="White" IsDefault="True" IsCancel="True" Click="Dismiss_Click"/>
+        </Grid>
+    </Border>
+</Window>
