@@ -12,6 +12,7 @@ public sealed class KeyLoopTool : ITool, IEnableableTool
     private KeyLoopEngine? _engine;
     private KeyLoopPage? _page;
     private bool _lastReportedRunning;
+    private readonly MissingTargetReminder _missingTargetReminder = new();
 
     public string Id => "keyloop";
     public string Name => "按键循环";
@@ -73,6 +74,7 @@ public sealed class KeyLoopTool : ITool, IEnableableTool
             CheckForeground = true,
             Mode = HotkeyMode.Toggle,
             Handler = ToggleFromHotkey,
+            ForegroundRejectedHandler = NotifyMissingTarget,
         },
     ];
 
@@ -99,6 +101,13 @@ public sealed class KeyLoopTool : ITool, IEnableableTool
     }
 
     public void Stop() => _engine?.Stop();
+
+    private void NotifyMissingTarget()
+    {
+        if (_host is null) return;
+        _missingTargetReminder.ShowIfNeeded(_enabled, _host.Foreground.TargetProcess,
+            () => _host.Notification.Show("尚未锁定游戏进程，请先在设置中选择目标进程"));
+    }
 
     private void ToggleFromHotkey()
     {

@@ -133,7 +133,7 @@ public sealed class KeyLoopEngine
         }
 
         foreach (var index in activeIndexes) _slots[index].WakeSignal.Release();
-        ReportStatus("按键循环运行中...", force: true, runId: runId);
+        ReportStatus("按键循环运行中...", running: true, force: true, runId: runId);
         Diag.Log($"[按键循环] 启动: active={string.Join(',', activeIndexes.Select(i => i + 1))}");
         return true;
     }
@@ -151,7 +151,7 @@ public sealed class KeyLoopEngine
         }
 
         CancelSlots(tokens);
-        ReportStatus(reason, force: true, runId: runId);
+        ReportStatus(reason, running: false, force: true, runId: runId);
         Diag.Log($"[按键循环] 停止: reason={reason}");
         return true;
     }
@@ -217,7 +217,7 @@ public sealed class KeyLoopEngine
                         if (runtime.RunId != runId || !runtime.Active) break;
                         runtime.Count++;
                     }
-                    ReportStatus("按键循环运行中...", runId: runId);
+                    ReportStatus("按键循环运行中...", running: true, runId: runId);
                     await Task.Delay(TimeSpan.FromSeconds(configuration.DelaySeconds), runCts.Token);
                 }
             }
@@ -269,7 +269,7 @@ public sealed class KeyLoopEngine
             tokens = RetireSlots(runId);
         }
         CancelSlots(tokens);
-        ReportStatus(reason, force: true, runId: runId);
+        ReportStatus(reason, running: false, force: true, runId: runId);
         return true;
     }
 
@@ -298,11 +298,12 @@ public sealed class KeyLoopEngine
         }
     }
 
-    private void ReportStatus(string text, bool force = false, int? runId = null)
+    private void ReportStatus(string text, bool running, bool force = false, int? runId = null)
     {
         lock (_gate)
         {
             if (runId is { } expected && expected != _runId) return;
+            if (_running != running) return;
             var now = Stopwatch.GetTimestamp();
             if (!force && _lastStatusTimestamp != 0 &&
                 Stopwatch.GetElapsedTime(_lastStatusTimestamp, now) < TimeSpan.FromMilliseconds(250))

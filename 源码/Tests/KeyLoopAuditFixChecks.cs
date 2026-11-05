@@ -5,6 +5,78 @@ using ShiKe.Tools.KeyLoop;
 // 只注入受控异步动作；不注册热键、不发送按键、不访问网络。
 internal static class KeyLoopAuditFixChecks
 {
+    public static void SameRunLateProgressDoesNotReplaceStop() => WithHost(host =>
+    {
+        var statuses = new List<KeyLoopStatus>();
+        var calls = 0;
+        var engine = new KeyLoopEngine(host, () => true, (_, _) =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.CompletedTask;
+        });
+        engine.StatusUpdated += statuses.Add;
+        try
+        {
+            lock (ReadField(engine, "_gate"))
+            {
+                Require(engine.Start(Slots("q")), "待运行按键循环启动失败");
+                var runId = (int)ReadField(engine, "_runId");
+                Require(engine.Stop(), "待运行按键循环停止失败");
+                // 让节流允许本次报告，确定性模拟停止消息发布已超过 250ms。
+                typeof(KeyLoopEngine).GetField("_lastStatusTimestamp", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(engine, 0L);
+                ReportLateRunningStatus(engine, runId, force: false);
+                Require(statuses.Count == 2 && !statuses[^1].Running && statuses[^1].Text == "按键循环已停止",
+                    "同轮迟到进度不能覆盖停止文案，即使节流已允许发布");
+            }
+        }
+        finally { Require(engine.Shutdown(TimeSpan.FromSeconds(2)), "迟到进度检查未完整关闭 worker"); }
+        Require(calls == 0, "受控待运行检查不能执行按键动作");
+    });
+
+    public static void ForcedLateStartDoesNotReplaceWorkerFailure() => WithHost(host =>
+    {
+        using var entered = new ManualResetEventSlim();
+        using var failed = new ManualResetEventSlim();
+        var failAction = NewSignal();
+        var statuses = new List<KeyLoopStatus>();
+        var failureMessage = string.Empty;
+        var engine = new KeyLoopEngine(host, () => true, async (_, _) =>
+        {
+            entered.Set();
+            await failAction.Task;
+            throw new InvalidOperationException("受控的启动后按键失败");
+        });
+        engine.StatusUpdated += statuses.Add;
+        engine.ErrorOccurred += error =>
+        {
+            failureMessage = error;
+            failed.Set();
+        };
+        try
+        {
+            Require(engine.Start(Slots("q")), "受控失败轮次启动失败");
+            Require(entered.Wait(TimeSpan.FromSeconds(2)), "受控动作未开始");
+            var runId = (int)ReadField(engine, "_runId");
+            failAction.TrySetResult();
+            Require(failed.Wait(TimeSpan.FromSeconds(2)), "worker 未完成真实异常收尾并发布错误");
+            lock (ReadField(engine, "_gate"))
+            {
+                Require(!engine.IsRunning && statuses.Count == 2 && statuses[^1].Text == failureMessage,
+                    "worker 异常必须先发布停止状态与具体原因");
+                // 模拟 Start 唤醒 worker 后，强制运行报告晚于失败收尾才抵达。
+                ReportLateRunningStatus(engine, runId, force: true);
+                Require(statuses.Count == 2 && !statuses[^1].Running && statuses[^1].Text == failureMessage,
+                    "同轮迟到的强制启动报告不能覆盖 worker 失败文案");
+            }
+        }
+        finally
+        {
+            failAction.TrySetResult();
+            Require(engine.Shutdown(TimeSpan.FromSeconds(2)), "迟到启动报告检查未完整关闭 worker");
+        }
+    });
+
     public static void EmergencyStopSurvivesHostTokenReset() => WithHost(host =>
     {
         using var entered = new ManualResetEventSlim();
@@ -226,6 +298,14 @@ internal static class KeyLoopAuditFixChecks
             Require(engine.Shutdown(TimeSpan.FromSeconds(2)), "跨轮发布检查未完整关闭 worker");
         }
     });
+
+    private static object ReadField(KeyLoopEngine engine, string name)
+        => typeof(KeyLoopEngine).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;
+
+    private static void ReportLateRunningStatus(KeyLoopEngine engine, int runId, bool force)
+        => typeof(KeyLoopEngine).GetMethod("ReportStatus", BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null, types: [typeof(string), typeof(bool), typeof(bool), typeof(int?)], modifiers: null)!
+            .Invoke(engine, ["按键循环运行中...", true, force, runId]);
 
     private static CancellationTokenSource ReadRunSource(KeyLoopEngine engine, int index)
     {

@@ -13,6 +13,7 @@ public sealed class ClickerTool : ITool, IEnableableTool
     private ClickerPage? _page;
     private bool _holdStarted;
     private bool _lastReportedRunning;
+    private readonly MissingTargetReminder _missingTargetReminder = new();
 
     public string Id => "clicker";
     public string Name => "连点器";
@@ -75,6 +76,7 @@ public sealed class ClickerTool : ITool, IEnableableTool
             CheckForeground = true,
             Mode = HotkeyMode.Toggle,
             Handler = ToggleFromHotkey,
+            ForegroundRejectedHandler = NotifyMissingTarget,
         },
         new HotkeyRequest
         {
@@ -84,6 +86,7 @@ public sealed class ClickerTool : ITool, IEnableableTool
             Mode = HotkeyMode.Hold,
             Handler = StartHoldFromHotkey,
             ReleaseHandler = StopHoldFromHotkey,
+            ForegroundRejectedHandler = NotifyMissingTarget,
         },
     ];
 
@@ -106,6 +109,13 @@ public sealed class ClickerTool : ITool, IEnableableTool
     }
 
     public void Stop() => _engine?.Stop();
+
+    private void NotifyMissingTarget()
+    {
+        if (_host is null) return;
+        _missingTargetReminder.ShowIfNeeded(_enabled, _host.Foreground.TargetProcess,
+            () => _host.Notification.Show("尚未锁定游戏进程，请先在设置中选择目标进程"));
+    }
 
     private void ToggleFromHotkey()
     {
