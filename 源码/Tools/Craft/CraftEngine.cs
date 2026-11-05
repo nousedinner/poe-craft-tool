@@ -484,7 +484,7 @@ public sealed class CraftEngine
         _runMeasurement?.CopyAttempt();
         var item = _coordinates["item"];
         await _environment.Input.MoveToAsync((int)item.X, (int)item.Y, _timing.ItemMovementMs, token);
-        if (!ClipboardHelper.TryClear())
+        if (!ClipboardHelper.TryClear(token))
         {
             if (throwOnClearFailure)
                 throw new InvalidOperationException("无法清空剪贴板，已停止以避免使用旧物品信息");
@@ -498,7 +498,7 @@ public sealed class CraftEngine
         {
             token.ThrowIfCancellationRequested();
             _runMeasurement?.ClipboardRead();
-            var text = ClipboardHelper.GetText();
+            var text = ClipboardHelper.GetText(token);
             if (ClipboardHelper.IsItemText(text))
             {
                 _environment.Log($"[剪贴板] 获取新物品文本成功: {stopwatch.ElapsedMilliseconds}ms, {text.Length} chars");

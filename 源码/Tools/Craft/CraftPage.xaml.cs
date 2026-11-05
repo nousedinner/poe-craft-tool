@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using ShiKe.Host;
 using ShiKe.Services;
+using ShiKe.Presentation;
 
 namespace ShiKe.Tools.Craft;
 
@@ -29,6 +30,7 @@ public partial class CraftPage : UserControl
 
     private readonly ToolHost _host;
     private readonly CraftTool _tool;
+    private readonly LatestPageState<string> _statusPresentation;
     private readonly Dictionary<string, CurrencyCardUi> _cards = [];
     private readonly List<AffixTagUi> _primaryTags = [];
     private readonly List<AffixTagUi> _secondaryTags = [];
@@ -51,6 +53,8 @@ public partial class CraftPage : UserControl
         });
         _host = host;
         _tool = tool;
+        _statusPresentation = new LatestPageState<string>(this,
+            text => CraftStatusText.Text = _tool.IsEnabled ? text : "功能已停用");
         // 在模板首次应用前设置开关，Loaded 仍负责较重的卡片/规则初始化。
         RefreshEnabledPresentation();
         ExaltCheck.IsChecked = tool.UseExalt;
@@ -720,16 +724,21 @@ public partial class CraftPage : UserControl
         var engine = _tool.Engine;
         if (engine is null) return;
 
-        engine.StatusUpdated += s => Dispatcher.BeginInvoke(() =>
+        void OnStatus(CraftStatus status) => PublishStatus(status.Text);
+        engine.StatusUpdated += OnStatus;
+        engine.Stopped += PublishStatus;
+        _statusPresentation.Disposed += () =>
         {
-            CraftStatusText.Text = _tool.IsEnabled ? s.Text : "功能已停用";
-        });
-        engine.Stopped += reason => Dispatcher.BeginInvoke(() =>
-        {
-            CraftStatusText.Text = _tool.IsEnabled ? reason : "功能已停用";
-        });
+            engine.StatusUpdated -= OnStatus;
+            engine.Stopped -= PublishStatus;
+        };
+        PublishStatus(_host.Statuses.Read(_tool.Id).Selected?.Text ?? "就绪");
         // 错误弹窗由 CraftTool 全局订阅（页面未开也弹），这里不重复订阅
     }
+
+    internal void PublishStatus(string text) => _statusPresentation.Publish(text);
+    internal int StatusRenderCount => _statusPresentation.RenderedCount;
+    internal int StatusPostCount => _statusPresentation.PostedCount;
 
     // ── 加载 UI 状态（对齐 _load_state）──
 

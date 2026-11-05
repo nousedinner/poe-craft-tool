@@ -309,6 +309,8 @@ internal static class AppearanceChecks
             UiArchitectureChecks.CheckPages(page, craft, (ClickerPage)clicker.CreatePage(), clicker,
                 (KeyLoopPage)keyLoop.CreatePage(), keyLoop, host.Storage);
             ArchitectureBoundaryChecks.CheckDeclaredCount(window, registry, host);
+            UiPerformanceChecks.CheckPages(window, page, (ClickerPage)clicker.CreatePage(),
+                (KeyLoopPage)keyLoop.CreatePage(), settings);
             window.WindowState = WindowState.Minimized;
             Pump();
             Require(panels.All(panel => !FlowingGradient.IsAnimating(panel)), "最小化后应暂停动画");

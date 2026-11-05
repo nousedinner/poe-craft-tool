@@ -13,6 +13,8 @@ public partial class SettingsPage : UserControl
     private const string StatisticsUrl = "https://open.cancanneed.top/share/poe-craft-tool-5c9767d3";
 
     private readonly SettingsTool _tool;
+    private readonly Func<IReadOnlyList<string>> _scanProcesses;
+    private readonly Func<IReadOnlyList<string>> _scanSounds;
     private readonly Dictionary<string, Button> _hotkeyButtons = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, HotkeyMode> _hotkeyModes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _hotkeyValues = new(StringComparer.OrdinalIgnoreCase);
@@ -20,15 +22,21 @@ public partial class SettingsPage : UserControl
     private bool _capturedMainKey;
     private bool _refreshing;
     private Window? _ownerWindow;
+    private bool _hasActivated;
 
     private sealed record NamedOption(string Label, string Value)
     {
         public override string ToString() => Label;
     }
 
-    public SettingsPage(SettingsTool tool)
+    public SettingsPage(SettingsTool tool) : this(tool, tool.GetRunningProcesses, tool.GetSounds) { }
+
+    internal SettingsPage(SettingsTool tool, Func<IReadOnlyList<string>> scanProcesses,
+        Func<IReadOnlyList<string>> scanSounds)
     {
         _tool = tool;
+        _scanProcesses = scanProcesses;
+        _scanSounds = scanSounds;
         InitializeComponent();
         BuildHotkeyRows();
         RefreshFromTool(refreshLists: true);
@@ -63,7 +71,9 @@ public partial class SettingsPage : UserControl
 
     internal void ActivatePage()
     {
-        RefreshFromTool(refreshLists: true);
+        // 首次创建已填充列表；首次激活只恢复当前值，后续再进入仍按原语义重新扫描。
+        RefreshFromTool(refreshLists: _hasActivated);
+        _hasActivated = true;
         HideResult();
     }
 
@@ -368,7 +378,7 @@ public partial class SettingsPage : UserControl
 
     private void PopulateProcesses(string selected)
     {
-        var values = _tool.GetRunningProcesses().ToList();
+        var values = _scanProcesses().ToList();
         if (!string.IsNullOrWhiteSpace(selected) && !values.Contains(selected, StringComparer.OrdinalIgnoreCase))
             values.Add(selected);
         values.Sort(StringComparer.OrdinalIgnoreCase);
@@ -380,7 +390,7 @@ public partial class SettingsPage : UserControl
 
     private void PopulateSounds(string selected)
     {
-        var values = _tool.GetSounds().ToList();
+        var values = _scanSounds().ToList();
         if (!string.IsNullOrWhiteSpace(selected) && !values.Contains(selected, StringComparer.OrdinalIgnoreCase))
             values.Add(selected);
         values.Sort(StringComparer.OrdinalIgnoreCase);

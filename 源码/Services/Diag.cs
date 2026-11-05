@@ -1,43 +1,25 @@
 using System.Diagnostics;
-using System.IO;
 
 namespace ShiKe.Services;
 
 /// <summary>
-/// 诊断日志（临时，问题定位后移除）。
-/// 写入 data/debug.log + Debug.WriteLine（DebugView 可捕获）。
-/// 线程安全，所有写入用 lock 保护。
+/// 有界批量日志；正常容量压力背压，磁盘写入失败不影响业务。
 /// </summary>
 internal static class Diag
 {
-    private static readonly object Lock = new();
-    private static string? _logPath;
-
-    /// <summary>初始化日志路径（首次调用时创建目录）。</summary>
-    private static string LogPath
-    {
-        get
-        {
-            if (_logPath is null)
-            {
-                var dir = Path.Combine(AppContext.BaseDirectory, "data");
-                Directory.CreateDirectory(dir);
-                _logPath = Path.Combine(dir, "debug.log");
-            }
-            return _logPath;
-        }
-    }
+    private static readonly DiagnosticLogOwner Owner = new(() =>
+        new BufferedDiagnosticLog(Path.Combine(AppContext.BaseDirectory, "data", "debug.log")));
 
     /// <summary>记录诊断日志。时间戳 + 消息。</summary>
     public static void Log(string message)
     {
         var line = $"[{DateTime.Now:HH:mm:ss.fff}] {message}";
         Debug.WriteLine(line);
-        lock (Lock)
+        try
         {
-            try { File.AppendAllText(LogPath, line + Environment.NewLine); }
-            catch { /* 日志写入失败不能影响主逻辑 */ }
+            Owner.WriteLine(line);
         }
+        catch (Exception error) { Debug.WriteLine($"[日志] 无法接收诊断消息：{error.Message}"); }
     }
 
     /// <summary>记录 Win32 API 错误（自动获取 Marshal.GetLastWin32Error）。</summary>
@@ -51,10 +33,62 @@ internal static class Diag
     {
         try
         {
-            var path = LogPath;
-            if (File.Exists(path) && new FileInfo(path).Length > 512 * 1024) // >512KB 清除
-                File.WriteAllText(path, $"[{DateTime.Now}] === 日志已截断 ==={Environment.NewLine}");
+            Owner.ClearOldLog();
         }
-        catch { }
+        catch (Exception error) { Debug.WriteLine($"[日志] 无法清理旧日志：{error.Message}"); }
+    }
+
+    /// <summary>不创建日志。成功仅表示此前队列已处理且最近写入正常；历史失败另有计数。</summary>
+    internal static bool Flush(TimeSpan timeout) => Owner.Flush(timeout);
+
+    /// <summary>最终退出调用，不用于业务或更新放行；晚到消息不复活线程。</summary>
+    internal static bool Shutdown(TimeSpan timeout) => Owner.Shutdown(timeout);
+
+    internal static DiagnosticLogSnapshot? Snapshot() => Owner.Snapshot();
+}
+
+/// <summary>惰性生命周期可独立验证；助手/早退只调用关闭不会创建文件或工作线程。</summary>
+internal sealed class DiagnosticLogOwner(Func<BufferedDiagnosticLog> create)
+{
+    private readonly object _gate = new();
+    private BufferedDiagnosticLog? _log;
+    private bool _shutdown;
+
+    private BufferedDiagnosticLog? GetLog()
+    {
+        lock (_gate)
+        {
+            if (_shutdown) return _log;
+            return _log ??= create();
+        }
+    }
+
+    internal long WriteLine(string line)
+    {
+        var log = GetLog();
+        if (log is not null) return log.WriteLine(line);
+        Debug.WriteLine("[日志] 最终关闭后的消息仅保留在调试输出。");
+        return 0;
+    }
+
+    internal void ClearOldLog() => GetLog()?.ClearOldLog();
+
+    internal bool Flush(TimeSpan timeout)
+    {
+        BufferedDiagnosticLog? log;
+        lock (_gate) log = _log;
+        return log?.Flush(timeout) ?? true;
+    }
+
+    internal bool Shutdown(TimeSpan timeout)
+    {
+        BufferedDiagnosticLog? log;
+        lock (_gate) { _shutdown = true; log = _log; }
+        return log?.Shutdown(timeout) ?? true;
+    }
+
+    internal DiagnosticLogSnapshot? Snapshot()
+    {
+        lock (_gate) return _log?.Snapshot();
     }
 }

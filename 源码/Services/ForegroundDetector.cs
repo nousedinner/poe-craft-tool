@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace ShiKe.Services;
 
@@ -9,10 +8,34 @@ namespace ShiKe.Services;
 /// 2. 运行中循环：每次操作前检查，非目标进程时暂停
 /// 3. 设置页：进程下拉框 + 刷新
 /// </summary>
-public sealed class ForegroundDetector
+public sealed class ForegroundDetector : IDisposable
 {
+    private readonly object _gate = new();
+    private readonly IForegroundNativeApi _native;
+    private ProcessIdentity? _identity;
+    private string? _targetProcess;
+    private bool _disposed;
+
+    private sealed record ProcessIdentity(uint ProcessId, string Name, IForegroundProcessHandle Handle);
+
+    public ForegroundDetector() : this(ForegroundNativeApi.Instance) { }
+
+    internal ForegroundDetector(IForegroundNativeApi native) => _native = native;
+
     /// <summary>目标进程名（带 .exe，如 "PathOfExile.exe"）。空时拒绝启动自动操作。</summary>
-    public string? TargetProcess { get; set; }
+    public string? TargetProcess
+    {
+        get { lock (_gate) return _targetProcess; }
+        set
+        {
+            lock (_gate)
+            {
+                if (string.Equals(_targetProcess, value, StringComparison.Ordinal)) return;
+                ClearIdentity();
+                _targetProcess = value;
+            }
+        }
+    }
 
     /// <summary>自动检测的 5 个 POE 进程变体（方案 §8）。</summary>
     public static readonly string[] PoeVariants =
@@ -21,116 +44,122 @@ public sealed class ForegroundDetector
         "PathOfExileSteam.exe", "PathOfExile_KG.exe"
     ];
 
-    [DllImport("user32.dll")] private static extern nint GetForegroundWindow();
-    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern nint OpenProcess(uint access, bool inherit, uint pid);
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool QueryFullProcessImageNameW(nint hProcess, uint flags, char[] buffer, ref uint size);
-    [DllImport("kernel32.dll")] private static extern bool CloseHandle(nint handle);
-
-    private const uint ProcessQueryLimitedInformation = 0x1000;
-
     /// <summary>前台窗口所属进程名（含 .exe）。获取失败返回 null。</summary>
     public static string? GetForegroundProcessName()
     {
+        using var detector = new ForegroundDetector();
+        lock (detector._gate) return detector.ReadForegroundName();
+    }
+
+    // 调用方持有 _gate。只缓存由存活进程句柄绑定的身份；每次仍读取并复核当前 HWND/PID。
+    private string? ReadForegroundName()
+    {
         try
         {
-            var hwnd = GetForegroundWindow();
+            var hwnd = _native.GetForegroundWindow();
             if (hwnd == 0)
             {
+                ClearIdentity();
                 Diag.Log("[前台] GetForegroundWindow 返回 0（无前台窗口）");
                 return null;
             }
 
-            GetWindowThreadProcessId(hwnd, out var pid);
+            var pid = _native.GetWindowProcessId(hwnd);
             if (pid == 0)
             {
+                ClearIdentity();
                 Diag.Log($"[前台] GetWindowThreadProcessId 返回 pid=0, hwnd=0x{hwnd:X}");
                 return null;
             }
 
-            // ── 方法1：P/Invoke QueryFullProcessImageNameW ──
-            var result = TryGetImageNameViaWin32(pid);
-            if (result is not null) return result;
-
-            // ── 方法2：托管 API 兜底（Process.GetProcessById）──
-            result = TryGetImageNameViaManaged(pid);
-            if (result is not null)
+            if (_identity is { } current && current.ProcessId == pid)
             {
-                Diag.Log($"[前台] Win32 失败，托管 API 成功: pid={pid}, name={result}");
-                return result;
+                // PID 可复用，但一个仍未退出的旧进程不能被同 PID 的新进程替代。
+                // 退出或等待失败本次直接拒绝，绝不借旧名称或降级路径继续放行。
+                if (!StillForeground(hwnd, pid) || !current.Handle.IsAlive())
+                {
+                    ClearIdentity();
+                    return null;
+                }
+                return current.Name;
             }
 
-            Diag.Log($"[前台] 两种方法均失败, pid={pid}");
-            return null;
+            ClearIdentity();
+            var process = _native.OpenProcess(pid, verifyLifetime: true);
+            if (process is not null)
+            {
+                try
+                {
+                    var name = process.ReadImageName();
+                    if (!process.IsAlive()) return null;
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        // 查名称期间可能切窗或发生 HWND 复用；一致后才接纳缓存并返回身份。
+                        if (!StillForeground(hwnd, pid) || !process.IsAlive()) return null;
+                        _identity = new ProcessIdentity(pid, name, process);
+                        process = null; // 所有权转交缓存，之后由替换/目标变更/Dispose 释放。
+                        return name;
+                    }
+                }
+                finally { process?.Dispose(); }
+            }
+
+            // SYNCHRONIZE 权限不足或名称查询失败时保留旧查询路径，但绝不缓存该结果。
+            using var transient = _native.OpenProcess(pid, verifyLifetime: false);
+            var result = transient?.ReadImageName();
+            if (string.IsNullOrEmpty(result))
+            {
+                result = _native.GetManagedProcessName(pid);
+                if (result is not null)
+                    Diag.Log($"[前台] Win32 失败，托管 API 成功: pid={pid}, name={result}");
+            }
+            if (string.IsNullOrEmpty(result))
+            {
+                Diag.Log($"[前台] 两种方法均失败, pid={pid}");
+                return null;
+            }
+            return StillForeground(hwnd, pid) ? result : null;
         }
         catch (Exception ex)
         {
+            ClearIdentity();
             Diag.Log($"[前台] GetForegroundProcessName 异常: {ex.Message}");
             return null;
         }
     }
 
-    /// <summary>方法1：Win32 P/Invoke（对齐 Python ctypes）。</summary>
-    private static string? TryGetImageNameViaWin32(uint pid)
+    private bool StillForeground(nint window, uint processId)
     {
-        var handle = OpenProcess(ProcessQueryLimitedInformation, false, pid);
-        if (handle == 0)
-        {
-            var err = Marshal.GetLastWin32Error();
-            Diag.Win32Error($"OpenProcess(pid={pid})", err);
-            return null;
-        }
-
-        try
-        {
-            var buffer = new char[260];
-            var size = (uint)buffer.Length;
-            if (QueryFullProcessImageNameW(handle, 0, buffer, ref size))
-            {
-                var name = Path.GetFileName(new string(buffer, 0, (int)size));
-                return name;
-            }
-            else
-            {
-                var err = Marshal.GetLastWin32Error();
-                Diag.Win32Error($"QueryFullProcessImageNameW(pid={pid})", err);
-                return null;
-            }
-        }
-        finally
-        {
-            CloseHandle(handle);
-        }
-    }
-
-    /// <summary>方法2：托管 API 兜底（不走 P/Invoke，权限模型不同）。</summary>
-    private static string? TryGetImageNameViaManaged(uint pid)
-    {
-        try
-        {
-            using var proc = Process.GetProcessById((int)pid);
-            var name = proc.ProcessName;
-            // Process.ProcessName 不含 .exe 后缀，补上以对齐 Win32 版
-            if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                name += ".exe";
-            return name;
-        }
-        catch (Exception ex)
-        {
-            Diag.Log($"[前台] 托管 API 失败: pid={pid}, {ex.GetType().Name}: {ex.Message}");
-            return null;
-        }
+        var latestWindow = _native.GetForegroundWindow();
+        return latestWindow == window && latestWindow != 0 && _native.GetWindowProcessId(latestWindow) == processId;
     }
 
     /// <summary>目标进程是否在前台。TargetProcess 为空 → False（危险输入采用 fail-closed）。</summary>
     public bool IsTargetForeground()
     {
-        if (string.IsNullOrWhiteSpace(TargetProcess))
-            return false;
-        var current = GetForegroundProcessName();
-        if (current is null)
-            return false;
-        return string.Equals(current, TargetProcess, StringComparison.OrdinalIgnoreCase);
+        lock (_gate)
+        {
+            if (_disposed || string.IsNullOrWhiteSpace(_targetProcess)) return false;
+            var current = ReadForegroundName();
+            return current is not null && string.Equals(current, _targetProcess, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private void ClearIdentity()
+    {
+        var previous = _identity;
+        _identity = null;
+        previous?.Handle.Dispose();
+    }
+
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            ClearIdentity();
+        }
     }
 
     /// <summary>枚举运行中的进程名（含 .exe，去重排序）。设置页下拉框用。</summary>

@@ -3,18 +3,21 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using ShiKe.Services;
+using ShiKe.Presentation;
 
 namespace ShiKe.Tools.Clicker;
 
 public partial class ClickerPage : UserControl
 {
     private readonly ClickerTool _tool;
+    private readonly LatestPageState<ClickerStatus> _statusPresentation;
     private bool _loading = true;
 
     public ClickerPage(ClickerTool tool)
     {
         _tool = tool;
         InitializeComponent();
+        _statusPresentation = new LatestPageState<ClickerStatus>(this, ApplyStatus);
 
         EnableToolSwitch.IsChecked = tool.IsEnabled;
         LeftButtonRadio.IsChecked = tool.MouseButton == ClickerMouseButton.Left;
@@ -22,14 +25,21 @@ public partial class ClickerPage : UserControl
         IntervalSlider.Value = tool.IntervalMs;
         IntervalValue.Text = $"{tool.IntervalMs} ms";
         RefreshSettingsPresentation();
-        ApplyStatus(new ClickerStatus(tool.IsRunning, tool.ClickCount,
-            tool.IsRunning ? "连点中..." : "连点器就绪"));
+        var initialStatus = new ClickerStatus(tool.IsRunning, tool.ClickCount,
+            tool.IsRunning ? "连点中..." : "连点器就绪");
+        ApplyStatus(initialStatus);
+        PublishStatus(initialStatus);
         _loading = false;
         RefreshEnabledPresentation();
         CollectSettingsFromUi(); // 仅同步控件已有的范围约束，不在首次显示时保存。
 
-        tool.StatusUpdated += status => Dispatcher.BeginInvoke(() => ApplyStatus(status));
+        tool.StatusUpdated += PublishStatus;
+        _statusPresentation.Disposed += () => tool.StatusUpdated -= PublishStatus;
     }
+
+    internal void PublishStatus(ClickerStatus status) => _statusPresentation.Publish(status);
+    internal int StatusRenderCount => _statusPresentation.RenderedCount;
+    internal int StatusPostCount => _statusPresentation.PostedCount;
 
     public void CollectSettingsFromUi()
     {

@@ -544,6 +544,7 @@ public partial class App : Application
                 }
             }
             Cleanup("热键", () => _host?.Hotkeys.UnregisterAll());
+            Cleanup("前台检测", () => _host?.Foreground.Dispose());
             Cleanup("网络", () => _host?.Network.Dispose());
             Cleanup("音效", () => _host?.Sound.Dispose());
             Cleanup("通知", () => _host?.Notification.Dispose());
@@ -552,6 +553,10 @@ public partial class App : Application
             {
                 if (_ownsSingleInstanceMutex)
                 {
+                    // 正常积压先落盘再允许同目录新实例启动，避免其启动截断与旧批次交错。
+                    // 慢磁盘不得改变业务清理/更新许可；最终入口仍会限时关闭写入器。
+                    if (!Diag.Flush(TimeSpan.FromMilliseconds(250)))
+                        System.Diagnostics.Debug.WriteLine("[日志] 释放单实例锁前未能完成刷新。");
                     try { _singleInstanceMutex?.ReleaseMutex(); }
                     finally { _ownsSingleInstanceMutex = false; }
                 }

@@ -9,6 +9,17 @@ internal static class Bootstrapper
     [STAThread]
     public static int Main(string[] args)
     {
+        try { return Run(args); }
+        finally
+        {
+            // 停止所有应用工作后再刷新日志。未使用日志的助手/拒绝入口不创建日志服务。
+            if (!Diag.Shutdown(TimeSpan.FromMilliseconds(1500)))
+                System.Diagnostics.Debug.WriteLine("[日志] 退出刷新未完成；不延长程序退出或改变更新结果。");
+        }
+    }
+
+    private static int Run(string[] args)
+    {
         UpdateStartup? updateStartup;
         try
         {

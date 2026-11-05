@@ -5,6 +5,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using ShiKe.Services;
+using ShiKe.Presentation;
 
 namespace ShiKe.Tools.KeyLoop;
 
@@ -20,6 +21,7 @@ public partial class KeyLoopPage : UserControl
     }
 
     private readonly KeyLoopTool _tool;
+    private readonly LatestPageState<KeyLoopStatus> _statusPresentation;
     private readonly List<SlotRow> _rows = [];
     private int? _captureIndex;
     private bool _allSlotsShown;
@@ -29,16 +31,24 @@ public partial class KeyLoopPage : UserControl
     {
         _tool = tool;
         InitializeComponent();
+        _statusPresentation = new LatestPageState<KeyLoopStatus>(this, ApplyStatus);
         EnableToolSwitch.IsChecked = tool.IsEnabled;
         RefreshSettingsPresentation();
         BuildRows();
-        ApplyStatus(new KeyLoopStatus(tool.IsRunning, Enumerable.Repeat(0, KeyLoopEngine.MaxSlots).ToArray(),
-            tool.IsRunning ? "按键循环运行中..." : "按键循环就绪"));
+        var initialStatus = new KeyLoopStatus(tool.IsRunning, Enumerable.Repeat(0, KeyLoopEngine.MaxSlots).ToArray(),
+            tool.IsRunning ? "按键循环运行中..." : "按键循环就绪");
+        ApplyStatus(initialStatus);
+        PublishStatus(initialStatus);
         _loading = false;
         RefreshEnabledPresentation();
         CollectSettingsFromUi(); // 使初始显示的延时格式与后续运行配置一致，不提前落盘。
-        tool.StatusUpdated += status => Dispatcher.BeginInvoke(() => ApplyStatus(status));
+        tool.StatusUpdated += PublishStatus;
+        _statusPresentation.Disposed += () => tool.StatusUpdated -= PublishStatus;
     }
+
+    internal void PublishStatus(KeyLoopStatus status) => _statusPresentation.Publish(status);
+    internal int StatusRenderCount => _statusPresentation.RenderedCount;
+    internal int StatusPostCount => _statusPresentation.PostedCount;
 
     private void BuildRows()
     {

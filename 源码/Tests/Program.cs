@@ -16,6 +16,27 @@ Console.OutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false
 
 var tests = new (string Name, Action Run)[]
 {
+    ("预先取消不访问剪贴板", ClipboardPerformanceChecks.CancelledRequestsDoNotOpenClipboard),
+    ("剪贴板优化保留重试预算与结果", ClipboardPerformanceChecks.RetryBudgetAndResultsStayUnchanged),
+    ("剪贴板取消和异常均可靠关闭", ClipboardPerformanceChecks.CancellationAndFailureAlwaysCloseOpenedClipboard),
+    ("剪贴板重试等待可取消且不再尝试", ClipboardPerformanceChecks.CancellationInterruptsWaitWithoutAnotherAttempt),
+    ("隐藏状态不投递且可见状态合并为最新值", UiPerformanceChecks.DispatcherCoalescesLatestState),
+    ("前台身份缓存仍逐次复核当前窗口", ForegroundPerformanceChecks.CachedIdentityStillChecksEveryForegroundSnapshot),
+    ("进程退出复用及等待失败不沿用旧身份", ForegroundPerformanceChecks.ReusedPidAndFailedWaitNeverReuseOldPermission),
+    ("前台身份查询期间切换窗口即拒绝", ForegroundPerformanceChecks.QueryAndFinalSnapshotRacesAreRejected),
+    ("权限回退查询不得建立不可靠缓存", ForegroundPerformanceChecks.PermissionFallbackNeverCreatesAnIdentityCache),
+    ("前台窗口缺失查询失败或目标变更清理身份", ForegroundPerformanceChecks.MissingWindowQueryFailureAndTargetChangesClearIdentity),
+    ("前台检测释放与查询并发保持句柄有效", ForegroundPerformanceChecks.ConcurrentDisposeCannotCloseAHandleDuringItsQuery),
+    ("并发目标变更使已完成身份缓存失效", ForegroundPerformanceChecks.ConcurrentTargetChangeInvalidatesTheCompletedIdentity),
+    ("批量日志保留并发顺序UTF8且释放文件", DiagnosticPerformanceChecks.ConcurrentBatchesPreserveOrderUtf8AndReleaseFile),
+    ("日志容量背压不丢行且停止能唤醒等待者", DiagnosticPerformanceChecks.CapacityWaitsWithoutLossAndShutdownWakesProducer),
+    ("日志截断阈值和前后顺序保持", DiagnosticPerformanceChecks.ClearCommandUsesOriginalThresholdAndOrderedBarrier),
+    ("日志文件失败计数且后续写入可恢复", DiagnosticPerformanceChecks.FileFailureIsCountedAndLaterWritesRecover),
+    ("日志只读占用导致截断失败后可恢复", DiagnosticPerformanceChecks.ClearFailureFromLockOrReadOnlyCanRecover),
+    ("日志关闭排空且不重新启动", DiagnosticPerformanceChecks.ShutdownDrainsAndNeverRestarts),
+    ("日志刷新超时不丢后续队列", DiagnosticPerformanceChecks.FlushTimeoutRetainsNormalQueuedMessages),
+    ("未使用日志时关闭不创建文件或线程", DiagnosticPerformanceChecks.UnusedOwnerDoesNotCreateWorkerOrFiles),
+    ("日志单生产者突发保留全部消息", DiagnosticPerformanceChecks.SingleProducerBurstPreservesAllMessages),
     ("业务核心独立于桌面且版本身份保持", ArchitectureBoundaryChecks.CoreIsIndependentOfDesktop),
     ("新工具自动接入热键设置与失败回滚", ToolCapabilityChecks.RegisteredToolJoinsHotkeySettingsAndRollback),
     ("新工具运行与关闭完成参与设置和更新保护", ToolCapabilityChecks.RegisteredRuntimeProtectsSettingsAndUpdateExit),
@@ -262,6 +283,11 @@ foreach (var (name, run) in tests)
     }
 }
 
+if (!Diag.Shutdown(TimeSpan.FromSeconds(2)))
+{
+    Console.Error.WriteLine("FAIL 内部用例日志退出刷新未完成");
+    return 2;
+}
 Console.WriteLine($"RESULT total={tests.Length}, passed={tests.Length - failed}, failed={failed}");
 return failed == 0 ? 0 : 1;
 
