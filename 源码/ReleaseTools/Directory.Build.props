@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)..\..\bin\Release\net10.0-windows\发布工具\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\..\bin\Release\net10.0-windows\发布工具缓存\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

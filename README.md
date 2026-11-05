@@ -8,7 +8,9 @@
 
 启动后先检查「设置」中的目标游戏进程，再启用需要的工具。游戏使用管理员权限时，拾刻也应使用相同权限；窗口标题会显示本次运行的实际权限状态。
 
-发现新版时，程序会提示并打开下载页。退出旧版后更新程序和包内音效，**保留原来的整个 `data` 目录和自定义音效**，不要用新包的 `data` 覆盖个人配置。
+启动发现新版后保持强制更新：提示后退出，不能继续使用旧版主页面。支持新式签名清单时，程序校验 ZIP 后由独立临时助手按文件清单更新，成功启动并确认新版后才启用工具；失败恢复本次变更并退出。旧式清单仍打开固定 ZIP 下载入口后退出。
+
+日常更新默认只替换变化的主 EXE；文件清单也可明确更新根目录 DLL 和内置音频。未变化文件跳过，未列文件不写入；既有资源必须匹配可信旧版哈希，用户改过的资源发生冲突时停止整批更新。**整个 `data` 目录、配置、规则、坐标和个人预设不进入更新目标**。首次从没有自动更新能力的旧版过渡，仍需手动替换一次主 EXE，保留原 data 和自定义音效。
 
 ## 使用
 
@@ -73,7 +75,7 @@ CHANGELOG.md                版本变化
 
 正式版内部固定采用稳健组合时序，不提供实验档位选择；页面布局、文字和窗口标题延续v1.0.45。操作延迟仍用于点击后的首次同步等待，原配置保持。Mode2采用持续Shift和Alt配对通货，三个洗装模式统一Ctrl+C高级复制；空复制会重试当前物品，未确认变化不会跳过判定或追加通货。
 
-每次停止后，后台将运行计数与最近物品状态保存到`data/craft-runs/`，用于故障排查，不增加页面控件或提示。历史速度实验版本及报告不由正式构建修改。正常更新仍是联网检测版本、提示并打开下载链接。
+每次停止后，后台将运行计数与最近物品状态保存到`data/craft-runs/`，用于故障排查，不增加页面控件或提示。历史速度实验版本及报告不由正式构建修改。自动更新复用原启动版本检查，不增加常驻轮询服务。
 
 开发需要 Windows、Git 和 **[.NET 10 SDK](https://dotnet.microsoft.com/zh-cn/download/dotnet/10.0)**。在 Windows PowerShell 中进入仓库根目录：
 
@@ -95,6 +97,25 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\源码\scripts\Build-
 输出统一在 `bin/Release/net10.0-windows/`。分享包仅包含 EXE、五个内置音效和一个内置预设；个人配置和自定义资源不进入包。已有日常程序运行时，发布入口会要求先退出。
 
 已验证的 EXE 可用同一入口的 `-PackageOnly` 参数重新整理分享包。`Run-StartupChecks.ps1` 用于发布后的隔离启动与关闭验证，`Measure-Startup.ps1` 是它使用的测量脚本。
+
+### 签名发布与文件更新
+
+继续发布完整 ZIP。固定 `version.json` 保留旧客户端的 `latest/url`；新客户端验证其中 `autoUpdate` 的签名载荷，使用 `/download/releases/<版本>/shike-win-x64.zip` 不可变地址。发布包和文件清单均有大小及 SHA-256 校验；签名采用 RSA-PSS/SHA-256，公钥随客户端交付，私钥只在发布环境保存。
+
+维护者首次用 `Initialize-ReleaseKey.ps1 -KeyPath <仓库外路径>` 建立当前 Windows 用户 DPAPI 保护的发布私钥，并将配套公钥固定在 `ReleaseTrust.cs`。日常发布不得重新生成密钥；私钥不进 Git、ZIP、版本清单或 VPS。DPAPI 文件不能直接在另一台机器解密，需要妥善保管原发布用户环境。
+
+```powershell
+.\源码\scripts\Run-ReleaseChecks.ps1
+.\源码\scripts\Run-UpdateProcessChecks.ps1
+.\源码\scripts\Prepare-UpdateRelease.ps1 -ZipPath <已验证ZIP> -ExePath <同一EXE> -KeyPath <发布私钥路径> -OutputDirectory <本次发布目录>
+.\源码\scripts\Publish-UpdateRelease.ps1 -ReleaseDirectory <本次发布目录>
+```
+
+最后一条默认只校验本地材料并输出计划，不读取凭据或访问服务器。真正上线需显式 `-Execute`、`-CloudflareZoneId` 以及指定环境变量中的最小权限清缓存令牌；脚本先上传不可变版本包、公网核验，再切固定 ZIP 别名、清缓存，最后发布版本清单。长缓存、校验失败或无法确认恢复结果会阻断发布并保留事务记录。显式发布回退使用 `-Rollback -Transaction <已记录事务标识> -Execute`，旧包和旧清单须可验证。
+
+`Prepare-UpdateRelease.ps1` 默认 `-Mode exe-only`；`files` 模式需 `-ManagedFiles` 指定 JSON 数组，条目为 `path/allowCreate`，还可用 `-BasePackages` 或 `-BaseManifests` 指定官方旧包／签名清单的路径数组文件。工具据此生成可信旧文件哈希列表，不把玩家当前文件猜成可覆盖的官方资源。首版目标白名单为主 EXE、根目录 DLL、`sounds/` 单层音频；不支持删除文件，不允许配置目录。更新器协议、最低适用版本、.NET 运行时、平台和配置兼容标识不符时拒绝自动替换。
+
+客户端使用 `.shike-updates/` 保存隔离会话、恢复材料和安装目录的版本记录。中断事务会阻止普通启动混合文件；需要人工恢复时，关闭所有目标实例后使用该会话原 `runner.exe --recover-update <session.json绝对路径> <会话token>`，恢复仍不绕过强制更新。正常异常会自动整批恢复；不承诺任意断电情况下都能自动恢复。更新成功后的已完成会话会在后续启动中安全清理。
 
 根目录只收录项目入口、Git 规则与 `源码/`。新增工具、源码和资源放在 `源码/` 下；截图、开发文档、配置、日志和构建产物留在本地。克隆后执行上面的 `core.hooksPath` 设置即可启用检查，提交和推送时会列出超出范围的文件。新功能确实需要扩大公开目录或文件类型时，同时更新 `.gitignore` 和 `.githooks/check-files`。
 

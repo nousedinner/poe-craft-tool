@@ -63,6 +63,7 @@ public sealed class CraftEngine
         CancellationTokenSource Cancellation);
 
     public bool IsRunning { get { lock (this) return _running; } }
+    internal bool ShutdownCompleted => _thread.IsCompleted;
     public int UseCount { get; private set; }
     public int MatchCount { get; private set; }
 

@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)..\..\..\bin\Release\net10.0-windows\更新进程验证构建\$(ProbeVersion)\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\..\..\bin\Release\net10.0-windows\更新进程验证缓存\$(ProbeVersion)\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

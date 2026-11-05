@@ -12,14 +12,14 @@ public sealed class ToolHost
     private readonly ToolRegistry _registry;
     private CancellationTokenSource _emergencyCts = new();
 
-    public ToolHost(ToolRegistry registry)
+    public ToolHost(ToolRegistry registry, StorageService? storage = null)
     {
         _registry = registry;
         Foreground = new ForegroundDetector();
         Hotkeys = new HotkeyManager(Foreground.IsTargetForeground);
         // InputSimulator 动态取当前 EmergencyCts（审查 D：Reset 后不再持有旧 CTS）+ 前台检测（审查 B）
         Input = new InputSimulator(() => _emergencyCts, Foreground);
-        Storage = new StorageService();
+        Storage = storage ?? new StorageService();
         Notification = new NotificationService();
         Hotkeys.RuntimeErrorOccurred += Notification.ShowError;
         Sound = new SoundService();
@@ -28,6 +28,7 @@ public sealed class ToolHost
     }
 
     public CancellationTokenSource EmergencyCts => _emergencyCts;
+    internal bool AutomationSuspendedForUpdate { get; set; }
 
     /// <summary>宿主级坐标录制热键；由 SettingsTool 读写 host.hotkeys.coordinate。</summary>
     public string CoordinateHotkey { get; set; } = SettingsDefaults.HotkeySetCoord;
@@ -88,6 +89,7 @@ public sealed class ToolHost
     /// </summary>
     public IReadOnlyList<HotkeyRequest> BuildHotkeyRequests()
     {
+        if (AutomationSuspendedForUpdate) return [];
         var enabledTools = RegisteredTools
             .Where(tool => tool is not IEnableableTool enableable || enableable.IsEnabled)
             .ToList();

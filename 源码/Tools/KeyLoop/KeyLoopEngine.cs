@@ -78,6 +78,8 @@ public sealed class KeyLoopEngine
         get { lock (_gate) return _running; }
     }
 
+    internal bool ShutdownCompleted => _slots.All(slot => slot.Worker.IsCompleted);
+
     public IReadOnlyList<int> PressCounts
     {
         get { lock (_gate) return _slots.Select(slot => slot.Count).ToArray(); }

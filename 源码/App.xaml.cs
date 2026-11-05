@@ -8,6 +8,7 @@ using ShiKe.Tools.Craft;
 using ShiKe.Tools.Hideout;
 using ShiKe.Tools.KeyLoop;
 using ShiKe.Tools.Settings;
+using ShiKe.Services.Updates;
 
 namespace ShiKe;
 
@@ -27,14 +28,23 @@ public partial class App : Application
     private readonly StartupPerformance _startup;
     private readonly bool _startupProfile;
     private readonly bool _startupLifecycleCheck;
+    private readonly UpdateStartup? _updateStartup;
+    private UpdateSession? _installUpdate;
+    private bool _updatePrepared;
+    private bool _updateHealthConfirmed;
+    private CraftTool? _craftTool;
+    private ClickerTool? _clickerTool;
+    private KeyLoopTool? _keyLoopTool;
+    private HideoutTool? _hideoutTool;
 
     public App() : this(new StartupPerformance(), false) { }
 
-    internal App(StartupPerformance startup, bool startupProfile, bool startupLifecycleCheck = false)
+    internal App(StartupPerformance startup, bool startupProfile, bool startupLifecycleCheck = false, UpdateStartup? updateStartup = null)
     {
         _startup = startup;
         _startupProfile = startupProfile;
         _startupLifecycleCheck = startupLifecycleCheck;
+        _updateStartup = updateStartup;
     }
 
     protected override void OnStartup(StartupEventArgs e)
@@ -44,6 +54,12 @@ public partial class App : Application
         {
             if (args.Exception is not StorageException error) return;
             args.Handled = true;
+            if (_updateStartup is { IsRollback: false } && !_updateHealthConfirmed)
+            {
+                Diag.Log($"[更新启动] 只读确认失败：{error}");
+                Shutdown(1);
+                return;
+            }
             NotificationService.ShowConfigurationError(error.Message, _mainWindow);
             if (_mainWindow is null) RequestShutdown();
         };
@@ -58,6 +74,20 @@ public partial class App : Application
             return;
         }
 
+        // 前置检查与单实例认领之间可能经历旧程序退出；取得锁后必须再确认没有更新事务。
+        // 这只是文件更新门禁，不重复网络版本检查，也不创建任何工具/输入服务。
+        if (!_startupProfile && _updateStartup is null)
+        {
+            try { UpdateReadiness.EnsureOrdinaryStartupAllowed(Environment.ProcessPath!); }
+            catch (Exception error)
+            {
+                Diag.Log($"[更新启动门禁] 拒绝初始化宿主：{error}");
+                ThemedMessageBox.Show(error.Message, "拾刻更新", MessageBoxButton.OK, MessageBoxImage.Information);
+                Shutdown(1);
+                return;
+            }
+        }
+
         Diag.ClearOldLog();
         Diag.Log("=== 拾刻启动 ===");
         void MarkStartup(string stage) => _startup.Mark(stage);
@@ -69,6 +99,10 @@ public partial class App : Application
         var clickerTool = new ClickerTool();
         var keyLoopTool = new KeyLoopTool();
         var hideoutTool = new HideoutTool();
+        _craftTool = craftTool;
+        _clickerTool = clickerTool;
+        _keyLoopTool = keyLoopTool;
+        _hideoutTool = hideoutTool;
         _settingsTool = new SettingsTool(craftTool, clickerTool, keyLoopTool, hideoutTool);
         registry.Register(craftTool);
         registry.Register(clickerTool);
@@ -79,7 +113,9 @@ public partial class App : Application
 
         try
         {
-            _host = new ToolHost(registry);
+            var validation = _updateStartup is { IsRollback: false };
+            var storage = new StorageService { ReadOnlyForUpdateValidation = validation };
+            _host = new ToolHost(registry, storage) { AutomationSuspendedForUpdate = validation };
             MarkStartup("公共服务创建完成");
 
             // 读取失败须中止启动，不能把未完整加载的默认值在退出时写回。
@@ -94,13 +130,15 @@ public partial class App : Application
         }
         catch (StorageException error)
         {
-            NotificationService.ShowConfigurationError(error.Message);
+            if (_updateStartup is null) NotificationService.ShowConfigurationError(error.Message);
+            else Diag.Log($"[更新启动] 配置加载失败：{error}");
             Shutdown(1);
             return;
         }
         MarkStartup("工具初始化与设置加载完成");
 
         _mainWindow = new MainWindow(registry, _host);
+        if (_updateStartup is { IsRollback: false }) _mainWindow.IsEnabled = false;
         _mainWindow.ContentRendered += OnMainWindowFirstRender;
         if (_startupProfile) _mainWindow.ShowActivated = false;
         MainWindow = _mainWindow;
@@ -125,7 +163,7 @@ public partial class App : Application
         MarkStartup("Show 返回");
 
         // 热键统一注册（需要窗口句柄）
-        if (!_startupProfile)
+        if (!_startupProfile && _updateStartup is null)
         {
             _host.Hotkeys.AttachToWindow(_mainWindow);
             RegisterHotkeys();
@@ -135,7 +173,7 @@ public partial class App : Application
 
         // 启动 0.5s 后自动检测 POE 进程（Python QTimer.singleShot(500)）
         // 统一观察启动后台任务；所有请求和延迟都服从应用退出信号。
-        if (!_startupProfile)
+        if (!_startupProfile && _updateStartup is null)
         {
             var cancellationToken = _backgroundCts.Token;
             // HttpClient 的首个请求可能同步加载代理/网络组件，不能占用首帧的 UI 线程。
@@ -148,12 +186,40 @@ public partial class App : Application
         if (!_mainWindow!.IsVisible) return;
         _mainWindow!.ContentRendered -= OnMainWindowFirstRender;
         _startup.Mark("主窗口首帧完成");
-        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ContextIdle, new Action(() =>
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ContextIdle, new Action(async () =>
         {
             if (_isShuttingDown) return;
             EnsureTray();
             _startup.Mark("首帧后消息队列空闲");
             _startup.WriteLog();
+            if (_updateStartup is { IsRollback: false })
+            {
+                try
+                {
+                    await _updateStartup.MarkHealthyAsync(_backgroundCts.Token);
+                    _updateHealthConfirmed = true;
+                    if (_isShuttingDown) return;
+                    _host!.Storage.ReadOnlyForUpdateValidation = false;
+                    _host.AutomationSuspendedForUpdate = false;
+                    _mainWindow.IsEnabled = true;
+                    _host.Hotkeys.AttachToWindow(_mainWindow);
+                    RegisterHotkeys();
+                    var token = _backgroundCts.Token;
+                    _ = Task.Run(() => RunBackgroundTasksAsync(token));
+                }
+                catch (Exception error)
+                {
+                    Diag.Log($"[更新启动] 健康确认失败：{error}");
+                    Shutdown(1);
+                }
+                return;
+            }
+            if (!_startupProfile && _updateStartup is null)
+                _ = Task.Run(() =>
+                {
+                    try { UpdateBootstrap.CleanupCompleted(Environment.ProcessPath!); }
+                    catch (Exception error) { Diag.Log($"[更新] 延迟清理失败：{error.Message}"); }
+                });
             if (!_startupProfile) return;
             _mainWindow.Close(); // 与用户 X 共用真正的关闭路径，不直接调用 Shutdown 代替验证。
         }));
@@ -285,7 +351,7 @@ public partial class App : Application
         var ver = await _host.Network.CheckVersionAsync(cancellationToken);
         if (ver is not null)
         {
-            await DispatchWhileActiveAsync(() => ShowUpdateDialog(ver), cancellationToken);
+            await Dispatcher.InvokeAsync(() => ShowUpdateDialogAsync(ver, cancellationToken)).Task.Unwrap();
             return; // 不再执行签到/广告（Python 同）
         }
 
@@ -299,14 +365,79 @@ public partial class App : Application
         await DispatchWhileActiveAsync(() => _mainWindow.ApplyAds(ads), cancellationToken);
     }
 
-    private void ShowUpdateDialog(VersionCheckResult ver)
+    private async Task ShowUpdateDialogAsync(VersionCheckResult ver, CancellationToken cancellationToken)
     {
-        ThemedMessageBox.Show($"检测到新版本，请下载更新后使用。\n\n最新版本: {ver.Latest}",
-            "发现新版本", MessageBoxButton.OK, MessageBoxImage.Warning);
-        if (!BrowserLauncher.TryOpen(ver.DownloadUrl, out var error))
-            ThemedMessageBox.Show(_mainWindow!, $"{error}\n\n请手动访问下载地址：\n{ver.DownloadUrl}",
-                "无法打开下载页面", MessageBoxButton.OK, MessageBoxImage.Warning);
-        RequestShutdown();
+        if (_isShuttingDown || cancellationToken.IsCancellationRequested) return;
+        // 沿用已有启动发现更新入口；一旦确认有新版，始终阻止继续使用旧版。
+        UpdateProgressWindow? progress = null;
+        UpdateSession? session = null;
+        using var updateCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        try
+        {
+            _host!.AutomationSuspendedForUpdate = true;
+            _host.Hotkeys.UnregisterAll();
+            _host.TriggerEmergencyStop();
+            _mainWindow!.IsEnabled = false;
+            _mainWindow.Hide();
+            if (ver.VerificationError is { } verificationError)
+            {
+                ThemedMessageBox.Show($"{verificationError}\n程序将退出。",
+                    "更新验证失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            if (ver.Manifest is not { } manifest)
+            {
+                ThemedMessageBox.Show($"检测到新版本，请下载更新后使用。\n\n最新版本: {ver.Latest}",
+                    "发现新版本", MessageBoxButton.OK, MessageBoxImage.Warning);
+                // 未签名的旧清单只保留既有人工升级入口，不信任其可变下载地址。
+                const string legacyDownload = "https://open.cancanneed.top/download/shike-latest.zip";
+                if (!BrowserLauncher.TryOpen(legacyDownload, out var error))
+                    ThemedMessageBox.Show($"{error}\n\n请手动访问：\n{legacyDownload}", "无法打开下载页面", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            ThemedMessageBox.Show($"检测到新版本，程序将退出并自动更新。\n\n最新版本: {ver.Latest}\n用户配置会保留。",
+                "发现新版本", MessageBoxButton.OK, MessageBoxImage.Information);
+            if (!manifest.CanApply(NetworkService.CurrentVersion))
+                throw new InvalidOperationException("当前更新器、运行时或配置格式不符合该版本要求。请使用维护者提供的兼容升级方式；本次未替换文件。");
+            UpdateBootstrap.EnsureReleaseAllowed(Environment.ProcessPath!, manifest);
+            if (UpdateBootstrap.IsFailedRelease(Environment.ProcessPath!, manifest))
+            {
+                var retry = ThemedMessageBox.Show("该版本上次更新未成功。是否重新尝试？选择否将退出，现有文件保持。",
+                    "更新重试", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+                if (retry != MessageBoxResult.Yes) return;
+            }
+            progress = new UpdateProgressWindow(ver.Latest);
+            progress.Cancelled += updateCancellation.Cancel;
+            progress.SetMessage("正在下载并校验更新包…");
+            progress.Show();
+            session = UpdateSession.Create(manifest, Environment.ProcessPath!);
+            using var downloader = new UpdatePackageDownloader();
+            var candidate = await downloader.PrepareAsync(manifest, session.DownloadDirectory, updateCancellation.Token);
+            await session.PrepareCandidateAsync(candidate, updateCancellation.Token);
+            updateCancellation.Token.ThrowIfCancellationRequested();
+            progress.SetMessage("正在保存配置并准备退出…");
+            foreach (var tool in _host.RegisteredTools) tool.OnDeactivate();
+            ToolSettingsPersistence.SaveSections(_host.Storage, _host.RegisteredTools);
+            _host.Hotkeys.UnregisterAll();
+            await UpdateBootstrap.StartHelperAsync(session, updateCancellation.Token);
+            _installUpdate = session;
+            _updatePrepared = true;
+        }
+        catch (OperationCanceledException)
+        {
+            try { session?.Abort("更新已取消"); } catch { }
+        }
+        catch (Exception error)
+        {
+            Diag.Log($"[更新] 安装准备失败：{error}");
+            try { session?.Abort(error.Message); } catch { }
+            ThemedMessageBox.Show($"更新未完成，程序将退出。\n\n{error.Message}", "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            progress?.CompleteAndClose();
+            RequestShutdown();
+        }
     }
 
     // ── 退出 ──
@@ -326,7 +457,16 @@ public partial class App : Application
                 catch (Exception error) { Diag.Log($"[退出] 全局停止失败: {error}"); saveErrors.Add(error.Message); }
                 foreach (var tool in _host.RegisteredTools)
                 {
-                    try { tool.OnShutdown(); }
+                    try
+                    {
+                        // 未获提交许可的新版只需停止引擎，不收集并保存玩家页面配置。
+                        if (_host.Storage.ReadOnlyForUpdateValidation && tool is CraftTool craft)
+                        {
+                            if (craft.Engine is not null && !craft.Engine.Shutdown(TimeSpan.FromSeconds(2)))
+                                saveErrors.Add("新版启动验证的洗装任务未完成关闭");
+                        }
+                        else tool.OnShutdown();
+                    }
                     catch (Exception error)
                     {
                         Diag.Log($"[退出] {tool.Name}关闭失败: {error}");
@@ -335,7 +475,7 @@ public partial class App : Application
                 }
 
                 // 初始化失败时，各抽屉可能只加载了一部分；这时完全跳过退出保存。
-                if (_settingsLoadedSuccessfully)
+                if (_settingsLoadedSuccessfully && !_host.Storage.ReadOnlyForUpdateValidation)
                 {
                     try
                     {
@@ -377,6 +517,20 @@ public partial class App : Application
             Cleanup("单实例句柄", () => _singleInstanceMutex?.Dispose());
             _singleInstanceMutex = null;
             Cleanup("后台任务令牌", _backgroundCts.Dispose);
+            if (_installUpdate is not null)
+            {
+                var stopped = (_craftTool?.Engine?.ShutdownCompleted ?? true) &&
+                    (_clickerTool?.ShutdownCompleted ?? true) && (_keyLoopTool?.ShutdownCompleted ?? true) &&
+                    (_hideoutTool?.ShutdownCompleted ?? true);
+                try
+                {
+                    if (UpdateReadiness.CanApproveExit(_updatePrepared, _settingsLoadedSuccessfully, stopped, saveErrors))
+                        _installUpdate.ApproveExit();
+                    else _installUpdate.Abort("运行任务未完全结束或配置保存／退出清理失败，禁止替换");
+                }
+                catch (Exception error) { Diag.Log($"[更新] 退出握手失败，助手不得替换：{error}"); e.ApplicationExitCode = 3; }
+            }
+            if (_updateStartup is { IsRollback: false } && !_updateHealthConfirmed) e.ApplicationExitCode = 4;
             if (_startupProfile)
             {
                 _startup.Mark("关闭流程清理完成");
@@ -386,7 +540,8 @@ public partial class App : Application
             }
             base.OnExit(e);
         }
-        if (!_startupProfile && _settingsLoadedSuccessfully && saveErrors.Count > 0)
+        if (!_startupProfile && _settingsLoadedSuccessfully && saveErrors.Count > 0 &&
+            !(_updateStartup is { IsRollback: false } && !_updateHealthConfirmed))
             NotificationService.ShowConfigurationError("退出时部分配置未能保存或清理，请保留 data/debug.log。\n\n" +
                                                        string.Join("\n\n", saveErrors.Distinct()));
     }

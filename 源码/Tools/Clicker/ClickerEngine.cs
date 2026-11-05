@@ -68,6 +68,8 @@ public sealed class ClickerEngine
         get { lock (_gate) return _running; }
     }
 
+    internal bool ShutdownCompleted => _worker.IsCompleted;
+
     public int ClickCount
     {
         get { lock (_gate) return _clickCount; }

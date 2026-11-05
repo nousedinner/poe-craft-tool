@@ -27,6 +27,7 @@ public sealed class ClickerTool : ITool, IEnableableTool
     public bool IsEnabled => _enabled;
 
     public bool IsRunning => _engine?.IsRunning ?? false;
+    internal bool ShutdownCompleted => _engine?.ShutdownCompleted ?? true;
     public int ClickCount => _engine?.ClickCount ?? 0;
     public event Action<ClickerStatus>? StatusUpdated;
 

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- 无WPF的测试入口；WinExe避免真实子进程验证弹出控制台窗口。 -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>UpdateProcessProbe</AssemblyName>
+    <Version Condition="'$(ProbeVersion)' == ''">1.0.52</Version>
+    <Version Condition="'$(ProbeVersion)' != ''">$(ProbeVersion)</Version>
+    <PublishSingleFile>true</PublishSingleFile>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Services\Updates\UpdateManifest.cs" Link="Production\UpdateManifest.cs" />
+    <Compile Include="..\..\Services\Updates\UpdatePackageDownloader.cs" Link="Production\UpdatePackageDownloader.cs" />
+    <Compile Include="..\..\Services\Updates\UpdateSession.cs" Link="Production\UpdateSession.cs" />
+    <Compile Include="..\..\Services\Updates\UpdateRunner.cs" Link="Production\UpdateRunner.cs" />
+    <Compile Include="..\..\Services\Updates\UpdateBootstrap.cs" Link="Production\UpdateBootstrap.cs" />
+    <Compile Remove="TestTrust.cs" Condition="'$(ProbeTrustSource)' != ''" />
+    <Compile Include="$(ProbeTrustSource)" Link="TestTrust.cs" Condition="'$(ProbeTrustSource)' != ''" />
+  </ItemGroup>
+</Project>

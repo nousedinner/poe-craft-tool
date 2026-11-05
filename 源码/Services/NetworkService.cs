@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using ShiKe.Services.Updates;
 
 namespace ShiKe.Services;
 
@@ -17,7 +18,11 @@ public sealed class AdItem
 }
 
 /// <summary>版本检查结果。</summary>
-public sealed record VersionCheckResult(string Latest, string DownloadUrl);
+public sealed record VersionCheckResult(string Latest, string DownloadUrl)
+{
+    public UpdateManifest? Manifest { get; init; }
+    public string? VerificationError { get; init; }
+}
 
 /// <summary>
 /// 网络服务（对齐 Python 版 main.py _send_daily_ping）：
@@ -60,10 +65,27 @@ public sealed class NetworkService : IDisposable
             using var doc = JsonDocument.Parse(await ReadJsonTextAsync("/version.json", cancellationToken).ConfigureAwait(false));
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
                 throw new InvalidDataException("版本数据顶层必须是对象");
+            // 出现签名封套时，必须先验签和绑定字段；未验证的根latest不能决定是否跳过验证。
+            if (doc.RootElement.TryGetProperty("autoUpdate", out _))
+            {
+                try
+                {
+                    var manifest = UpdateManifest.Verify(doc.RootElement.GetRawText(), ReleaseTrust.PublicKeyPem, ReleaseTrust.KeyId);
+                    if (manifest.Version > CurrentVersion)
+                        return new VersionCheckResult(manifest.VersionText, manifest.ManualUrl) { Manifest = manifest };
+                    return null;
+                }
+                catch (Exception error) when (error is InvalidDataException or System.Security.Cryptography.CryptographicException)
+                {
+                    LogFailure("新版清单验证", error);
+                    return new VersionCheckResult("未验证", UpdateManifest.OfficialManualUrl)
+                        { VerificationError = "更新清单验证失败，已禁止下载和替换。请稍后重试或联系维护者。" };
+                }
+            }
             var latest = ReadString(doc.RootElement, "latest");
             if (!Version.TryParse(latest, out var version))
                 throw new InvalidDataException("版本数据缺少有效的 latest 版本号");
-            // System.Version 比较（Python 字符串比较在 "1.0.10" 场景会误判强制更新，C# 修复）
+            // 未升级发布协议的服务端保留原数字版本比较与人工更新入口。
             if (version > CurrentVersion)
             {
                 if (!BrowserLauncher.TryNormalize(ReadString(doc.RootElement, "url"), out var url))

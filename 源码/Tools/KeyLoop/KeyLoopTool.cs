@@ -26,6 +26,7 @@ public sealed class KeyLoopTool : ITool, IEnableableTool
         .ToList();
 
     public bool IsRunning => _engine?.IsRunning ?? false;
+    internal bool ShutdownCompleted => _engine?.ShutdownCompleted ?? true;
     public event Action<KeyLoopStatus>? StatusUpdated;
 
     public void Initialize(ToolHost host)

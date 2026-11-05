@@ -25,7 +25,7 @@ git ls-tree -r --name-only -z "$tree" | (
 
         lower_path=${path,,}
         case "/$lower_path/" in
-            */bin/*|*/obj/*|*/.vs/*|*/.idea/*|*/截图/*|*/设计预览/*|*/验证记录/*|*/发布暂存/*|*/备份/*|*/研究资料/*)
+            */bin/*|*/obj/*|*/__pycache__/*|*/.vs/*|*/.idea/*|*/截图/*|*/设计预览/*|*/验证记录/*|*/发布暂存/*|*/备份/*|*/研究资料/*)
                 reason='本地资料或生成目录' ;;
         esac
 
@@ -33,7 +33,7 @@ git ls-tree -r --name-only -z "$tree" | (
             README.md|CHANGELOG.md) ;;
             *)
                 case "$lower_path" in
-                    *.md|*.exe|*.zip|*.dll|*.pdb|*.dmp|*.log|*.tmp|*.bak|*.orig|*.rej|*.user|*.suo|*/.env|*/.env.*|*/.shike-output.json|*/kill_shike.*)
+                    *.md|*.exe|*.zip|*.dll|*.pdb|*.dmp|*.pyc|*.pyo|*.dpapi|*.pfx|*.p12|*.key|*.log|*.tmp|*.bak|*.orig|*.rej|*.user|*.suo|*/.env|*/.env.*|*/.shike-output.json|*/kill_shike.*)
                         reason='本地文档、配置或生成文件' ;;
                 esac ;;
         esac

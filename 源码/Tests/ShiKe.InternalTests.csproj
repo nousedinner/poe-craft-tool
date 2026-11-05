@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="UpdateProcessProbe\**\*.cs" />
     <ProjectReference Include="..\拾刻.csproj" />
   </ItemGroup>
 

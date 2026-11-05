@@ -17,6 +17,9 @@ public sealed class StorageService
 
     public string DataDir { get; }
 
+    // 仅用于更新后首次启动确认；确认前不能迁移或覆盖玩家配置。
+    internal bool ReadOnlyForUpdateValidation { get; set; }
+
     private string SettingsPath => Path.Combine(DataDir, "settings.json");
     private string CoordinatesPath => Path.Combine(DataDir, "coordinates.json");
     private string RulesPath => Path.Combine(DataDir, "rules.json");
@@ -57,6 +60,7 @@ public sealed class StorageService
             // 不可先覆盖再 Move，否则被移走的是新文件而不是旧文件。
             var migrated = MigrateLegacySettings(root);
             ValidateSettings(migrated);
+            if (ReadOnlyForUpdateValidation) return migrated;
             File.Copy(SettingsPath, SettingsPath + ".bak", overwrite: true);
             WriteJsonAtomic(SettingsPath, migrated);
             return migrated;
@@ -107,8 +111,9 @@ public sealed class StorageService
         catch (Exception ex) when (IsFileError(ex)) { throw new StorageException("读取文件", path, ex); }
     }
 
-    private static void WriteJsonProtected(string path, JsonObject root, Action<JsonObject>? validate = null)
+    private void WriteJsonProtected(string path, JsonObject root, Action<JsonObject>? validate = null)
     {
+        EnsureWritableForUpdate(path);
         ArgumentNullException.ThrowIfNull(root);
         try
         {
@@ -119,6 +124,13 @@ public sealed class StorageService
         }
         catch (StorageException ex) { throw new StorageException("保存文件", path, ex.InnerException ?? ex); }
         catch (Exception ex) when (IsFileError(ex)) { throw new StorageException("保存文件", path, ex); }
+    }
+
+    private void EnsureWritableForUpdate(string path)
+    {
+        if (ReadOnlyForUpdateValidation)
+            throw new StorageException("更新启动确认期间禁止写入配置", path,
+                new InvalidOperationException("新版尚未完成启动确认，原配置保持只读"));
     }
 
     private static void ValidateSettings(JsonObject root)
@@ -400,6 +412,7 @@ public sealed class StorageService
     public void DeletePreset(string name)
     {
         var path = GetPresetPath(name);
+        EnsureWritableForUpdate(path);
         try { File.Delete(path); }
         catch (Exception ex) when (IsFileError(ex)) { throw new StorageException("删除预设", path, ex); }
     }

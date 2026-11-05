@@ -31,6 +31,7 @@ public sealed class HideoutTool : ITool, IEnableableTool
     public bool IsEnabled => _enabled;
     public string Hotkey => _hotkey;
     public string Command => _command;
+    internal bool ShutdownCompleted { get { lock (_operationGate) return _operationTask?.IsCompleted ?? true; } }
 
     public void Initialize(ToolHost host)
     {
