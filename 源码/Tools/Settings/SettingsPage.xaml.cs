@@ -472,11 +472,11 @@ public partial class SettingsPage : UserControl
         return string.Join('+', parts);
     }
 
-    private static string? KeyName(Key key)
+    internal static string? KeyName(Key key)
     {
         if (key is >= Key.A and <= Key.Z) return key.ToString().ToUpperInvariant();
         if (key is >= Key.D0 and <= Key.D9) return ((int)key - (int)Key.D0).ToString();
-        if (key is >= Key.NumPad0 and <= Key.NumPad9) return ((int)key - (int)Key.NumPad0).ToString();
+        if (key is >= Key.NumPad0 and <= Key.NumPad9) return key.ToString();
         if (key is >= Key.F1 and <= Key.F24) return key.ToString().ToUpperInvariant();
         return key switch
         {

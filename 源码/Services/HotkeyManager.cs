@@ -23,6 +23,8 @@ public sealed class HotkeyManager
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int WM_KEYUP = 0x0101;
     private const int WM_SYSKEYUP = 0x0105;
+    private const uint LLKHF_LOWER_IL_INJECTED = 0x02;
+    private const uint LLKHF_INJECTED = 0x10;
 
     private readonly Dictionary<int, HotkeyRequest> _registered = [];   // hotkeyId → Toggle 请求
     private sealed class HoldBinding
@@ -320,53 +322,62 @@ public sealed class HotkeyManager
         if (nCode >= 0)
         {
             var vk = (ushort)Marshal.ReadInt32(lParam); // KBDLLHOOKSTRUCT.vkCode
-            var msg = wParam.ToInt32();
-            var down = msg is WM_KEYDOWN or WM_SYSKEYDOWN;
-            var up = msg is WM_KEYUP or WM_SYSKEYUP;
-            var normalizedVk = HotkeyParser.NormalizeModifierVk(vk);
-
-            if (down) _keysDown.Add(vk);
-            if (up) _keysDown.Remove(vk);
-
-            if (down && _holdByVk.TryGetValue(normalizedVk, out var bindings))
-            {
-                foreach (var binding in bindings)
-                {
-                    if (_activeHoldBindings.Contains(binding) ||
-                        !HotkeyParser.AreModifiersPressed(binding.Hotkey.Modifiers, key => _keysDown.Contains(key)))
-                        continue;
-
-                    // Hold 只在按下阶段检查前台。已经启动的 Hold 无论当前前台如何，
-                    // 松开时都必须调用 ReleaseHandler，防止残留鼠标/按键状态。
-                    if (!CanDispatch(binding.Request, out var foregroundError))
-                    {
-                        QueueHookCallback(() =>
-                        {
-                            if (foregroundError is not null)
-                                ReportRuntimeError(binding.Request, "前台检查", foregroundError);
-                            else
-                                InvokeSafely(binding.Request, binding.Request.ForegroundRejectedHandler, "前台拒绝提示");
-                        });
-                        continue;
-                    }
-                    _activeHoldBindings.Add(binding);
-                    QueueHoldCallback(binding.Request, start: true);
-                }
-            }
-
-            if (up)
-            {
-                foreach (var binding in _activeHoldBindings.ToList())
-                {
-                    if (binding.Hotkey.Vk != normalizedVk &&
-                        HotkeyParser.AreModifiersPressed(binding.Hotkey.Modifiers, key => _keysDown.Contains(key)))
-                        continue;
-                    _activeHoldBindings.Remove(binding);
-                    QueueHoldCallback(binding.Request, start: false);
-                }
-            }
+            var flags = unchecked((uint)Marshal.ReadInt32(lParam, 8)); // KBDLLHOOKSTRUCT.flags
+            HandleKeyboardHookEvent(vk, wParam.ToInt32(), flags);
         }
         return CallNextHookEx(_hookHandle, nCode, wParam, lParam);
+    }
+
+    internal void HandleKeyboardHookEvent(ushort vk, int msg, uint flags)
+    {
+        // Hold 只跟踪物理按键。洗装/按键循环合成的按下和释放都不能改变物理状态，
+        // 否则既会误启动连点，也可能把用户仍按住的 Hold 提前释放。
+        if ((flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0) return;
+
+        var down = msg is WM_KEYDOWN or WM_SYSKEYDOWN;
+        var up = msg is WM_KEYUP or WM_SYSKEYUP;
+        var normalizedVk = HotkeyParser.NormalizeModifierVk(vk);
+
+        if (down) _keysDown.Add(vk);
+        if (up) _keysDown.Remove(vk);
+
+        if (down && _holdByVk.TryGetValue(normalizedVk, out var bindings))
+        {
+            foreach (var binding in bindings)
+            {
+                if (_activeHoldBindings.Contains(binding) ||
+                    !HotkeyParser.AreModifiersPressed(binding.Hotkey.Modifiers, key => _keysDown.Contains(key)))
+                    continue;
+
+                // Hold 只在按下阶段检查前台。已经启动的 Hold 无论当前前台如何，
+                // 松开时都必须调用 ReleaseHandler，防止残留鼠标/按键状态。
+                if (!CanDispatch(binding.Request, out var foregroundError))
+                {
+                    QueueHookCallback(() =>
+                    {
+                        if (foregroundError is not null)
+                            ReportRuntimeError(binding.Request, "前台检查", foregroundError);
+                        else
+                            InvokeSafely(binding.Request, binding.Request.ForegroundRejectedHandler, "前台拒绝提示");
+                    });
+                    continue;
+                }
+                _activeHoldBindings.Add(binding);
+                QueueHoldCallback(binding.Request, start: true);
+            }
+        }
+
+        if (up)
+        {
+            foreach (var binding in _activeHoldBindings.ToList())
+            {
+                if (binding.Hotkey.Vk != normalizedVk &&
+                    HotkeyParser.AreModifiersPressed(binding.Hotkey.Modifiers, key => _keysDown.Contains(key)))
+                    continue;
+                _activeHoldBindings.Remove(binding);
+                QueueHoldCallback(binding.Request, start: false);
+            }
+        }
     }
 }
 

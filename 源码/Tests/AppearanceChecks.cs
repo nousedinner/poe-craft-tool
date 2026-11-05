@@ -235,6 +235,7 @@ internal static class AppearanceChecks
                 if (index == 2)
                 {
                     var loopPage = (FrameworkElement)content.Content;
+                    UiAuditFixChecks.InvalidDelayEditKeepsPrevious((KeyLoopPage)loopPage, keyLoop, host.Storage);
                     Find<Button>(loopPage, "MoreButton").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                     Pump();
                     Require(Find<StackPanel>(loopPage, "SlotPanel").Children.Cast<Border>().All(row => row.IsVisible), "加载更多应显示十个槽位");

@@ -185,12 +185,20 @@ public sealed class StorageService
             ValidateStringFields(slot, "key");
             foreach (var key in new[] { "delay_s", "delay" })
             {
-                if (slot.TryGetPropertyValue(key, out var value) &&
-                    (value is not JsonValue || value.GetValueKind() != JsonValueKind.Number ||
-                     !JsonSerializer.SerializeToElement(value).TryGetDouble(out var delay) || !double.IsFinite(delay)))
+                if (slot.TryGetPropertyValue(key, out var value) && !IsFiniteNumber(value))
                     throw new InvalidDataException($"按键循环槽位的“{key}”必须是有限数值");
             }
         }
+    }
+
+    private static bool IsFiniteNumber(JsonNode? value)
+    {
+        if (value is not JsonValue number) return false;
+        // 内存中的 NaN/Infinity 不能先序列化，否则 ArgumentException 会绕过配置错误处理。
+        if (number.TryGetValue<double>(out var doubleValue)) return double.IsFinite(doubleValue);
+        if (number.TryGetValue<float>(out var floatValue)) return float.IsFinite(floatValue);
+        return number.GetValueKind() == JsonValueKind.Number &&
+               JsonSerializer.SerializeToElement(number).TryGetDouble(out var parsed) && double.IsFinite(parsed);
     }
 
     private static void ValidateIntFields(JsonObject root, params string[] keys)

@@ -28,6 +28,8 @@ public sealed class ClickerEngine
     private readonly Task _worker;
 
     private CancellationTokenSource? _runCts;
+    private CancellationToken _emergencyToken;
+    private bool _workerOwnsRun;
     private bool _running;
     private bool _shutdownRequested;
     private int _runId;
@@ -83,6 +85,7 @@ public sealed class ClickerEngine
 
     public bool Start(ClickerMouseButton button, int intervalMs)
     {
+        int runId;
         lock (_gate)
         {
             if (_running || _shutdownRequested) return false;
@@ -92,15 +95,17 @@ public sealed class ClickerEngine
             _button = button;
             _intervalMs = Math.Clamp(intervalMs, 10, 200);
             _clickCount = 0;
-            _runId++;
+            runId = ++_runId;
+            _emergencyToken = _host.EmergencyCts.Token;
             _runCts = CancellationTokenSource.CreateLinkedTokenSource(
-                _shutdownCts.Token, _host.EmergencyCts.Token);
+                _shutdownCts.Token, _emergencyToken);
+            _workerOwnsRun = false;
             _running = true;
             _lastStatusTimestamp = 0;
             _wakeSignal.Release();
         }
 
-        ReportStatus("连点中...", force: true);
+        ReportStatus("连点中...", running: true, force: true, runId: runId);
         Diag.Log($"[连点] 启动: button={button}, interval={Math.Clamp(intervalMs, 10, 200)}ms");
         return true;
     }
@@ -108,28 +113,38 @@ public sealed class ClickerEngine
     public bool Stop(string reason = "连点器已停止")
     {
         CancellationTokenSource? runCts;
+        bool dispose;
+        int runId;
         lock (_gate)
         {
             if (!_running) return false;
             _running = false;
+            runId = _runId;
             runCts = _runCts;
+            dispose = !_workerOwnsRun;
+            if (dispose) _runCts = null;
         }
 
-        runCts?.Cancel();
-        ReportStatus(reason, force: true);
+        CancelRun(runCts, dispose);
+        ReportStatus(reason, running: false, force: true, runId: runId);
         Diag.Log($"[连点] 停止: reason={reason}, count={ClickCount}");
         return true;
     }
 
     public bool Shutdown(TimeSpan timeout)
     {
+        CancellationTokenSource? runCts;
+        bool dispose;
         lock (_gate)
         {
             if (_shutdownRequested) return _worker.IsCompleted;
             _shutdownRequested = true;
             _running = false;
-            _runCts?.Cancel();
+            runCts = _runCts;
+            dispose = !_workerOwnsRun;
+            if (dispose) _runCts = null;
         }
+        CancelRun(runCts, dispose);
         _shutdownCts.Cancel();
         try { return _worker.Wait(timeout); }
         catch (AggregateException) { return _worker.IsCompleted; }
@@ -152,6 +167,7 @@ public sealed class ClickerEngine
             int intervalMs;
             ClickerMouseButton button;
             CancellationTokenSource? runCts;
+            CancellationToken emergencyToken;
             lock (_gate)
             {
                 if (_shutdownRequested) return;
@@ -160,6 +176,8 @@ public sealed class ClickerEngine
                 intervalMs = _intervalMs;
                 button = _button;
                 runCts = _runCts;
+                emergencyToken = _emergencyToken;
+                _workerOwnsRun = true;
             }
 
             string? error = null;
@@ -176,10 +194,10 @@ public sealed class ClickerEngine
                     await _clickAction(button, runCts.Token);
                     lock (_gate)
                     {
-                        if (_runId != runId) break;
+                        if (_runId != runId || !_running) break;
                         _clickCount++;
                     }
-                    ReportStatus("连点中...");
+                    ReportStatus("连点中...", running: true, runId: runId);
                     await Task.Delay(intervalMs, runCts.Token);
                 }
             }
@@ -194,51 +212,59 @@ public sealed class ClickerEngine
             }
             finally
             {
-                var reportStop = false;
-                var isCurrentRun = false;
+                runCts.Dispose();
                 lock (_gate)
                 {
                     if (_runId == runId)
                     {
-                        isCurrentRun = true;
-                        reportStop = _running;
+                        var reportStop = _running;
                         _running = false;
-                        if (ReferenceEquals(_runCts, runCts)) _runCts = null;
+                        if (ReferenceEquals(_runCts, runCts))
+                        {
+                            _runCts = null;
+                            _workerOwnsRun = false;
+                        }
+
+                        // 检查、鼠标释放与发布在同一锁内，不能被新 Start 插入。
+                        try { _releaseMouseButtons(); }
+                        catch (Exception ex) { Diag.Log($"[连点] 释放鼠标按键失败: {ex.Message}"); }
+
+                        if (reportStop)
+                        {
+                            var reason = error ?? (emergencyToken.IsCancellationRequested
+                                ? "连点器已紧急停止"
+                                : "连点器已停止");
+                            ReportStatus(reason, running: false, force: true, runId: runId);
+                            if (error is not null && _runId == runId) ErrorOccurred?.Invoke(error);
+                        }
                     }
                 }
-                runCts.Dispose();
-
-                // 只允许当前运行执行兜底；快速停止后已开始的新运行不能被旧 finally 干扰。
-                if (isCurrentRun)
-                {
-                    try { _releaseMouseButtons(); }
-                    catch (Exception ex) { Diag.Log($"[连点] 释放鼠标按键失败: {ex.Message}"); }
-                }
-
-                if (reportStop)
-                {
-                    var reason = error ?? (_host.EmergencyCts.IsCancellationRequested
-                        ? "连点器已紧急停止"
-                        : "连点器已停止");
-                    ReportStatus(reason, force: true);
-                }
-                if (error is not null) ErrorOccurred?.Invoke(error);
             }
         }
     }
 
-    private void ReportStatus(string text, bool force = false)
+    // worker 可能在停止方取得源的快照后完成并释放；已结束的源无需再次取消。
+    internal static void CancelRun(CancellationTokenSource? source, bool dispose)
     {
-        ClickerStatus status;
+        if (source is null) return;
+        try { source.Cancel(); }
+        catch (ObjectDisposedException) { }
+        finally { if (dispose) source.Dispose(); }
+    }
+
+    private void ReportStatus(string text, bool running, bool force = false, int? runId = null)
+    {
         lock (_gate)
         {
+            if (runId is { } expected && expected != _runId) return;
+            if (_running != running) return;
             var now = Stopwatch.GetTimestamp();
             if (!force && _lastStatusTimestamp != 0 &&
                 Stopwatch.GetElapsedTime(_lastStatusTimestamp, now) < TimeSpan.FromMilliseconds(250))
                 return;
             _lastStatusTimestamp = now;
-            status = new ClickerStatus(_running, _clickCount, text);
+            var status = new ClickerStatus(_running, _clickCount, text);
+            StatusUpdated?.Invoke(status);
         }
-        StatusUpdated?.Invoke(status);
     }
 }

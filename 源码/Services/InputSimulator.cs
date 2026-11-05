@@ -33,6 +33,7 @@ public sealed class InputSimulator
     private const uint MOUSEEVENTF_LEFTUP = 0x0004;
     private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
     private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+    private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint KEYEVENTF_UNICODE = 0x0004;
     private const uint KEYEVENTF_SCANCODE = 0x0008;
@@ -201,6 +202,7 @@ public sealed class InputSimulator
     private static bool SendKey(ushort vk, bool up)
     {
         var scan = (ushort)MapVirtualKey(vk, 0); // MAPVK_VK_TO_VSC
+        var description = DescribeKeyboardInput(vk, up, scan);
         var input = new INPUT
         {
             type = INPUT_KEYBOARD,
@@ -209,8 +211,8 @@ public sealed class InputSimulator
                 ki = new KEYBDINPUT
                 {
                     wVk = 0,
-                    wScan = scan,
-                    dwFlags = KEYEVENTF_SCANCODE | (up ? KEYEVENTF_KEYUP : 0),
+                    wScan = description.ScanCode,
+                    dwFlags = description.Flags,
                     dwExtraInfo = 0,
                 }
             }
@@ -222,6 +224,20 @@ public sealed class InputSimulator
             return false;
         }
         return true;
+    }
+
+    /// <summary>纯发送描述：同一基础扫描码通过扩展标志区分导航区、Windows键与小键盘。</summary>
+    internal static (ushort ScanCode, uint Flags) DescribeKeyboardInput(ushort vk, bool up, ushort mappedScanCode)
+    {
+        // MAPVK_VK_TO_VSC 在部分键盘布局中不返回 E0 前缀，不能只靠扫描码高字节判断。
+        var extended = vk is >= 0x21 and <= 0x28 // PageUp/PageDown/End/Home/方向键
+            or 0x2D or 0x2E                    // Insert/Delete
+            or 0x5B or 0x5C or 0x5D            // 左/右 Windows 与菜单键
+            or 0x6F or 0x90                    // 小键盘除号、NumLock
+            or 0xA3 or 0xA5;                   // 右 Ctrl/Alt
+        var flags = KEYEVENTF_SCANCODE | (up ? KEYEVENTF_KEYUP : 0) |
+                    (extended ? KEYEVENTF_EXTENDEDKEY : 0);
+        return ((ushort)(mappedScanCode & 0xFF), flags);
     }
 
     private static void PressKeyOrThrow(ushort vk, string action)
@@ -259,9 +275,9 @@ public sealed class InputSimulator
     public async Task RightClickAsync(int x, int y, int _, CancellationToken token)
     {
         await EnsureForegroundForInputAsync(token);
-        await MoveToAsync(x, y, token);
-        CheckEmergencyStop();
-        SendMouseOrThrow(MOUSEEVENTF_RIGHTDOWN, "鼠标右键按下");
+        await InputSendBoundary.WaitThenSendAsync(MoveToAsync(x, y, token),
+            _foreground.IsTargetForeground, CheckEmergencyStop,
+            () => SendMouseOrThrow(MOUSEEVENTF_RIGHTDOWN, "鼠标右键按下"), token);
         await Task.Delay(20, CancellationToken.None);
         SendMouseOrThrow(MOUSEEVENTF_RIGHTUP, "鼠标右键抬起");
     }
@@ -274,8 +290,7 @@ public sealed class InputSimulator
 
     internal async Task ShiftClickAsync(int x, int y, int delayMs, int settleMs, CancellationToken token)
     {
-        await PrepareCraftClickAsync(x, y, delayMs, settleMs, token);
-        await SendCraftMouseClickAsync();
+        await SendCraftMouseClickAsync(PrepareCraftClickAsync(x, y, delayMs, settleMs, token), token);
     }
 
     /// <summary>常驻改造/点金并保持 Shift 时，用 Alt 临时点击配对通货；返回前必释放 Alt。</summary>
@@ -298,7 +313,7 @@ public sealed class InputSimulator
                 if (!_foreground.IsTargetForeground() || !IsShiftHeld)
                     throw new InputSimulationException("快捷通货期间游戏失去前台或 Shift 已释放，已停止本次输入");
                 CheckEmergencyStop();
-                await SendCraftMouseClickAsync();
+                await SendCraftMouseClickAsync(Task.CompletedTask, clickToken);
             }, Task.Delay, token);
     }
 
@@ -319,10 +334,14 @@ public sealed class InputSimulator
         CheckEmergencyStop();
     }
 
-    private async Task SendCraftMouseClickAsync()
+    private async Task SendCraftMouseClickAsync(Task preparation, CancellationToken token)
     {
-        MarkCraftClick();
-        SendMouseOrThrow(MOUSEEVENTF_LEFTDOWN, "鼠标左键按下");
+        await InputSendBoundary.WaitThenSendAsync(preparation, _foreground.IsTargetForeground,
+            CheckEmergencyStop, () =>
+            {
+                MarkCraftClick();
+                SendMouseOrThrow(MOUSEEVENTF_LEFTDOWN, "鼠标左键按下");
+            }, token);
         await Task.Delay(20, CancellationToken.None);
         SendMouseOrThrow(MOUSEEVENTF_LEFTUP, "鼠标左键抬起");
     }
@@ -416,12 +435,11 @@ public sealed class InputSimulator
     internal async Task CtrlCAsync(int beforeMs, int afterMs, CancellationToken token)
     {
         await EnsureForegroundForInputAsync(token);
-        await Task.Delay(beforeMs, token);
-        CheckEmergencyStop();
-        CraftCopyShortcut.Send(
+        await InputSendBoundary.WaitThenSendAsync(Task.Delay(beforeMs, token),
+            _foreground.IsTargetForeground, CheckEmergencyStop, () => CraftCopyShortcut.Send(
             key => PressKeyOrThrow(key, "Ctrl+C 的按键按下"),
             key => ReleaseKeyOrThrow(key, "Ctrl+C 的按键释放"),
-            key => SendKey(key, up: true));
+            key => SendKey(key, up: true)), token);
         await Task.Delay(afterMs, token);
     }
 
@@ -430,19 +448,18 @@ public sealed class InputSimulator
 
     /// <summary>
     /// 逐字符输入文本（KEYEVENTF_UNICODE，不依赖键盘布局；对齐 Python keyboard.write）。
-    /// 每字符 5ms 间隔，防游戏丢字符。
+    /// 每字符 5ms 间隔，防游戏丢字符；失焦立即取消，不等待返回后续写。
     /// </summary>
-    public async Task TypeTextAsync(string text, CancellationToken token)
-    {
-        await EnsureForegroundForInputAsync(token);
-        foreach (var ch in text)
-        {
-            token.ThrowIfCancellationRequested();
-            SendKeyUnicodeOrThrow(ch, down: true);
-            SendKeyUnicodeOrThrow(ch, down: false);
-            await Task.Delay(5, token);
-        }
-    }
+    public Task TypeTextAsync(string text, CancellationToken token)
+        => ForegroundCommandInput.TypeTextAsync(text, _foreground.IsTargetForeground,
+            CheckEmergencyStop, SendKeyUnicodeOrThrow, Task.Delay, token);
+
+    /// <summary>聊天命令的两次 Enter 与每个字符共用失焦即取消的保护。</summary>
+    public Task SendChatCommandAsync(string command, CancellationToken token)
+        => ForegroundCommandInput.SendAsync(command, _foreground.IsTargetForeground, CheckEmergencyStop,
+            () => PressKeyOrThrow(0x0D, "打开或发送聊天命令"),
+            () => ReleaseKeyOrThrow(0x0D, "释放聊天命令的 Enter"),
+            SendKeyUnicodeOrThrow, Task.Delay, token);
 
     private static void SendKeyUnicodeOrThrow(char ch, bool down)
     {
@@ -557,6 +574,9 @@ public static class KeyCode
         if (string.IsNullOrWhiteSpace(key)) return 0;
         key = key.Trim();
         if (Map.TryGetValue(key, out var vk)) return vk;
+        if (key.Length == 7 && key.StartsWith("NumPad", StringComparison.OrdinalIgnoreCase) &&
+            key[6] is >= '0' and <= '9')
+            return (ushort)(0x60 + key[6] - '0');
         if (key.Length == 1)
         {
             char c = char.ToUpperInvariant(key[0]);

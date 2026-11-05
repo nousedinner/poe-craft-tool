@@ -249,15 +249,16 @@ public partial class KeyLoopPage : UserControl
         SaveRowChange();
     }
 
-    private static bool TryParseDelay(string text, out double seconds)
-        => double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out seconds) ||
-           double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out seconds);
+    internal static bool TryParseDelay(string text, out double seconds)
+        => (double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out seconds) ||
+            double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out seconds)) &&
+           double.IsFinite(seconds);
 
-    private static string? KeyToName(Key key)
+    internal static string? KeyToName(Key key)
     {
         if (key is >= Key.A and <= Key.Z) return key.ToString().ToLowerInvariant();
         if (key is >= Key.D0 and <= Key.D9) return ((int)key - (int)Key.D0).ToString();
-        if (key is >= Key.NumPad0 and <= Key.NumPad9) return ((int)key - (int)Key.NumPad0).ToString();
+        if (key is >= Key.NumPad0 and <= Key.NumPad9) return key.ToString();
         if (key is >= Key.F1 and <= Key.F24) return key.ToString().ToUpperInvariant();
         return key switch
         {

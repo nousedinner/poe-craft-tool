@@ -30,6 +30,8 @@ public sealed class KeyLoopEngine
         public required int Index { get; init; }
         public SemaphoreSlim WakeSignal { get; } = new(0);
         public CancellationTokenSource? RunCts { get; set; }
+        public CancellationToken EmergencyToken { get; set; }
+        public bool WorkerOwnsRun { get; set; }
         public KeyLoopSlot Configuration { get; set; } = new();
         public int Count { get; set; }
         public int RunId { get; set; }
@@ -97,6 +99,7 @@ public sealed class KeyLoopEngine
             .Select(index => index < configurations.Count ? configurations[index].CreateSnapshot() : new KeyLoopSlot())
             .ToArray();
         var activeIndexes = new List<int>();
+        int runId;
 
         lock (_gate)
         {
@@ -104,7 +107,8 @@ public sealed class KeyLoopEngine
             if (_host.EmergencyCts.IsCancellationRequested)
                 _host.ResetEmergencyStop();
 
-            _runId++;
+            runId = ++_runId;
+            var emergencyToken = _host.EmergencyCts.Token;
             for (var index = 0; index < MaxSlots; index++)
             {
                 var runtime = _slots[index];
@@ -113,8 +117,10 @@ public sealed class KeyLoopEngine
                 runtime.Count = 0;
                 runtime.RunId = _runId;
                 runtime.Active = configuration.Enabled && KeyCode.Parse(configuration.Key) != 0;
+                runtime.WorkerOwnsRun = false;
+                runtime.EmergencyToken = emergencyToken;
                 runtime.RunCts = runtime.Active
-                    ? CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token, _host.EmergencyCts.Token)
+                    ? CancellationTokenSource.CreateLinkedTokenSource(_shutdownCts.Token, emergencyToken)
                     : null;
                 if (runtime.Active) activeIndexes.Add(index);
             }
@@ -125,42 +131,40 @@ public sealed class KeyLoopEngine
         }
 
         foreach (var index in activeIndexes) _slots[index].WakeSignal.Release();
-        ReportStatus("按键循环运行中...", force: true);
+        ReportStatus("按键循环运行中...", force: true, runId: runId);
         Diag.Log($"[按键循环] 启动: active={string.Join(',', activeIndexes.Select(i => i + 1))}");
         return true;
     }
 
     public bool Stop(string reason = "按键循环已停止")
     {
-        List<CancellationTokenSource> tokens;
+        List<(CancellationTokenSource Source, bool Dispose)> tokens;
+        int runId;
         lock (_gate)
         {
             if (!_running) return false;
             _running = false;
-            tokens = _slots.Where(slot => slot.RunId == _runId && slot.RunCts is not null)
-                .Select(slot => slot.RunCts!)
-                .ToList();
-            foreach (var slot in _slots.Where(slot => slot.RunId == _runId)) slot.Active = false;
+            runId = _runId;
+            tokens = RetireSlots(runId);
         }
 
-        foreach (var token in tokens) token.Cancel();
-        ReportStatus(reason, force: true);
+        CancelSlots(tokens);
+        ReportStatus(reason, force: true, runId: runId);
         Diag.Log($"[按键循环] 停止: reason={reason}");
         return true;
     }
 
     public bool Shutdown(TimeSpan timeout)
     {
-        List<CancellationTokenSource> tokens;
+        List<(CancellationTokenSource Source, bool Dispose)> tokens;
         lock (_gate)
         {
             if (_shutdownRequested) return _slots.All(slot => slot.Worker.IsCompleted);
             _shutdownRequested = true;
             _running = false;
-            tokens = _slots.Where(slot => slot.RunCts is not null).Select(slot => slot.RunCts!).ToList();
-            foreach (var slot in _slots) slot.Active = false;
+            tokens = RetireSlots(_runId);
         }
-        foreach (var token in tokens) token.Cancel();
+        CancelSlots(tokens);
         _shutdownCts.Cancel();
         try { return Task.WhenAll(_slots.Select(slot => slot.Worker)).Wait(timeout); }
         catch (AggregateException) { return _slots.All(slot => slot.Worker.IsCompleted); }
@@ -182,6 +186,7 @@ public sealed class KeyLoopEngine
             int runId;
             KeyLoopSlot configuration;
             CancellationTokenSource? runCts;
+            CancellationToken emergencyToken;
             lock (_gate)
             {
                 if (_shutdownRequested) return;
@@ -189,6 +194,8 @@ public sealed class KeyLoopEngine
                 runId = runtime.RunId;
                 configuration = runtime.Configuration;
                 runCts = runtime.RunCts;
+                emergencyToken = runtime.EmergencyToken;
+                runtime.WorkerOwnsRun = true;
             }
 
             string? error = null;
@@ -205,10 +212,10 @@ public sealed class KeyLoopEngine
                     await _pressAction(configuration.Key, runCts.Token);
                     lock (_gate)
                     {
-                        if (runtime.RunId != runId) break;
+                        if (runtime.RunId != runId || !runtime.Active) break;
                         runtime.Count++;
                     }
-                    ReportStatus("按键循环运行中...");
+                    ReportStatus("按键循环运行中...", runId: runId);
                     await Task.Delay(TimeSpan.FromSeconds(configuration.DelaySeconds), runCts.Token);
                 }
             }
@@ -228,7 +235,11 @@ public sealed class KeyLoopEngine
                     if (runtime.RunId == runId)
                     {
                         runtime.Active = false;
-                        if (ReferenceEquals(runtime.RunCts, runCts)) runtime.RunCts = null;
+                        if (ReferenceEquals(runtime.RunCts, runCts))
+                        {
+                            runtime.RunCts = null;
+                            runtime.WorkerOwnsRun = false;
+                        }
                     }
                 }
                 runCts.Dispose();
@@ -236,44 +247,77 @@ public sealed class KeyLoopEngine
 
             if (error is not null)
             {
-                StopRunFromWorker(runId, error);
-                ErrorOccurred?.Invoke(error);
+                if (StopRunFromWorker(runId, error)) ReportError(runId, error);
             }
-            else if (_host.EmergencyCts.IsCancellationRequested)
+            // 其他工具可以重置宿主令牌；本轮结束原因必须读取启动时保存的令牌。
+            else if (emergencyToken.IsCancellationRequested)
             {
                 StopRunFromWorker(runId, "按键循环已紧急停止");
             }
         }
     }
 
-    private void StopRunFromWorker(int runId, string reason)
+    private bool StopRunFromWorker(int runId, string reason)
     {
-        List<CancellationTokenSource> tokens;
+        List<(CancellationTokenSource Source, bool Dispose)> tokens;
         lock (_gate)
         {
-            if (_runId != runId || !_running) return;
+            if (_runId != runId || !_running) return false;
             _running = false;
-            tokens = _slots.Where(slot => slot.RunId == runId && slot.RunCts is not null)
-                .Select(slot => slot.RunCts!)
-                .ToList();
-            foreach (var slot in _slots.Where(slot => slot.RunId == runId)) slot.Active = false;
+            tokens = RetireSlots(runId);
         }
-        foreach (var token in tokens) token.Cancel();
-        ReportStatus(reason, force: true);
+        CancelSlots(tokens);
+        ReportStatus(reason, force: true, runId: runId);
+        return true;
     }
 
-    private void ReportStatus(string text, bool force = false)
+    // 调用方持有 _gate。尚未被 worker 接手的源由停止方释放，已接手的源由 worker finally 释放。
+    private List<(CancellationTokenSource Source, bool Dispose)> RetireSlots(int runId)
     {
-        KeyLoopStatus status;
+        var tokens = new List<(CancellationTokenSource, bool)>();
+        foreach (var slot in _slots.Where(slot => slot.RunId == runId))
+        {
+            slot.Active = false;
+            if (slot.RunCts is not { } source) continue;
+            tokens.Add((source, !slot.WorkerOwnsRun));
+            if (!slot.WorkerOwnsRun) slot.RunCts = null;
+        }
+        return tokens;
+    }
+
+    private static void CancelSlots(IEnumerable<(CancellationTokenSource Source, bool Dispose)> tokens)
+    {
+        foreach (var (source, dispose) in tokens)
+        {
+            // worker 可在收集快照后完成并释放源；该轮已结束时无需再取消它。
+            try { source.Cancel(); }
+            catch (ObjectDisposedException) { }
+            finally { if (dispose) source.Dispose(); }
+        }
+    }
+
+    private void ReportStatus(string text, bool force = false, int? runId = null)
+    {
         lock (_gate)
         {
+            if (runId is { } expected && expected != _runId) return;
             var now = Stopwatch.GetTimestamp();
             if (!force && _lastStatusTimestamp != 0 &&
                 Stopwatch.GetElapsedTime(_lastStatusTimestamp, now) < TimeSpan.FromMilliseconds(250))
                 return;
             _lastStatusTimestamp = now;
-            status = new KeyLoopStatus(_running, _slots.Select(slot => slot.Count).ToArray(), text);
+            var status = new KeyLoopStatus(_running, _slots.Select(slot => slot.Count).ToArray(), text);
+            // 状态检查和发布不可被新 Start 插入，否则旧停止消息可能晚于新启动消息。
+            StatusUpdated?.Invoke(status);
         }
-        StatusUpdated?.Invoke(status);
+    }
+
+    private void ReportError(int runId, string error)
+    {
+        lock (_gate)
+        {
+            // 取消其他槽位期间可能已经开始新轮；旧轮错误不能再进入新轮界面。
+            if (_runId == runId) ErrorOccurred?.Invoke(error);
+        }
     }
 }

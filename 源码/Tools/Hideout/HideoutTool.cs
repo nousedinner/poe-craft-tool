@@ -120,13 +120,7 @@ public sealed class HideoutTool : ITool, IEnableableTool
         try
         {
             _host!.Statuses.Report(Id, "正在输入回城命令", true);
-            var input = _host!.Input;
-            token.ThrowIfCancellationRequested();
-            input.PressAndRelease("enter"); // 打开聊天框
-            await Task.Delay(100, token);
-            await input.TypeTextAsync(command, token);
-            token.ThrowIfCancellationRequested();
-            input.PressAndRelease("enter"); // 发送
+            await _host.Input.SendChatCommandAsync(command, token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

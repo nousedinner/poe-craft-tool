@@ -202,9 +202,10 @@ public static class CraftDecisions
         return Mode3MagicDecision.ContinueAlteration;
     }
 
-    /// <summary>增幅后只判断魔法阶段阈值；即使已满足最终规则也必须先经过富豪。</summary>
-    public static Mode3MagicDecision AfterAugmentation(int hits, int threshold)
-        => hits >= threshold ? Mode3MagicDecision.ProceedToRegal : Mode3MagicDecision.ContinueAlteration;
+    /// <summary>增幅后先排除再判断魔法阶段阈值；即使已满足最终规则也必须先经过富豪。</summary>
+    public static Mode3MagicDecision AfterAugmentation(int hits, int threshold, bool hasExclude = false)
+        => !hasExclude && hits >= threshold
+            ? Mode3MagicDecision.ProceedToRegal : Mode3MagicDecision.ContinueAlteration;
 }
 
 /// <summary>完整洗装规则（对齐 Python CraftRules + validate）。</summary>

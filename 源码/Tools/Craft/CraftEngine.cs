@@ -20,11 +20,17 @@ public sealed record CraftStatus(string Text, int UseCount, int MatchCount, bool
 public sealed class CraftEngine
 {
     private readonly ToolHost _host;
+    private readonly Func<CraftRules, IReadOnlyDictionary<string, Point>, CancellationToken, Task>? _craftAction;
+    private readonly Func<CancellationToken, Task> _releaseKeys;
+    private readonly Func<CancellationToken, Task> _pollStopKey;
+    private readonly Action? _runClaimed;
     private readonly ManualResetEventSlim _wakeSignal = new(false);
     private CancellationTokenSource? _workCts;
+    private RunRequest? _pendingRun;
     private bool _running;
     private readonly Task _thread;
     private int _runId;
+    private int _activeRunId;
     private DateTime _lastStatusTime = DateTime.MinValue;
 
     // 运行时参数（Start 快照）
@@ -41,6 +47,8 @@ public sealed class CraftEngine
     private string? _completionReason;
     private ushort _stopKeyVk; // F6 停止键的虚拟键码（轮询兜底用）
     private uint _stopKeyModifiers;
+    private ushort _configuredStopKeyVk;
+    private uint _configuredStopKeyModifiers;
     private string? _activeCurrency;
     private Point _activeCurrencyCoordinate;
     private readonly CraftTimingProfile _timing = CraftTimingProfile.Default;
@@ -49,7 +57,12 @@ public sealed class CraftEngine
     // GetAsyncKeyState：轮询物理按键状态（兜底 RegisterHotKey 可能被游戏吞掉）
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
 
-    public bool IsRunning => _running;
+    private sealed record RunRequest(int Id, CraftRules Rules, Dictionary<string, Point> Coordinates,
+        int DelayMs, bool SoundEnabled, bool PopupEnabled, string SelectedSound, int ExhaustionThreshold,
+        bool Mode2ScourAlch, bool UseExalt, ushort StopKeyVk, uint StopKeyModifiers,
+        CancellationTokenSource Cancellation);
+
+    public bool IsRunning { get { lock (this) return _running; } }
     public int UseCount { get; private set; }
     public int MatchCount { get; private set; }
 
@@ -66,8 +79,22 @@ public sealed class CraftEngine
     public event Action<string>? ErrorOccurred;
 
     public CraftEngine(ToolHost host)
+        : this(host, null, host.Input.ReleaseAllKeysAsync)
+    {
+    }
+
+    /// <summary>内部验证可注入无输入动作；正式构造仍使用原输入、洗装和停止键轮询。</summary>
+    internal CraftEngine(ToolHost host,
+        Func<CraftRules, IReadOnlyDictionary<string, Point>, CancellationToken, Task>? craftAction,
+        Func<CancellationToken, Task> releaseKeys,
+        Func<CancellationToken, Task>? pollStopKey = null,
+        Action? runClaimed = null)
     {
         _host = host;
+        _craftAction = craftAction;
+        _releaseKeys = releaseKeys;
+        _pollStopKey = pollStopKey ?? PollStopKeyAsync;
+        _runClaimed = runClaimed;
         Diag.Log("[引擎] CraftEngine 构造，常驻线程启动");
         _thread = Task.Run(Loop); // 单常驻线程，启动即建
     }
@@ -102,22 +129,13 @@ public sealed class CraftEngine
                 return;
             }
 
-            _rules = rules.CreateSnapshot();
-            _coordinates = coordinates.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-            _delayMs = delayMs;
-            _soundEnabled = soundEnabled;
-            _popupEnabled = popupEnabled;
-            _selectedSound = selectedSound;
-            _exhaustionThreshold = exhaustionThreshold;
-            _mode2ScourAlch = mode2ScourAlch;
-            _useExalt = useExalt;
-            _completionReason = null;
-            _activeCurrency = null;
-            _activeCurrencyCoordinate = default;
-            _host.Input.ResetCraftClickInterval();
-            UseCount = 0;
-            MatchCount = 0;
-            _runId++;
+            // 在发布启动状态前创建本次取消源。Stop 无论发生在唤醒、认领或执行阶段，
+            // 都能取消同一请求；新请求只排队，不能覆盖旧任务仍在使用的参数。
+            _pendingRun = new RunRequest(++_runId, rules.CreateSnapshot(),
+                coordinates.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal),
+                delayMs, soundEnabled, popupEnabled, selectedSound, exhaustionThreshold,
+                mode2ScourAlch, useExalt, _configuredStopKeyVk, _configuredStopKeyModifiers,
+                CancellationTokenSource.CreateLinkedTokenSource(_host.EmergencyCts.Token));
             _running = true;
             _wakeSignal.Set();
             Diag.Log($"[引擎] Start: runId={_runId}, mode={rules.Mode}, delay={delayMs}ms, 坐标数={coordinates.Count}");
@@ -132,7 +150,12 @@ public sealed class CraftEngine
                      $"EmergencyCts.IsCancellationRequested={_host.EmergencyCts.IsCancellationRequested}");
             _running = false;
             _workCts?.Cancel();
+            var cancelledPending = _pendingRun is not null;
+            CancelPendingRun();
             _wakeSignal.Set();
+            // 待运行请求被撤销后没有自己的 finally；旧运行又会按代次忽略通知，
+            // 因此由本次停止负责结束可见状态。保留最后实际运行的计数。
+            if (cancelledPending) Stopped?.Invoke("已停止");
         }
     }
 
@@ -144,6 +167,7 @@ public sealed class CraftEngine
             _shutdownRequested = true;
             _running = false;
             _workCts?.Cancel();
+            CancelPendingRun();
             _wakeSignal.Set();
         }
         try { return _thread.Wait(timeout); }
@@ -154,8 +178,42 @@ public sealed class CraftEngine
     public void SetStopKey(string key)
     {
         var parsed = HotkeyParser.Parse(key);
-        _stopKeyVk = parsed?.Vk ?? 0;
-        _stopKeyModifiers = parsed?.Modifiers ?? 0;
+        lock (this)
+        {
+            _configuredStopKeyVk = parsed?.Vk ?? 0;
+            _configuredStopKeyModifiers = parsed?.Modifiers ?? 0;
+        }
+    }
+
+    // 调用方持有引擎锁；尚未被后台认领的请求由这里释放，活动请求由其 finally 释放。
+    private void CancelPendingRun()
+    {
+        if (_pendingRun is not { } pending) return;
+        _pendingRun = null;
+        pending.Cancellation.Cancel();
+        pending.Cancellation.Dispose();
+    }
+
+    private void ApplyRun(RunRequest request)
+    {
+        _activeRunId = request.Id;
+        _rules = request.Rules;
+        _coordinates = request.Coordinates;
+        _delayMs = request.DelayMs;
+        _soundEnabled = request.SoundEnabled;
+        _popupEnabled = request.PopupEnabled;
+        _selectedSound = request.SelectedSound;
+        _exhaustionThreshold = request.ExhaustionThreshold;
+        _mode2ScourAlch = request.Mode2ScourAlch;
+        _useExalt = request.UseExalt;
+        _stopKeyVk = request.StopKeyVk;
+        _stopKeyModifiers = request.StopKeyModifiers;
+        _completionReason = null;
+        _activeCurrency = null;
+        _activeCurrencyCoordinate = default;
+        _host.Input.ResetCraftClickInterval();
+        UseCount = 0;
+        MatchCount = 0;
     }
 
     /// <summary>
@@ -218,11 +276,19 @@ public sealed class CraftEngine
         while (true)
         {
             _wakeSignal.Wait();
-            _wakeSignal.Reset();
-            if (_shutdownRequested) break;
-            if (!_running) continue;
+            RunRequest request;
+            lock (this)
+            {
+                _wakeSignal.Reset();
+                if (_shutdownRequested) break;
+                if (_pendingRun is not { } pending) continue;
+                request = pending;
+                _pendingRun = null;
+                _workCts = request.Cancellation;
+                ApplyRun(request);
+            }
 
-            var myRunId = _runId;
+            var myRunId = request.Id;
             var runMeasurement = new CraftRunMeasurement();
             _runMeasurement = runMeasurement;
             var runContext = new
@@ -244,34 +310,37 @@ public sealed class CraftEngine
             Diag.Log($"[引擎] Loop: 开始运行, runId={myRunId}");
             try
             {
-                _workCts = new CancellationTokenSource();
-
-                // 诊断：检查 EmergencyCts 状态
-                var emergCancelled = _host.EmergencyCts.IsCancellationRequested;
-                if (emergCancelled)
-                    Diag.Log("[引擎] Loop: ⚠️ EmergencyCts 已取消！linked CTS 将立即取消");
-
-                using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                    _workCts.Token, _host.EmergencyCts.Token);
-
-                Diag.Log($"[引擎] Loop: linked CTS 创建完成, linked.IsCancellationRequested={linked.IsCancellationRequested}");
+                _runClaimed?.Invoke();
+                var token = request.Cancellation.Token;
+                token.ThrowIfCancellationRequested();
 
                 // 启动停止键轮询任务（对齐 Python _check_stop_key 兜底机制）
-                using var pollCts = CancellationTokenSource.CreateLinkedTokenSource(linked.Token);
-                var pollTask = Task.Run(() => PollStopKeyAsync(pollCts.Token));
-
-                await _host.Input.ReleaseAllKeysAsync(linked.Token); // 释放键盘修饰键（对齐 Python _release_all）
-                Diag.Log("[引擎] Loop: ReleaseAllKeys 完成，进入 DoCrafting");
-                await DoCraftingAsync(linked.Token);
-                Diag.Log("[引擎] Loop: DoCrafting 正常结束");
-
-                pollCts.Cancel(); // 停止轮询
-                try { await pollTask; } catch { }
+                using var pollCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                var pollToken = pollCts.Token;
+                var pollTask = Task.Run(() => _pollStopKey(pollToken));
+                try
+                {
+                    await _releaseKeys(token); // 释放键盘修饰键（对齐 Python _release_all）
+                    token.ThrowIfCancellationRequested();
+                    Diag.Log("[引擎] Loop: ReleaseAllKeys 完成，进入 DoCrafting");
+                    if (_craftAction is not null)
+                        await _craftAction(_rules, _coordinates, token);
+                    else
+                        await DoCraftingAsync(token);
+                    Diag.Log("[引擎] Loop: DoCrafting 正常结束");
+                }
+                finally
+                {
+                    // Dispose 不会取消等待任务；异常、取消和正常完成均必须先取消再等待。
+                    pollCts.Cancel();
+                    try { await pollTask; }
+                    catch (OperationCanceledException) { }
+                }
             }
             catch (OperationCanceledException ex)
             {
                 // 诊断：区分取消来源
-                var workCancelled = _workCts?.IsCancellationRequested ?? false;
+                var workCancelled = request.Cancellation.IsCancellationRequested;
                 var emergCancelled2 = _host.EmergencyCts.IsCancellationRequested;
                 Diag.Log($"[引擎] Loop: OperationCanceledException, runId={myRunId}, " +
                          $"_workCts.Cancelled={workCancelled}, EmergencyCts.Cancelled={emergCancelled2}, " +
@@ -283,10 +352,13 @@ public sealed class CraftEngine
                 Diag.Log($"[引擎] Loop: 异常 runId={myRunId}: {ex}");
                 lock (this)
                 {
-                    if (_runId == myRunId) { _running = false; _wakeSignal.Set(); }
+                    if (_runId == myRunId)
+                    {
+                        _running = false;
+                        ErrorOccurred?.Invoke($"异常: {ex.Message}");
+                    }
                 }
                 _completionReason = $"运行出错: {ex.Message}";
-                ErrorOccurred?.Invoke($"异常: {ex.Message}");
             }
             finally
             {
@@ -295,7 +367,7 @@ public sealed class CraftEngine
                 // 兜底释放：任何停止路径（含取消/异常）都必须释放键盘修饰键，
                 // 用 CancellationToken.None 保证释放不被取消中断（否则 Shift 残留）。
                 // 不释放鼠标按键（对齐 Python _release_all：只释放 shift/ctrl/alt）。
-                try { await _host.Input.ReleaseAllKeysAsync(CancellationToken.None); } catch { }
+                try { await _releaseKeys(CancellationToken.None); } catch { }
                 Diag.Log($"[引擎] Loop: finally 兜底释放完成, runId={myRunId}");
                 var runReport = runMeasurement.SaveReport(runSummary, runContext,
                     _host.Storage.DataDir);
@@ -304,20 +376,17 @@ public sealed class CraftEngine
 
                 lock (this)
                 {
+                    // 后台串行执行；旧运行只释放自己认领的取消源，待运行请求保持独立。
+                    if (ReferenceEquals(_workCts, request.Cancellation)) _workCts = null;
+                    request.Cancellation.Dispose();
                     if (_runId == myRunId)
                     {
-                        // 只清理本次运行（审查 E：旧运行 finally 不得 Dispose 新运行的 _workCts）
                         _running = false;
-                        _wakeSignal.Set();
-                        _workCts?.Dispose();
-                        _workCts = null;
+                        var reason = _completionReason ?? "已停止";
+                        Diag.Log($"[引擎] Loop: Stopped 事件触发, runId={myRunId}, reason={reason}");
+                        Stopped?.Invoke(reason);
                     }
-                }
-                if (_runId == myRunId)
-                {
-                    var reason = _completionReason ?? "已停止";
-                    Diag.Log($"[引擎] Loop: Stopped 事件触发, runId={myRunId}, reason={reason}");
-                    Stopped?.Invoke(reason);
+                    if (_pendingRun is not null) _wakeSignal.Set();
                 }
             }
         }
@@ -335,10 +404,15 @@ public sealed class CraftEngine
             while (!token.IsCancellationRequested)
             {
                 await Task.Delay(50, token);
-                if (_running && IsStopKeyPhysicallyPressed())
+                if (IsRunning && IsStopKeyPhysicallyPressed())
                 {
-                    Diag.Log("[引擎] PollStopKey: 检测到停止键物理按下，触发 Stop");
-                    Stop();
+                    lock (this)
+                    {
+                        // 上次轮询不能越过取消边界去停止已经排队的新运行。
+                        if (token.IsCancellationRequested || _runId != _activeRunId) return;
+                        Diag.Log("[引擎] PollStopKey: 检测到停止键物理按下，触发 Stop");
+                        Stop();
+                    }
                     return;
                 }
             }
@@ -646,20 +720,32 @@ public sealed class CraftEngine
 
     private void ReportStatus(string text, bool force = false)
     {
-        var now = DateTime.Now;
-        if (!force && now - _lastStatusTime < TimeSpan.FromMilliseconds(250)) return; // 250ms 节流
-        _lastStatusTime = now;
-        StatusUpdated?.Invoke(new CraftStatus(text, UseCount, MatchCount, _running));
+        lock (this)
+        {
+            if (_runId != _activeRunId) return;
+            var now = DateTime.Now;
+            if (!force && now - _lastStatusTime < TimeSpan.FromMilliseconds(250)) return; // 250ms 节流
+            _lastStatusTime = now;
+            StatusUpdated?.Invoke(new CraftStatus(text, UseCount, MatchCount, _running));
+        }
     }
 
-    private void OnSuccess()
+    private void OnSuccess(CancellationToken token)
     {
-        _completionReason = $"匹配成功! 共{UseCount}次";
-        Diag.Log($"[引擎] OnSuccess: 匹配成功! 共{UseCount}次, soundEnabled={_soundEnabled}, selectedSound={_selectedSound}");
-        ReportStatus($"匹配成功! 共{UseCount}次", force: true);
-        MatchFound?.Invoke();
-        if (_soundEnabled) _host.Sound.Play(_selectedSound);
-        if (_popupEnabled) _host.Notification.Show($"匹配成功!\n使用次数: {UseCount}");
+        lock (this)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!_running || _activeRunId != _runId) throw new OperationCanceledException(token);
+            _completionReason = $"匹配成功! 共{UseCount}次";
+            Diag.Log($"[引擎] OnSuccess: 匹配成功! 共{UseCount}次, soundEnabled={_soundEnabled}, selectedSound={_selectedSound}");
+            ReportStatus($"匹配成功! 共{UseCount}次", force: true);
+            // 状态订阅者可能同步停止/重启；可重入锁不能替代回调后的取消检查。
+            token.ThrowIfCancellationRequested();
+            if (!_running || _activeRunId != _runId) throw new OperationCanceledException(token);
+            if (_soundEnabled) _host.Sound.Play(_selectedSound);
+            if (_popupEnabled) _host.Notification.Show($"匹配成功!\n使用次数: {UseCount}");
+            MatchFound?.Invoke();
+        }
     }
 
     // ── Mode 1：单通货（Python _mode1）──
@@ -699,7 +785,7 @@ public sealed class CraftEngine
 
                 if (result.MeetsFinalRules(_rules))
                 {
-                    OnSuccess();
+                    OnSuccess(token);
                     return;
                 }
 
@@ -772,7 +858,7 @@ public sealed class CraftEngine
                     : $"#{UseCount} 改造中..."),
             () => ReportStatus($"#{UseCount} 增幅后不满足，继续改造..."), token);
         token.ThrowIfCancellationRequested();
-        OnSuccess();
+        OnSuccess(token);
     }
 
     // ── Mode 2 子模式：重铸+点金（Python _mode2_scour_alch）──
@@ -826,7 +912,7 @@ public sealed class CraftEngine
             },
             () => ReportStatus($"#{UseCount} 点金后不满足，重铸后继续..."), token);
         token.ThrowIfCancellationRequested();
-        OnSuccess();
+        OnSuccess(token);
     }
 
     private async Task UseMode3CurrencyOnItemAsync(Point itemCoord, CancellationToken token)
@@ -980,7 +1066,7 @@ public sealed class CraftEngine
                                     result,
                                     affixCount,
                                     threshold,
-                                    _runId,
+                                    _activeRunId,
                                     UseCount);
                             }
 
@@ -1029,9 +1115,11 @@ public sealed class CraftEngine
                     MatchCount = result.TotalHits;
                     var hits = result.TotalHits;
 
-                    if (CraftDecisions.AfterAugmentation(hits, threshold) == Mode3MagicDecision.ProceedToRegal)
+                    if (CraftDecisions.AfterAugmentation(hits, threshold, result.HasExclude) == Mode3MagicDecision.ProceedToRegal)
                         break; // 增幅后达标 → 去富豪
-                    ReportStatus($"#{UseCount} 增幅后命中{hits}不足{threshold}，继续改造...");
+                    ReportStatus(result.HasExclude
+                        ? $"#{UseCount} 增幅后排除命中，继续改造..."
+                        : $"#{UseCount} 增幅后命中{hits}不足{threshold}，继续改造...");
                     continue; // 继续改造（不重铸，方案 D4）
                 }
                 finally
@@ -1057,7 +1145,7 @@ public sealed class CraftEngine
 
                 if (result.MeetsFinalRules(_rules))
                 {
-                    OnSuccess();
+                    OnSuccess(token);
                     return;
                 }
             }
@@ -1085,7 +1173,7 @@ public sealed class CraftEngine
 
                     if (result.MeetsFinalRules(_rules))
                     {
-                        OnSuccess();
+                        OnSuccess(token);
                         return;
                     }
                 }
