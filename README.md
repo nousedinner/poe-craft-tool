@@ -111,11 +111,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\源码\scripts\Build-
 .\源码\scripts\Publish-UpdateRelease.ps1 -ReleaseDirectory <本次发布目录>
 ```
 
-最后一条默认只校验本地材料并输出计划，不读取凭据或访问服务器。真正上线需显式 `-Execute`、`-CloudflareZoneId` 以及指定环境变量中的最小权限清缓存令牌；脚本先上传不可变版本包、公网核验，再切固定 ZIP 别名、清缓存，最后发布版本清单。长缓存、校验失败或无法确认恢复结果会阻断发布并保留事务记录。显式发布回退使用 `-Rollback -Transaction <已记录事务标识> -Execute`，旧包和旧清单须可验证。
+最后一条默认只校验本地材料并输出计划，不读取凭据或访问服务器。真正上线需显式 `-Execute`。缓存策略默认 `-CacheStrategy headers`，不需要 Cloudflare API 凭据；依靠实际生效的响应策略和普通公网下载的哈希／大小验证。选择 `-CacheStrategy cloudflare` 时才需要 `-CloudflareZoneId` 和指定环境变量中的最小权限清缓存令牌，并精确清理两个固定入口。
+
+两种策略均先上传不可变版本包、公网核验，再切固定 ZIP 别名，最后发布版本清单；长缓存、内容不符或无法确认恢复结果都会阻断发布。`version.json` 要求 `no-store`，固定 ZIP 接受 `no-store`、完整 `no-cache` 或不被共享缓存正期限覆盖的 `max-age=0, must-revalidate`。首次改变缓存策略还要处理旧缓存迁移，当前一次请求不能证明所有浏览器的历史缓存均已清空。显式发布回退使用 `-Rollback -Transaction <已记录事务标识> -Execute -CacheStrategy <策略>`，旧包和旧清单仍须从公网验证。
 
 `Prepare-UpdateRelease.ps1` 默认 `-Mode exe-only`；`files` 模式需 `-ManagedFiles` 指定 JSON 数组，条目为 `path/allowCreate`，还可用 `-BasePackages` 或 `-BaseManifests` 指定官方旧包／签名清单的路径数组文件。工具据此生成可信旧文件哈希列表，不把玩家当前文件猜成可覆盖的官方资源。首版目标白名单为主 EXE、根目录 DLL、`sounds/` 单层音频；不支持删除文件，不允许配置目录。更新器协议、最低适用版本、.NET 运行时、平台和配置兼容标识不符时拒绝自动替换。
 
 客户端使用 `.shike-updates/` 保存隔离会话、恢复材料和安装目录的版本记录。中断事务会阻止普通启动混合文件；需要人工恢复时，关闭所有目标实例后使用该会话原 `runner.exe --recover-update <session.json绝对路径> <会话token>`，恢复仍不绕过强制更新。正常异常会自动整批恢复；不承诺任意断电情况下都能自动恢复。更新成功后的已完成会话会在后续启动中安全清理。
+
+`Run-WpfUpdateAcceptance.ps1` 用当前项目版本和仅用于测试的下一版本构建同一正式 App，复用真实启动检查、实际更新提示、下载校验、退出许可、助手和新窗口健康确认；只在带归属标记、nonce 和 EXE 哈希匹配的隔离副本中使用本地 HTTP 处理器。验收始终禁止原生输入、热键、外部浏览器和后台服务请求；正常程序不启用该适配器。测试版不公开，不能把此项称为原始旧版二进制或线上玩家更新已验收。
 
 根目录只收录项目入口、Git 规则与 `源码/`。新增工具、源码和资源放在 `源码/` 下；截图、开发文档、配置、日志和构建产物留在本地。克隆后执行上面的 `core.hooksPath` 设置即可启用检查，提交和推送时会列出超出范围的文件。新功能确实需要扩大公开目录或文件类型时，同时更新 `.gitignore` 和 `.githooks/check-files`。
 

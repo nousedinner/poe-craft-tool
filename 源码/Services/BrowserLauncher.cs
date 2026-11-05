@@ -26,6 +26,7 @@ public static class BrowserLauncher
         }
         try
         {
+            Updates.UpdateAcceptanceContext.ForbidNativeOperation("OpenBrowser");
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
             error = string.Empty;
             return true;

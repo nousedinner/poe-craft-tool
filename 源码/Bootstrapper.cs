@@ -13,6 +13,11 @@ internal static class Bootstrapper
         try
         {
             if (UpdateBootstrap.TryRunHelper(args, out var exitCode)) return exitCode;
+            var acceptance = UpdateAcceptanceContext.LoadFromEnvironment();
+            if (acceptance is not null && (args.Contains("--startup-profile", StringComparer.Ordinal) ||
+                    args.Contains("--startup-lifecycle-check", StringComparer.Ordinal) ||
+                    (acceptance.Role == "origin" ? args.Length != 0 : args.Length != 3 || args[0] != "--update-start")))
+                throw new InvalidDataException("更新验收参数不能与普通诊断或非本案启动混用");
             updateStartup = UpdateBootstrap.ReadStartup(args);
             if (updateStartup is null && !args.Contains("--startup-profile", StringComparer.Ordinal) &&
                 UpdateBootstrap.IsUpdateBusy(Environment.ProcessPath!))
@@ -25,6 +30,14 @@ internal static class Bootstrapper
         }
         catch (Exception error)
         {
+            if (Environment.GetEnvironmentVariable(UpdateAcceptanceContext.CaseVariable) is not null ||
+                Environment.GetEnvironmentVariable(UpdateAcceptanceContext.TokenVariable) is not null ||
+                Environment.GetEnvironmentVariable(UpdateAcceptanceContext.StageVariable) is not null)
+            {
+                UpdateAcceptanceContext.Current?.Record("bootstrap-rejected", error.Message);
+                UpdateAcceptanceContext.Current?.WriteExitReport(65, false, false);
+                return 65; // 无效验收输入不能触碰日常data日志，也不能降级为普通启动。
+            }
             Diag.Log($"[更新入口] 拒绝无效更新启动：{error}");
             if (args.Length == 0)
                 MessageBox.Show(error.Message, "拾刻更新未完成", MessageBoxButton.OK, MessageBoxImage.Error);

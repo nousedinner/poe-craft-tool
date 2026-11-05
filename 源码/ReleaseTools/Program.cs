@@ -69,14 +69,15 @@ try
         case "publish":
         case "rollback":
         {
-            options.Only("manifest", "zip", "host", "remote-root", "execute", "zone-id", "token-env", "transaction");
+            options.Only("manifest", "zip", "host", "remote-root", "execute", "zone-id", "token-env", "transaction", "cache-strategy");
             var manifestPath = Path.GetFullPath(options.Required("manifest"));
             var manifest = UpdateManifest.Verify(File.ReadAllText(manifestPath), ReleaseTrust.PublicKeyPem, ReleaseTrust.KeyId);
             var zipPath = Path.GetFullPath(options.Required("zip"));
             ReleasePreparation.VerifyPackage(zipPath, manifest);
             await RemotePublisher.RunAsync(manifest, manifestPath, zipPath, options.Get("host", "myserver"),
                 options.Get("remote-root", "/var/www/poead"), options.Has("execute"), args[0] == "rollback",
-                options.Optional("transaction"), options.Optional("zone-id"), options.Get("token-env", "SHIKE_CF_API_TOKEN"));
+                options.Optional("transaction"), options.Optional("zone-id"), options.Get("token-env", "SHIKE_CF_API_TOKEN"),
+                options.Get("cache-strategy", "headers"));
             break;
         }
         case "self-test":

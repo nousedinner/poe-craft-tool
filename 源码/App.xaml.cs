@@ -29,6 +29,7 @@ public partial class App : Application
     private readonly bool _startupProfile;
     private readonly bool _startupLifecycleCheck;
     private readonly UpdateStartup? _updateStartup;
+    private readonly UpdateAcceptanceContext? _updateAcceptance;
     private UpdateSession? _installUpdate;
     private bool _updatePrepared;
     private bool _updateHealthConfirmed;
@@ -45,11 +46,13 @@ public partial class App : Application
         _startupProfile = startupProfile;
         _startupLifecycleCheck = startupLifecycleCheck;
         _updateStartup = updateStartup;
+        _updateAcceptance = UpdateAcceptanceContext.Current;
     }
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        _updateAcceptance?.Record("app-startup");
         DispatcherUnhandledException += (_, args) =>
         {
             if (args.Exception is not StorageException error) return;
@@ -115,7 +118,8 @@ public partial class App : Application
         {
             var validation = _updateStartup is { IsRollback: false };
             var storage = new StorageService { ReadOnlyForUpdateValidation = validation };
-            _host = new ToolHost(registry, storage) { AutomationSuspendedForUpdate = validation };
+            _host = new ToolHost(registry, storage, _updateAcceptance?.CreateNetwork())
+                { AutomationSuspendedForUpdate = validation || _updateAcceptance is not null };
             MarkStartup("公共服务创建完成");
 
             // 读取失败须中止启动，不能把未完整加载的默认值在退出时写回。
@@ -127,6 +131,7 @@ public partial class App : Application
                 tool.LoadSettings(JsonSerializer.SerializeToElement(section));
             }
             _settingsLoadedSuccessfully = true;
+            _updateAcceptance?.Record("configuration-loaded", new { readOnly = storage.ReadOnlyForUpdateValidation });
         }
         catch (StorageException error)
         {
@@ -138,9 +143,9 @@ public partial class App : Application
         MarkStartup("工具初始化与设置加载完成");
 
         _mainWindow = new MainWindow(registry, _host);
-        if (_updateStartup is { IsRollback: false }) _mainWindow.IsEnabled = false;
+        if (_updateStartup is { IsRollback: false } || _updateAcceptance is not null) _mainWindow.IsEnabled = false;
         _mainWindow.ContentRendered += OnMainWindowFirstRender;
-        if (_startupProfile) _mainWindow.ShowActivated = false;
+        if (_startupProfile || _updateAcceptance is not null) _mainWindow.ShowActivated = false;
         MainWindow = _mainWindow;
         MarkStartup("主窗口构造与事件连接完成");
 
@@ -163,13 +168,14 @@ public partial class App : Application
         MarkStartup("Show 返回");
 
         // 热键统一注册（需要窗口句柄）
-        if (!_startupProfile && _updateStartup is null)
+        if (!_startupProfile && _updateStartup is null && _updateAcceptance is null)
         {
             _host.Hotkeys.AttachToWindow(_mainWindow);
             RegisterHotkeys();
             MarkStartup("热键注册完成");
         }
         else MarkStartup("隔离测量跳过热键注册");
+        _updateAcceptance?.Record("native-hotkeys-suppressed");
 
         // 启动 0.5s 后自动检测 POE 进程（Python QTimer.singleShot(500)）
         // 统一观察启动后台任务；所有请求和延迟都服从应用退出信号。
@@ -177,7 +183,9 @@ public partial class App : Application
         {
             var cancellationToken = _backgroundCts.Token;
             // HttpClient 的首个请求可能同步加载代理/网络组件，不能占用首帧的 UI 线程。
-            _ = Task.Run(() => RunBackgroundTasksAsync(cancellationToken));
+            _ = Task.Run(() => _updateAcceptance is null
+                ? RunBackgroundTasksAsync(cancellationToken)
+                : ObserveBackgroundTaskAsync(RunNetworkTasksAsync(cancellationToken), cancellationToken));
         }
     }
 
@@ -186,6 +194,8 @@ public partial class App : Application
         if (!_mainWindow!.IsVisible) return;
         _mainWindow!.ContentRendered -= OnMainWindowFirstRender;
         _startup.Mark("主窗口首帧完成");
+        _updateAcceptance?.RecordMainRendered(_settingsLoadedSuccessfully,
+            _host!.Storage.ReadOnlyForUpdateValidation, _mainWindow.IsEnabled);
         Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ContextIdle, new Action(async () =>
         {
             if (_isShuttingDown) return;
@@ -196,10 +206,27 @@ public partial class App : Application
             {
                 try
                 {
+                    if (_updateAcceptance?.FailBeforeHealthy == true)
+                    {
+                        _updateAcceptance.Record("controlled-failure-before-health");
+                        Shutdown(72);
+                        return;
+                    }
                     await _updateStartup.MarkHealthyAsync(_backgroundCts.Token);
                     _updateHealthConfirmed = true;
                     if (_isShuttingDown) return;
                     _host!.Storage.ReadOnlyForUpdateValidation = false;
+                    if (_updateAcceptance is not null)
+                    {
+                        _updateAcceptance.Record("health-committed", new
+                        {
+                            committed = _updateStartup.Session.HasCommitAcknowledgement,
+                            readonlyReleased = !_host.Storage.ReadOnlyForUpdateValidation,
+                            nativeServicesStillSuppressed = _host.AutomationSuspendedForUpdate,
+                        });
+                        _mainWindow.Close();
+                        return;
+                    }
                     _host.AutomationSuspendedForUpdate = false;
                     _mainWindow.IsEnabled = true;
                     _host.Hotkeys.AttachToWindow(_mainWindow);
@@ -214,7 +241,14 @@ public partial class App : Application
                 }
                 return;
             }
-            if (!_startupProfile && _updateStartup is null)
+            if (_updateAcceptance?.IsWarmup == true)
+            {
+                try { await _updateAcceptance.VersionChecked.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
+                catch (Exception error) { _updateAcceptance.Record("warmup-check-failed", error.Message); Shutdown(73); return; }
+                _mainWindow.Close();
+                return;
+            }
+            if (!_startupProfile && _updateStartup is null && _updateAcceptance is null)
                 _ = Task.Run(() =>
                 {
                     try { UpdateBootstrap.CleanupCompleted(Environment.ProcessPath!); }
@@ -236,7 +270,8 @@ public partial class App : Application
 
     private bool TryAcquireSingleInstance()
     {
-        var mutexName = _startupProfile ? SingleInstanceMutexName + ".StartupProfile." + Environment.ProcessId : SingleInstanceMutexName;
+        var mutexName = _updateAcceptance is not null ? SingleInstanceMutexName + _updateAcceptance.MutexSuffix :
+            _startupProfile ? SingleInstanceMutexName + ".StartupProfile." + Environment.ProcessId : SingleInstanceMutexName;
         _singleInstanceMutex = new Mutex(initiallyOwned: false, mutexName);
         try
         {
@@ -349,11 +384,15 @@ public partial class App : Application
 
         // 1. 版本检查（新版 → 强制弹窗 + 打开下载页 + 退出）
         var ver = await _host.Network.CheckVersionAsync(cancellationToken);
+        _updateAcceptance?.Record("version-check-completed", new { found = ver is not null, verificationError = ver?.VerificationError is not null });
+        _updateAcceptance?.VersionChecked.TrySetResult();
         if (ver is not null)
         {
             await Dispatcher.InvokeAsync(() => ShowUpdateDialogAsync(ver, cancellationToken)).Task.Unwrap();
             return; // 不再执行签到/广告（Python 同）
         }
+
+        if (_updateAcceptance is not null) return; // 仅替换外部网络端口，验收不会上报统计或拉取广告。
 
         // 2. 签到（静默）
         cancellationToken.ThrowIfCancellationRequested();
@@ -379,6 +418,8 @@ public partial class App : Application
             _host.TriggerEmergencyStop();
             _mainWindow!.IsEnabled = false;
             _mainWindow.Hide();
+            _updateAcceptance?.Record("forced-update-blocked-old-ui", new { visible = _mainWindow.IsVisible,
+                enabled = _mainWindow.IsEnabled, automationSuspended = _host.AutomationSuspendedForUpdate });
             if (ver.VerificationError is { } verificationError)
             {
                 ThemedMessageBox.Show($"{verificationError}\n程序将退出。",
@@ -411,7 +452,7 @@ public partial class App : Application
             progress.SetMessage("正在下载并校验更新包…");
             progress.Show();
             session = UpdateSession.Create(manifest, Environment.ProcessPath!);
-            using var downloader = new UpdatePackageDownloader();
+            using var downloader = _updateAcceptance?.CreateDownloader() ?? new UpdatePackageDownloader();
             var candidate = await downloader.PrepareAsync(manifest, session.DownloadDirectory, updateCancellation.Token);
             await session.PrepareCandidateAsync(candidate, updateCancellation.Token);
             updateCancellation.Token.ThrowIfCancellationRequested();
@@ -422,6 +463,8 @@ public partial class App : Application
             await UpdateBootstrap.StartHelperAsync(session, updateCancellation.Token);
             _installUpdate = session;
             _updatePrepared = true;
+            _updateAcceptance?.Record("helper-ready", new { sessionPath = session.SessionPath });
+            _updateAcceptance?.BeforeExitPreparation();
         }
         catch (OperationCanceledException)
         {
@@ -527,10 +570,13 @@ public partial class App : Application
                     if (UpdateReadiness.CanApproveExit(_updatePrepared, _settingsLoadedSuccessfully, stopped, saveErrors))
                         _installUpdate.ApproveExit();
                     else _installUpdate.Abort("运行任务未完全结束或配置保存／退出清理失败，禁止替换");
+                    _updateAcceptance?.Record("exit-update-permission", new { approved = _installUpdate.IsApproved,
+                        aborted = _installUpdate.IsAborted, workersStopped = stopped, saveErrors = saveErrors.Count });
                 }
                 catch (Exception error) { Diag.Log($"[更新] 退出握手失败，助手不得替换：{error}"); e.ApplicationExitCode = 3; }
             }
             if (_updateStartup is { IsRollback: false } && !_updateHealthConfirmed) e.ApplicationExitCode = 4;
+            _updateAcceptance?.WriteExitReport(e.ApplicationExitCode, _settingsLoadedSuccessfully, _updateHealthConfirmed);
             if (_startupProfile)
             {
                 _startup.Mark("关闭流程清理完成");
@@ -540,7 +586,7 @@ public partial class App : Application
             }
             base.OnExit(e);
         }
-        if (!_startupProfile && _settingsLoadedSuccessfully && saveErrors.Count > 0 &&
+        if (!_startupProfile && _updateAcceptance is null && _settingsLoadedSuccessfully && saveErrors.Count > 0 &&
             !(_updateStartup is { IsRollback: false } && !_updateHealthConfirmed))
             NotificationService.ShowConfigurationError("退出时部分配置未能保存或清理，请保留 data/debug.log。\n\n" +
                                                        string.Join("\n\n", saveErrors.Distinct()));

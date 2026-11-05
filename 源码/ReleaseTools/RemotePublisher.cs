@@ -12,14 +12,16 @@ namespace ShiKe.ReleaseTools;
 internal static class RemotePublisher
 {
     internal const string ManifestUrl = "https://open.cancanneed.top/version.json";
+    private const string CacheMigrationNotice = "Before the first release under a new fixed-entry cache policy, historical CDN entries must be cleared by the selected cloudflare strategy or manually, or allowed to expire after the policy takes effect. Browser caches are separate. Ordinary public GET checks observe this connection only; they do not prove historical caches were cleared.";
 
     internal static async Task RunAsync(UpdateManifest manifest, string manifestPath, string zipPath,
-        string host, string remoteRoot, bool execute, bool rollback, string? transaction, string? zoneId, string tokenEnvironment)
+        string host, string remoteRoot, bool execute, bool rollback, string? transaction, string? zoneId, string tokenEnvironment,
+        string cacheStrategy = "headers")
     {
         ValidateRemoteArguments(host, remoteRoot);
+        var strategy = ParseCacheStrategy(cacheStrategy);
         if (!rollback && transaction is not null)
             throw new ArgumentException("新发布不得指定已有事务标识；恢复旧事务只能使用显式 rollback");
-        if (!Regex.IsMatch(tokenEnvironment, "^[A-Za-z_][A-Za-z0-9_]*$")) throw new ArgumentException("凭据环境变量名无效");
         if (rollback && (transaction is null || !Regex.IsMatch(transaction, "^[a-f0-9]{32}$")))
             throw new ArgumentException("回退必须指定发布日志中的 transaction 标识");
         transaction ??= Guid.NewGuid().ToString("N");
@@ -27,22 +29,23 @@ internal static class RemotePublisher
         var plan = new
         {
             mode = execute ? rollback ? "rollback" : "execute" : "plan-only", host, remoteRoot,
-            version = manifest.VersionText, transaction, immutablePackage = packagePath,
+            version = manifest.VersionText, transaction, immutablePackage = packagePath, cacheStrategy = StrategyName(strategy),
             fixedAlias = remoteRoot + "/downloads/shike-latest.zip", manifest = remoteRoot + "/version.json",
-            phases = new[] { "verify-local-signature-and-package", "upload-immutable-version", "verify-public-versioned-package",
-                "switch-fixed-alias", "purge-fixed-cache-via-cloudflare", "verify-public-fixed-package-and-cache-policy",
-                "announce-manifest-last", "purge-and-verify-public-manifest", "record-completion" },
-            cacheGate = "Cloudflare ZoneId and environment API token required; long-cache fixed ZIP or missing no-store manifest blocks announcement",
+            phases = new[] { "verify-local-signature-and-package",
+                strategy == CacheStrategy.Cloudflare ? "purge-and-verify-existing-fixed-entry-cache-policy" : "verify-existing-fixed-entry-cache-policy",
+                "upload-immutable-version", "verify-public-versioned-package", "switch-fixed-alias",
+                strategy == CacheStrategy.Cloudflare ? "purge-fixed-cache-via-cloudflare" : "use-effective-fixed-entry-cache-headers",
+                "verify-public-fixed-package-and-cache-policy", "announce-manifest-last",
+                strategy == CacheStrategy.Cloudflare ? "purge-and-verify-public-manifest" : "verify-public-manifest",
+                "record-completion" },
+            cacheGate = "Both strategies require ordinary public GET content/hash/cache checks. Fixed ZIP must require revalidation and manifest must be no-store. Only cloudflare strategy requires API credentials.",
+            historicalCacheMigration = CacheMigrationNotice,
             credentialsRead = false, serverContacted = false,
         };
         Console.WriteLine(JsonSerializer.Serialize(plan, new JsonSerializerOptions { WriteIndented = true }));
         if (!execute) return; // No credential lookup, SSH, SCP or HTTP occurs above this boundary.
 
-        if (zoneId is null || !Regex.IsMatch(zoneId, "^[a-fA-F0-9]{32}$"))
-            throw new InvalidOperationException("真实发布需要 Cloudflare ZoneId；不能用单点公网探测替代缓存清理");
-        var token = Environment.GetEnvironmentVariable(tokenEnvironment);
-        if (string.IsNullOrWhiteSpace(token))
-            throw new InvalidOperationException("缺少指定环境变量中的 Cloudflare API token，已阻止服务器写入");
+        var cachePolicy = PrepareCachePolicy(strategy, zoneId, tokenEnvironment);
         using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(3) };
         var control = new RemoteControl(host, remoteRoot, manifest, manifestPath, transaction);
         var beginAttempted = false;
@@ -52,8 +55,10 @@ internal static class RemotePublisher
         {
             var temp = recordPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             var bytes = JsonSerializer.SerializeToUtf8Bytes(new { schema = 1, transaction, version = manifest.VersionText,
-                phase, host, remoteRoot, packageSha256 = manifest.PackageSha256, recordedUtc = DateTimeOffset.UtcNow, error,
-                recovery = $"Publish-UpdateRelease.ps1 -ReleaseDirectory <this directory> -Rollback -Transaction {transaction} -Execute <Cloudflare arguments>" },
+                phase, host, remoteRoot, cacheStrategy = cachePolicy.Name, packageSha256 = manifest.PackageSha256,
+                recordedUtc = DateTimeOffset.UtcNow, error, historicalCacheMigration = CacheMigrationNotice,
+                recovery = $"Publish-UpdateRelease.ps1 -ReleaseDirectory <this directory> -Rollback -Transaction {transaction} -CacheStrategy {cachePolicy.Name} -Execute" +
+                    (strategy == CacheStrategy.Cloudflare ? " <Cloudflare arguments>" : "") },
                 new JsonSerializerOptions { WriteIndented = true });
             using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
@@ -68,14 +73,19 @@ internal static class RemotePublisher
             if (rollback)
             {
                 var restored = await control.InvokeAsync("rollback");
-                await PurgeAsync(http, zoneId, token, CancellationToken.None);
-                await VerifyRollbackAsync(http, restored, CancellationToken.None);
+                await ApplyCachePolicyAndVerifyAsync(http, cachePolicy,
+                    () => VerifyRollbackAsync(http, restored, CancellationToken.None), CancellationToken.None);
                 Record("rolled-back");
-                Console.WriteLine(JsonSerializer.Serialize(new { status = "rolled-back", transaction, immutablePackageRetained = true }));
+                Console.WriteLine(JsonSerializer.Serialize(new { status = "rolled-back", transaction,
+                    cacheStrategy = cachePolicy.Name, immutablePackageRetained = true }));
                 return;
             }
             // Check known public cache policy before any mutation; still recheck after alias switch.
-            await RequireManifestNoStoreAsync(http, CancellationToken.None);
+            await ApplyCachePolicyAndVerifyAsync(http, cachePolicy, async () =>
+            {
+                await RequireManifestNoStoreAsync(http, CancellationToken.None);
+                await RequireFixedEntryRevalidationAsync(http, CancellationToken.None);
+            }, CancellationToken.None);
             beginAttempted = true;
             var start = await control.InvokeAsync("begin");
             Record("begun");
@@ -86,22 +96,25 @@ internal static class RemotePublisher
             await VerifyPublicPackageAsync(http, manifest.PackageUrl, manifest.PackageSize, manifest.PackageSha256, false, CancellationToken.None);
             await control.InvokeAsync("switch-alias");
             Record("alias-switched");
-            await PurgeAsync(http, zoneId, token, CancellationToken.None);
-            await VerifyPublicPackageAsync(http, ReleasePreparation.ManualUrl, manifest.PackageSize, manifest.PackageSha256, true, CancellationToken.None);
-            await RequireManifestNoStoreAsync(http, CancellationToken.None);
+            await ApplyCachePolicyAndVerifyAsync(http, cachePolicy, async () =>
+            {
+                await VerifyPublicPackageAsync(http, ReleasePreparation.ManualUrl, manifest.PackageSize, manifest.PackageSha256, true, CancellationToken.None);
+                await RequireManifestNoStoreAsync(http, CancellationToken.None);
+            }, CancellationToken.None);
             await control.InvokeAsync("announce");
             Record("announced");
-            await PurgeAsync(http, zoneId, token, CancellationToken.None);
-            await VerifyPublicManifestAsync(http, File.ReadAllText(manifestPath), CancellationToken.None);
+            await ApplyCachePolicyAndVerifyAsync(http, cachePolicy,
+                () => VerifyPublicManifestAsync(http, File.ReadAllText(manifestPath), CancellationToken.None), CancellationToken.None);
             await control.InvokeAsync("complete");
             completed = true;
             Record("complete");
             Console.WriteLine(JsonSerializer.Serialize(new
             {
-                status = "published", version = manifest.VersionText, transaction,
+                status = "published", version = manifest.VersionText, transaction, cacheStrategy = cachePolicy.Name,
                 verified = new[] { "signature", "immutable-package-size-and-sha256", "fixed-package-size-and-sha256",
-                    "fixed-cache-policy", "cloudflare-purge-accepted", "public-manifest-exact-bytes" },
-                limitation = "Public checks observe this connection only; historical browser caches cannot be purged remotely.",
+                    "fixed-cache-policy", "public-manifest-exact-bytes" }
+                    .Concat(strategy == CacheStrategy.Cloudflare ? new[] { "cloudflare-purge-accepted" } : []),
+                limitation = CacheMigrationNotice,
             }));
         }
         catch (Exception error)
@@ -125,13 +138,13 @@ internal static class RemotePublisher
                 async () =>
                 {
                     restored = await control.InvokeAsync("rollback-incomplete");
-                    await PurgeAsync(http, zoneId, token, CancellationToken.None);
                 },
-                () => VerifyRollbackAsync(http, restored, CancellationToken.None));
+                () => ApplyCachePolicyAndVerifyAsync(http, cachePolicy,
+                    () => VerifyRollbackAsync(http, restored, CancellationToken.None), CancellationToken.None));
             if (recovery.Kind == PublicationRecovery.Completed)
             {
                 try { Record("complete-confirmed-after-error", error.Message); } catch (IOException) { }
-                Console.WriteLine(JsonSerializer.Serialize(new { status = "published", transaction, acknowledgementRecovered = true,
+                Console.WriteLine(JsonSerializer.Serialize(new { status = "published", transaction, cacheStrategy = cachePolicy.Name, acknowledgementRecovered = true,
                     verified = new[] { "remote-complete", "public-fixed-package", "public-signed-manifest" } }));
                 return;
             }
@@ -151,6 +164,53 @@ internal static class RemotePublisher
             throw new IOException("发布结果需核对，已保留线上现状且未猜测回滚。transaction=" + transaction +
                 "; 原因=" + error.Message + "; 核对原因=" + recovery.Message, error);
         }
+    }
+
+    internal enum CacheStrategy { Headers, Cloudflare }
+
+    internal static CacheStrategy ParseCacheStrategy(string value) => value.ToLowerInvariant() switch
+    {
+        "headers" => CacheStrategy.Headers,
+        "cloudflare" => CacheStrategy.Cloudflare,
+        _ => throw new ArgumentException("缓存策略必须为 headers 或 cloudflare"),
+    };
+
+    private static string StrategyName(CacheStrategy strategy)
+        => strategy == CacheStrategy.Headers ? "headers" : "cloudflare";
+
+    internal sealed class CachePolicy(CacheStrategy strategy, string? zoneId, string? token)
+    {
+        internal string Name => StrategyName(strategy);
+
+        internal Task RefreshAsync(HttpClient http, CancellationToken cancellationToken)
+            => strategy == CacheStrategy.Headers ? Task.CompletedTask :
+                PurgeAsync(http, zoneId!, token!, cancellationToken);
+    }
+
+    internal static CachePolicy PrepareCachePolicy(CacheStrategy strategy, string? zoneId, string tokenEnvironment,
+        Func<string, string?>? readEnvironment = null)
+    {
+        // headers 不读取环境变量或使用 Cloudflare 参数，不要求任何第三方凭据。
+        if (strategy == CacheStrategy.Headers) return new(strategy, null, null);
+        if (strategy != CacheStrategy.Cloudflare) throw new ArgumentException("未知缓存策略");
+        if (zoneId is null || !Regex.IsMatch(zoneId, @"\A[a-fA-F0-9]{32}\z"))
+            throw new InvalidOperationException("cloudflare 策略需要有效的 Cloudflare ZoneId");
+        if (!Regex.IsMatch(tokenEnvironment, @"\A[A-Za-z_][A-Za-z0-9_]*\z"))
+            throw new ArgumentException("凭据环境变量名无效");
+        var token = (readEnvironment ?? Environment.GetEnvironmentVariable)(tokenEnvironment);
+        if (string.IsNullOrWhiteSpace(token))
+            throw new InvalidOperationException("cloudflare 策略缺少指定环境变量中的 API token，已阻止服务器写入");
+        return new(strategy, zoneId, token);
+    }
+
+    internal static async Task ApplyCachePolicyAndVerifyAsync(HttpClient http, CachePolicy policy,
+        Func<Task> verify, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        await policy.RefreshAsync(http, token);
+        token.ThrowIfCancellationRequested();
+        // 两种策略都必须执行相同内容与缓存核验；跳过 purge 不等于跳过验证。
+        await verify();
     }
 
     internal enum PublicationRecovery { NotStarted, Completed, RolledBack, RecoveryRequired, CompletedUnconfirmed }
@@ -240,7 +300,29 @@ internal static class RemotePublisher
     }
 
     internal static bool AllowsRevalidation(CacheControlHeaderValue? cache)
-        => cache is not null && (cache.NoStore || cache.NoCache || cache.MaxAge == TimeSpan.Zero);
+    {
+        if (cache is null) return false;
+        if (cache.NoStore || (cache.NoCache && cache.NoCacheHeaders.Count == 0)) return true;
+        // max-age=0 只使响应立即过期。还须禁止旧内容重用，且共享缓存期限不能覆盖它。
+        // 限定字段的 no-cache 不能替代整份 ZIP 的重新验证。
+        return cache.MaxAge == TimeSpan.Zero && cache.MustRevalidate &&
+               (cache.SharedMaxAge is null || cache.SharedMaxAge == TimeSpan.Zero) &&
+               !cache.Extensions.Any(extension =>
+                   (extension.Name.Equals("stale-if-error", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Name.Equals("stale-while-revalidate", StringComparison.OrdinalIgnoreCase)) &&
+                   extension.Value?.Trim('"') != "0");
+    }
+
+    internal static async Task RequireFixedEntryRevalidationAsync(HttpClient http, CancellationToken token,
+        TimeSpan? completeTimeout = null)
+    {
+        using var deadline = CreateDeadline(token, completeTimeout);
+        // 普通 GET，不添加 no-cache 请求头或随机查询参数；不能掩盖旧客户端实际取得的策略。
+        using var response = await http.GetAsync(ReleasePreparation.ManualUrl,
+            HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+        if (response.StatusCode != HttpStatusCode.OK || !AllowsRevalidation(response.Headers.CacheControl))
+            throw new InvalidDataException("固定 ZIP 当前公开响应不要求重新验证；请先处理缓存策略与历史旧缓存，再发布");
+    }
 
     internal static async Task VerifyRollbackAsync(HttpClient http, JsonElement restored, CancellationToken token)
     {

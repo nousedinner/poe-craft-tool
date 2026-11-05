@@ -77,6 +77,7 @@ public sealed class HotkeyManager
     /// <summary>附着到主窗口（拿句柄 + WM_HOTKEY 消息）。窗口句柄未就绪时等 SourceInitialized。</summary>
     public void AttachToWindow(Window window)
     {
+        ShiKe.Services.Updates.UpdateAcceptanceContext.ForbidNativeOperation("AttachHotkeys");
         var helper = new WindowInteropHelper(window);
         if (helper.Handle != 0)
         {
@@ -101,6 +102,7 @@ public sealed class HotkeyManager
     /// </summary>
     public List<string> RegisterAll(IReadOnlyList<HotkeyRequest> requests)
     {
+        if (requests.Count > 0) ShiKe.Services.Updates.UpdateAcceptanceContext.ForbidNativeOperation("RegisterHotkeys");
         var conflicts = new List<string>();
         if (_hwnd == 0)
         {

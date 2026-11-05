@@ -34,6 +34,7 @@ public static class ClipboardHelper
     /// <summary>读取剪贴板文本。占用冲突重试 5 次，失败/空返回 ""（对齐 pyperclip.paste 异常兜底）。</summary>
     public static string GetText()
     {
+        Updates.UpdateAcceptanceContext.ForbidNativeOperation("OpenClipboard(read)");
         for (var attempt = 0; attempt < 5; attempt++)
         {
             if (OpenClipboard(IntPtr.Zero))
@@ -69,6 +70,7 @@ public static class ClipboardHelper
     /// </summary>
     public static bool TryClear()
     {
+        Updates.UpdateAcceptanceContext.ForbidNativeOperation("OpenClipboard(clear)");
         for (var attempt = 0; attempt < 5; attempt++)
         {
             if (OpenClipboard(IntPtr.Zero))

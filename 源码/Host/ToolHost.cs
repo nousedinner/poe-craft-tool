@@ -12,7 +12,7 @@ public sealed class ToolHost
     private readonly ToolRegistry _registry;
     private CancellationTokenSource _emergencyCts = new();
 
-    public ToolHost(ToolRegistry registry, StorageService? storage = null)
+    public ToolHost(ToolRegistry registry, StorageService? storage = null, NetworkService? network = null)
     {
         _registry = registry;
         Foreground = new ForegroundDetector();
@@ -24,7 +24,7 @@ public sealed class ToolHost
         Hotkeys.RuntimeErrorOccurred += Notification.ShowError;
         Sound = new SoundService();
         Coordinates = new CoordinateRecorder(Storage);
-        Network = new NetworkService();
+        Network = network ?? new NetworkService();
     }
 
     public CancellationTokenSource EmergencyCts => _emergencyCts;

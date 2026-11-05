@@ -176,6 +176,7 @@ public sealed class InputSimulator
     /// <summary>发送鼠标事件。返回 true=SendInput 报告成功。</summary>
     private static bool SendMouse(uint flags)
     {
+        Updates.UpdateAcceptanceContext.ForbidNativeOperation("SendInput(mouse)");
         var input = new INPUT
         {
             type = INPUT_MOUSE,
@@ -201,6 +202,7 @@ public sealed class InputSimulator
     /// </summary>
     private static bool SendKey(ushort vk, bool up)
     {
+        Updates.UpdateAcceptanceContext.ForbidNativeOperation("SendInput(key)");
         var scan = (ushort)MapVirtualKey(vk, 0); // MAPVK_VK_TO_VSC
         var description = DescribeKeyboardInput(vk, up, scan);
         var input = new INPUT
@@ -260,6 +262,7 @@ public sealed class InputSimulator
 
     internal async Task MoveToAsync(int x, int y, int settleMs, CancellationToken token)
     {
+        Updates.UpdateAcceptanceContext.ForbidNativeOperation("SetCursorPos");
         CheckEmergencyStop();
         if (!SetCursorPos(x, y))
         {
@@ -319,6 +322,7 @@ public sealed class InputSimulator
 
     private async Task PrepareCraftClickAsync(int x, int y, int delayMs, int settleMs, CancellationToken token)
     {
+        Updates.UpdateAcceptanceContext.ForbidNativeOperation("SetCursorPos(craft)");
         await EnsureForegroundForInputAsync(token);
         int ox = x + Random.Shared.Next(-10, 11);
         int oy = y + Random.Shared.Next(-10, 11);
@@ -463,6 +467,7 @@ public sealed class InputSimulator
 
     private static void SendKeyUnicodeOrThrow(char ch, bool down)
     {
+        Updates.UpdateAcceptanceContext.ForbidNativeOperation("SendInput(unicode)");
         var input = new INPUT
         {
             type = INPUT_KEYBOARD,

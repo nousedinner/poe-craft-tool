@@ -58,13 +58,137 @@ internal static class ReleaseSelfTests
             }),
             ("默认发布只输出计划不读取凭据或联网", async () =>
             {
-                await RemotePublisher.RunAsync(manifest, "not-read.json", "not-read.zip", "myserver", "/var/www/poead",
-                    false, false, null, null, "SHIKE_ABSENT_TEST_" + Guid.NewGuid().ToString("N"));
+                foreach (var strategy in new[] { "headers", "cloudflare" })
+                    await RemotePublisher.RunAsync(manifest, "not-read.json", "not-read.zip", "myserver", "/var/www/poead",
+                        false, false, null, null, "SHIKE_ABSENT_TEST_" + Guid.NewGuid().ToString("N"), strategy);
             }),
-            ("没有Cloudflare凭据不得开始服务器写入", async () =>
+            ("选择Cloudflare策略但缺凭据不得开始服务器写入", async () =>
             {
                 await RejectAsync(() => RemotePublisher.RunAsync(manifest, "not-read.json", "not-read.zip", "myserver", "/var/www/poead",
-                    true, false, null, new string('a', 32), "SHIKE_ABSENT_TEST_" + Guid.NewGuid().ToString("N")));
+                    true, false, null, new string('a', 32), "SHIKE_ABSENT_TEST_" + Guid.NewGuid().ToString("N"), "cloudflare"));
+            }),
+            ("headers策略不读取凭据也不发送Cloudflare请求", async () =>
+            {
+                var reads = 0;
+                var requests = 0;
+                var verification = 0;
+                var policy = RemotePublisher.PrepareCachePolicy(RemotePublisher.CacheStrategy.Headers,
+                    "unused-zone", "unused env name", _ => { reads++; throw new Exception("不能读取CF凭据"); });
+                using var http = Client((_, _) =>
+                {
+                    requests++;
+                    return Response(Encoding.UTF8.GetBytes("{\"success\":true}"), "no-store");
+                });
+                await RemotePublisher.ApplyCachePolicyAndVerifyAsync(http, policy,
+                    () => { verification++; return Task.CompletedTask; }, CancellationToken.None);
+                Require(policy.Name == "headers" && reads == 0 && requests == 0 && verification == 1,
+                    "默认策略应直接保留核验步骤，不索取或使用CF凭据");
+            }),
+            ("只有Cloudflare策略检查并读取其凭据", () =>
+            {
+                var reads = 0;
+                string? Read(string name) { reads++; Require(name == "TEST_TOKEN", "读取了错误的环境变量"); return "test-only-token"; }
+                var policy = RemotePublisher.PrepareCachePolicy(RemotePublisher.CacheStrategy.Cloudflare,
+                    new string('a', 32), "TEST_TOKEN", Read);
+                Require(policy.Name == "cloudflare" && reads == 1, "显式CF策略应读取一次指定凭据");
+                Reject(() => RemotePublisher.PrepareCachePolicy(RemotePublisher.CacheStrategy.Cloudflare, null, "TEST_TOKEN", Read));
+                Require(reads == 1, "Zone无效时不应读取凭据");
+                Reject(() => RemotePublisher.PrepareCachePolicy(RemotePublisher.CacheStrategy.Cloudflare,
+                    new string('a', 32), "TEST_TOKEN", _ => null));
+                Reject(() => RemotePublisher.ParseCacheStrategy("skip"));
+                return Task.CompletedTask;
+            }),
+            ("固定包重新验证策略拒绝共享缓存覆盖和字段限定", () =>
+            {
+                foreach (var cache in new[] { "no-store", "no-cache", "no-cache, max-age=14400",
+                             "max-age=0, must-revalidate", "max-age=0, s-maxage=0, must-revalidate",
+                             "max-age=0, must-revalidate, stale-if-error=0" })
+                    Require(RemotePublisher.AllowsRevalidation(CacheControlHeaderValue.Parse(cache)), "应允许生效的严格策略：" + cache);
+                foreach (var cache in new[] { "max-age=0", "public, max-age=14400", "must-revalidate",
+                             "max-age=0, s-maxage=60, must-revalidate", "no-cache=\"Set-Cookie\"",
+                             "max-age=0, must-revalidate, stale-while-revalidate=30",
+                             "max-age=0, must-revalidate, stale-if-error=30" })
+                    Require(!RemotePublisher.AllowsRevalidation(CacheControlHeaderValue.Parse(cache)), "不能允许旧正文重用：" + cache);
+                Require(!RemotePublisher.AllowsRevalidation(null), "缺少明确缓存策略不得发布");
+                return Task.CompletedTask;
+            }),
+            ("发布前固定入口检查使用普通GET且不掩盖缓存", async () =>
+            {
+                var requests = 0;
+                using var http = Client((request, _) =>
+                {
+                    requests++;
+                    Require(request.Method == HttpMethod.Get && request.RequestUri!.AbsoluteUri == ReleasePreparation.ManualUrl &&
+                        request.RequestUri.Query.Length == 0 && request.Headers.CacheControl is null && !request.Headers.Pragma.Any(),
+                        "检查不能改地址或添加绕缓存请求头");
+                    return Response([1], "max-age=0, must-revalidate");
+                });
+                await RemotePublisher.RequireFixedEntryRevalidationAsync(http, CancellationToken.None);
+                Require(requests == 1, "应实际检查固定入口");
+                using var longCache = Client((_, _) => Response([1], "max-age=14400"));
+                await RejectAsync(() => RemotePublisher.RequireFixedEntryRevalidationAsync(longCache, CancellationToken.None));
+            }),
+            ("两种缓存策略都必须验证包内容且失败不能跳过", async () =>
+            {
+                foreach (var strategy in new[] { RemotePublisher.CacheStrategy.Headers, RemotePublisher.CacheStrategy.Cloudflare })
+                {
+                    var actions = new List<string>();
+                    var policy = RemotePublisher.PrepareCachePolicy(strategy, new string('a', 32), "TEST_TOKEN", _ => "test-only-token");
+                    using var http = Client((request, _) =>
+                    {
+                        if (request.RequestUri!.Host == "api.cloudflare.com")
+                        {
+                            actions.Add("purge");
+                            return Response(Encoding.UTF8.GetBytes("{\"success\":true}"), "no-store");
+                        }
+                        actions.Add("verify-package");
+                        Require(request.Headers.CacheControl is null && request.RequestUri.Query.Length == 0, "验真应是普通GET");
+                        return Response([1, 2, 3], "no-cache");
+                    });
+                    await RemotePublisher.ApplyCachePolicyAndVerifyAsync(http, policy,
+                        () => RemotePublisher.VerifyPublicPackageAsync(http, ReleasePreparation.ManualUrl, 3, artifact.PackageSha256, true, CancellationToken.None),
+                        CancellationToken.None);
+                    Require(actions.SequenceEqual(strategy == RemotePublisher.CacheStrategy.Headers
+                        ? new[] { "verify-package" } : new[] { "purge", "verify-package" }), "只有CF策略增加purge，内容核验不能改变");
+                    await RejectAsync(() => RemotePublisher.ApplyCachePolicyAndVerifyAsync(http, policy,
+                        () => RemotePublisher.VerifyPublicPackageAsync(http, ReleasePreparation.ManualUrl, 3, new string('0', 64), true, CancellationToken.None),
+                        CancellationToken.None));
+                }
+            }),
+            ("headers回滚仍核验旧包与清单且不调用CF", async () =>
+            {
+                var oldManifest = Encoding.UTF8.GetBytes("{\"latest\":\"1.0.51\"}");
+                using var restored = JsonDocument.Parse(JsonSerializer.Serialize(new
+                {
+                    previousPackageSize = 3, previousPackageSha256 = artifact.PackageSha256,
+                    previousManifestSha256 = Convert.ToHexString(SHA256.HashData(oldManifest)),
+                }));
+                var paths = new List<string>();
+                var policy = RemotePublisher.PrepareCachePolicy(RemotePublisher.CacheStrategy.Headers, null, "",
+                    _ => throw new Exception("headers回滚不能读取凭据"));
+                using var http = Client((request, _) =>
+                {
+                    Require(request.RequestUri!.Host == "open.cancanneed.top" && request.Method == HttpMethod.Get &&
+                        request.Headers.CacheControl is null && request.RequestUri.Query.Length == 0, "回滚不得清CF或绕缓存验真");
+                    paths.Add(request.RequestUri.AbsolutePath);
+                    return request.RequestUri.AbsolutePath == "/version.json"
+                        ? Response(oldManifest, "no-store") : Response([1, 2, 3], "no-cache");
+                });
+                await RemotePublisher.ApplyCachePolicyAndVerifyAsync(http, policy,
+                    () => RemotePublisher.VerifyRollbackAsync(http, restored.RootElement, CancellationToken.None), CancellationToken.None);
+                Require(paths.SequenceEqual(new[] { "/download/shike-latest.zip", "/version.json" }), "回滚不能省略任一公开入口核验");
+            }),
+            ("headers清单仍要求no-store且字节不能改变", async () =>
+            {
+                var policy = RemotePublisher.PrepareCachePolicy(RemotePublisher.CacheStrategy.Headers, null, "");
+                var bytes = Encoding.UTF8.GetBytes("{\"latest\":\"1.0.51\"}");
+                var expected = Convert.ToHexString(SHA256.HashData(bytes));
+                using var longCache = Client((_, _) => Response(bytes, "max-age=60"));
+                await RejectAsync(() => RemotePublisher.ApplyCachePolicyAndVerifyAsync(longCache, policy,
+                    () => RemotePublisher.VerifyPublicManifestHashAsync(longCache, expected, CancellationToken.None), CancellationToken.None));
+                using var altered = Client((_, _) => Response(Encoding.UTF8.GetBytes("{}"), "no-store"));
+                await RejectAsync(() => RemotePublisher.ApplyCachePolicyAndVerifyAsync(altered, policy,
+                    () => RemotePublisher.VerifyPublicManifestHashAsync(altered, expected, CancellationToken.None), CancellationToken.None));
             }),
             ("重复发布不能借已有事务触发自动回滚", async () =>
             {

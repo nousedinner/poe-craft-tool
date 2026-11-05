@@ -27,7 +27,10 @@ public static class ThemedMessageBox
         if (owner is not { IsVisible: true }) owner = null;
         try
         {
-            var dialog = new MessageDialog(message, caption, buttons, image, defaultResult, topmost);
+            var acceptance = Updates.UpdateAcceptanceContext.Current;
+            var dialog = new MessageDialog(message, caption, buttons, image, defaultResult, topmost,
+                acceptance is null ? null : () => acceptance.Record("alert-sound-suppressed"));
+            acceptance?.ObserveDialog(dialog);
             if (owner is not null) dialog.Owner = owner;
             dialog.WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner;
             dialog.ShowDialog();
