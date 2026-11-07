@@ -375,7 +375,7 @@ internal sealed class UpdateSession
             try
             {
                 if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-                    throw new InvalidDataException("更新路径包含链接，已拒绝操作");
+                    throw new InvalidDataException($"更新路径包含链接，已拒绝操作：{current}");
             }
             catch (FileNotFoundException) { }
             catch (DirectoryNotFoundException) { }

@@ -33,7 +33,7 @@ git ls-tree -r --name-only -z "$tree" | (
             README.md|CHANGELOG.md) ;;
             *)
                 case "$lower_path" in
-                    *.md|*.exe|*.zip|*.dll|*.pdb|*.dmp|*.pyc|*.pyo|*.dpapi|*.pfx|*.p12|*.key|*.log|*.tmp|*.bak|*.orig|*.rej|*.user|*.suo|*/.env|*/.env.*|*/.shike-output.json|*/kill_shike.*)
+                    *.md|*.exe|*.zip|*.dll|*.pdb|*.dmp|*.pyc|*.pyo|*.dpapi|*.pfx|*.p12|*.key|*.pem|*.log|*.tmp|*.bak|*.orig|*.rej|*.user|*.suo|*/.env|*/.env.*|*/.shike-output.json|*/kill_shike.*)
                         reason='本地文档、配置或生成文件' ;;
                 esac ;;
         esac

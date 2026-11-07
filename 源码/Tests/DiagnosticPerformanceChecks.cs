@@ -81,6 +81,38 @@ internal static class DiagnosticPerformanceChecks
                 "超时遗留及晚到消息必须可观察，不能复活写入者");
         });
 
+    public static void StalledWriterBoundsProducerWaitAndCountsDrops()
+        => InDirectory(directory =>
+        {
+            var files = new BlockingFiles();
+            var reports = new ConcurrentQueue<string>();
+            var log = new BufferedDiagnosticLog(Path.Combine(directory, "debug.log"),
+                new(1, 1, 0, 80), files, reports.Enqueue);
+            try
+            {
+                log.WriteLine("in-flight");
+                Require(files.Entered.Wait(Limit), "写入线程必须已阻塞在文件追加");
+                log.WriteLine("queued");
+                var timer = Stopwatch.StartNew();
+                Require(log.WriteLine("dropped") == 0, "持续满队列应限时拒收诊断行");
+                log.ClearOldLog();
+                timer.Stop();
+                var state = log.Snapshot();
+                Require(timer.Elapsed < TimeSpan.FromSeconds(1) && state.DroppedLines == 1 &&
+                        state.DroppedCommands == 1 && state.LateLines == 0 && state.FailedLines == 0 &&
+                        state.AcceptedLines == 2 && state.PendingLines == 2 && reports.Count == 1,
+                    "慢盘不应无限卡住调用方；超时丢弃与写盘失败、停机晚到须分开计数并限频上报");
+                files.Release.Set();
+                Require(log.Flush(Limit), "写盘恢复后已接收队列应完成");
+                log.WriteLine("after-recovery");
+                Require(log.Flush(Limit) && files.Text.ToString().Contains("1 条消息、1 次清理请求未接收", StringComparison.Ordinal) &&
+                        !files.Text.ToString().Contains("dropped" + Environment.NewLine, StringComparison.Ordinal) &&
+                        log.Snapshot().WrittenLines == 3,
+                    "恢复后应记录丢弃摘要，不能把已拒收消息伪记为成功写入");
+            }
+            finally { files.Release.Set(); log.Shutdown(Limit); }
+        });
+
     public static void ClearCommandUsesOriginalThresholdAndOrderedBarrier()
         => InDirectory(directory =>
         {

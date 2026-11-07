@@ -194,6 +194,47 @@ internal static class UpdateRunnerChecks
         UpdateBootstrap.EnsureNoIncompleteTransaction(f.Target, f.PublicKey, Fixture.KeyId);
     });
 
+    public static void CorruptSessionBlocksStartupWithPreservationGuidance() => WithFixture(f =>
+    {
+        var session = f.Prepare();
+        session.WritePhase("applying");
+        File.WriteAllText(session.SessionPath, "{");
+        try
+        {
+            UpdateBootstrap.EnsureNoIncompleteTransaction(f.Target, f.PublicKey, Fixture.KeyId);
+            throw new InvalidOperationException("损坏会话不能放行普通启动");
+        }
+        catch (InvalidDataException error)
+        {
+            Require(error.Message.Contains("请保留", StringComparison.Ordinal) &&
+                    error.Message.Contains(session.DirectoryPath, StringComparison.Ordinal),
+                "损坏会话应提示保留原目录核对恢复，不能建议直接删除");
+        }
+        Require(File.Exists(session.SessionPath) && File.Exists(Path.Combine(session.DirectoryPath, "state.json")),
+            "启动门禁不能删除损坏会话及恢复证据");
+        f.AssertOriginalFiles();
+        f.AssertPersonalFiles();
+    });
+
+    public static void OrdinaryStartupWithoutTransactionsDoesNotRequireUpdatePath() => WithFixture(f =>
+    {
+        var ineligiblePath = Path.Combine(f.Directory, "manual-copy.txt");
+        File.WriteAllText(ineligiblePath, "manual copy");
+        Require(!UpdateBootstrap.IsUpdateBusy(ineligiblePath), "无租约时普通启动不应要求自动更新路径");
+        UpdateBootstrap.EnsureNoIncompleteTransaction(ineligiblePath, f.PublicKey, Fixture.KeyId);
+        Directory.CreateDirectory(Path.Combine(f.Directory, UpdateSession.RootDirectoryName));
+        Require(!UpdateBootstrap.IsUpdateBusy(ineligiblePath), "空事务根不能阻断普通启动");
+        UpdateBootstrap.EnsureNoIncompleteTransaction(ineligiblePath, f.PublicKey, Fixture.KeyId);
+        Require(File.ReadAllText(ineligiblePath) == "manual copy", "普通启动扫描不得改写不适用自动更新的程序路径");
+    });
+
+    public static void ManualRecoveryInvalidArgumentsExplainFailure()
+    {
+        Require(UpdateBootstrap.TryRunHelper(["--recover-update"], out var exitCode, out var message) &&
+                exitCode == 64 && message?.Contains("参数无效", StringComparison.Ordinal) == true,
+            "手动恢复参数不符应保留失败退出码并提供可显示的原因");
+    }
+
     public static void RecoveryRefusesLiveOrUnrelatedTarget() => WithFixture(f =>
     {
         var session = f.Prepare();

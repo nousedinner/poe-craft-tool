@@ -23,7 +23,18 @@ internal static class Bootstrapper
         UpdateStartup? updateStartup;
         try
         {
-            if (UpdateBootstrap.TryRunHelper(args, out var exitCode)) return exitCode;
+            if (UpdateBootstrap.TryRunHelper(args, out var exitCode, out var helperMessage))
+            {
+                if (args.Contains("--recover-update", StringComparer.Ordinal))
+                {
+                    var message = helperMessage ?? "恢复未能完成；请保留会话目录和备份。";
+                    try { Console.Error.WriteLine(message); } catch { }
+                    try { MessageBox.Show(message, "拾刻更新恢复", MessageBoxButton.OK,
+                        exitCode == 3 ? MessageBoxImage.Information : MessageBoxImage.Error); }
+                    catch { /* 不能让提示窗口故障覆盖更新器的退出结果。 */ }
+                }
+                return exitCode;
+            }
             var acceptance = UpdateAcceptanceContext.LoadFromEnvironment();
             if (acceptance is not null && (args.Contains("--startup-profile", StringComparer.Ordinal) ||
                     args.Contains("--startup-lifecycle-check", StringComparer.Ordinal) ||

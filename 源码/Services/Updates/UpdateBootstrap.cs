@@ -9,25 +9,38 @@ namespace ShiKe.Services.Updates;
 internal static class UpdateBootstrap
 {
     internal static bool TryRunHelper(string[] args, out int exitCode)
+        => TryRunHelper(args, out exitCode, out _);
+
+    internal static bool TryRunHelper(string[] args, out int exitCode, out string? message)
     {
         exitCode = 64;
+        message = null;
         if (!args.Contains("--apply-update", StringComparer.Ordinal) &&
             !args.Contains("--recover-update", StringComparer.Ordinal)) return false;
         try
         {
-            if (args.Length != 3 || args[0] is not ("--apply-update" or "--recover-update")) return true;
+            if (args.Length != 3 || args[0] is not ("--apply-update" or "--recover-update"))
+            {
+                message = "更新恢复参数无效；请按交接说明使用原会话的 runner.exe、session.json 和会话令牌。";
+                return true;
+            }
             var session = UpdateSession.Load(args[1], args[2], ReleaseTrust.PublicKeyPem, ReleaseTrust.KeyId);
             if (!UpdateSession.SamePath(Environment.ProcessPath!, session.HelperPath) ||
                 !session.OriginalVersion.Equals(new Version(NetworkService.CurrentVersion.Major,
-                    NetworkService.CurrentVersion.Minor, NetworkService.CurrentVersion.Build))) return true;
+                    NetworkService.CurrentVersion.Minor, NetworkService.CurrentVersion.Build)))
+            {
+                message = "更新助手与原会话的程序路径或版本不一致；请使用该会话保留的 runner.exe。";
+                return true;
+            }
             UpdateSession.VerifyHash(session.HelperPath, session.OriginalSha256);
             using var bounded = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             var runner = new UpdateRunner();
             var result = (args[0] == "--recover-update" ? runner.RecoverAsync(session, bounded.Token) : runner.RunAsync(session, bounded.Token))
                 .GetAwaiter().GetResult();
             exitCode = result.Succeeded ? 0 : result.NeedsRecovery ? 4 : result.RolledBack ? 3 : 2;
+            message = result.Message;
         }
-        catch { exitCode = 64; }
+        catch (Exception error) { exitCode = 64; message = "更新会话无法验证或运行：" + error.Message + "。请保留会话目录和备份，不要自行删除。"; }
         return true;
     }
 
@@ -104,11 +117,13 @@ internal static class UpdateBootstrap
 
     internal static bool IsUpdateBusy(string executablePath)
     {
-        var path = LeasePath(executablePath);
+        // 普通启动只读检查现有租约。没有租约时不要求安装路径适用于自动更新。
+        var path = LeasePathForInspection(executablePath);
         if (!File.Exists(path)) return false;
         try
         {
-            UpdateSession.EnsureNoReparsePoints(path);
+            if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException($"更新租约是链接，已拒绝启动：{path}");
             using var lease = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
             return false;
         }
@@ -126,9 +141,16 @@ internal static class UpdateBootstrap
 
     private static string LeasePath(string executablePath)
     {
-        var directory = Path.GetDirectoryName(UpdateSession.ValidateTargetPath(executablePath))!.ToUpperInvariant();
+        UpdateSession.ValidateTargetPath(executablePath);
+        return LeasePathForInspection(executablePath);
+    }
+
+    private static string LeasePathForInspection(string executablePath)
+    {
+        var directory = Path.GetDirectoryName(Path.GetFullPath(executablePath))!.ToUpperInvariant();
         var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(directory)));
-        return Path.Combine(UpdateSession.UpdateRoot(executablePath), "lease-" + identity + ".lock");
+        return Path.Combine(Path.GetDirectoryName(Path.GetFullPath(executablePath))!,
+            UpdateSession.RootDirectoryName, "lease-" + identity + ".lock");
     }
 
     private static string LedgerPath(string executablePath)
@@ -202,21 +224,39 @@ internal static class UpdateBootstrap
 
     internal static void EnsureNoIncompleteTransaction(string executablePath, string publicKeyPem, string keyId)
     {
-        var root = UpdateSession.UpdateRoot(executablePath);
+        // 普通启动只需检查已有事务；没有事务目录时不应因安装路径含链接而拒绝运行。
+        // 实际创建或应用更新仍由 UpdateSession.ValidateTargetPath 拒绝此类路径。
+        var root = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(executablePath))!, UpdateSession.RootDirectoryName);
         if (!Directory.Exists(root)) return;
-        UpdateSession.EnsureNoReparsePoints(root);
         foreach (var directory in Directory.EnumerateDirectories(root))
         {
             if (!Guid.TryParseExact(Path.GetFileName(directory), "N", out _)) continue;
             var statePath = Path.Combine(directory, "state.json");
             if (!File.Exists(statePath)) continue;
-            var state = UpdateSession.ReadJson<InspectionState>(statePath, 16384);
+            InspectionState state;
+            try
+            {
+                UpdateSession.EnsureNoReparsePoints(root);
+                state = UpdateSession.ReadJson<InspectionState>(statePath, 16384);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
+            {
+                throw UnverifiableSession(directory, error);
+            }
             if (state.Phase is not ("applying" or "launching" or "awaiting-health" or "recovery-required" or "completed")) continue;
-            var session = UpdateSession.LoadOwned(Path.Combine(directory, "session.json"), publicKeyPem, keyId);
+            UpdateSession session;
+            try { session = UpdateSession.LoadOwned(Path.Combine(directory, "session.json"), publicKeyPem, keyId); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
+            {
+                throw UnverifiableSession(directory, error);
+            }
             if (state.Phase == "completed" && session.HasCommitAcknowledgement) continue;
             throw new InvalidDataException($"检测到未完成的更新，已阻止启动混合版本。请先关闭拾刻后恢复；备份和更新助手保留在：{directory}");
         }
     }
+
+    private static InvalidDataException UnverifiableSession(string directory, Exception error)
+        => new($"更新记录无法核验，已阻止启动以避免混合版本。请保留此目录和用户数据，不要自行删除；联系维护者核对恢复：{directory}", error);
 
     internal static void CleanupCompleted(string executablePath)
     {

@@ -123,7 +123,7 @@ internal static class RemotePublisher
                 throw new IOException("线上发布已完成，但本地完成记录未保存；不能因此重复发布。transaction=" + transaction, error);
             if (!beginAttempted)
             {
-                try { Record(rollback ? "recovery-required" : "failed-before-publication", error.Message); } catch (IOException) { }
+                try { Record(rollback ? "recovery-required" : "failed-before-publication", error.Message); } catch (Exception) { }
                 throw;
             }
             JsonElement restored = default;
@@ -143,24 +143,24 @@ internal static class RemotePublisher
                     () => VerifyRollbackAsync(http, restored, CancellationToken.None), CancellationToken.None));
             if (recovery.Kind == PublicationRecovery.Completed)
             {
-                try { Record("complete-confirmed-after-error", error.Message); } catch (IOException) { }
+                try { Record("complete-confirmed-after-error", error.Message); } catch (Exception) { }
                 Console.WriteLine(JsonSerializer.Serialize(new { status = "published", transaction, cacheStrategy = cachePolicy.Name, acknowledgementRecovered = true,
                     verified = new[] { "remote-complete", "public-fixed-package", "public-signed-manifest" } }));
                 return;
             }
             if (recovery.Kind == PublicationRecovery.RolledBack)
             {
-                try { Record("rolled-back", error.Message); } catch (IOException) { }
+                try { Record("rolled-back", error.Message); } catch (Exception) { }
                 Console.Error.WriteLine("本次发布未完成，已恢复之前清单与固定别名；版本文件保留。transaction=" + transaction);
                 throw;
             }
             if (recovery.Kind == PublicationRecovery.NotStarted)
             {
-                try { Record("failed-before-publication", error.Message); } catch (IOException) { }
+                try { Record("failed-before-publication", error.Message); } catch (Exception) { }
                 throw;
             }
             var phase = recovery.Kind == PublicationRecovery.CompletedUnconfirmed ? "completed-publication-unconfirmed" : "recovery-required";
-            try { Record(phase, error.Message + "; " + recovery.Message); } catch (IOException) { }
+            try { Record(phase, error.Message + "; " + recovery.Message); } catch (Exception) { }
             throw new IOException("发布结果需核对，已保留线上现状且未猜测回滚。transaction=" + transaction +
                 "; 原因=" + error.Message + "; 核对原因=" + recovery.Message, error);
         }

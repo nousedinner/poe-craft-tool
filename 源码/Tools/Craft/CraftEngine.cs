@@ -105,6 +105,8 @@ public sealed class CraftEngine
         bool soundEnabled, bool popupEnabled, string selectedSound, int exhaustionThreshold,
         bool mode2ScourAlch, bool useExalt)
     {
+        var resetEmergencyStop = false;
+        string startMessage;
         lock (this)
         {
             if (_running) return;
@@ -118,8 +120,8 @@ public sealed class CraftEngine
             // CTS 不可重置（Python Event.clear() 差异），故每次启动前重置（修复：启动后只动鼠标就停）
             if (_environment.EmergencyToken.IsCancellationRequested)
             {
-                _environment.Log("[引擎] Start: EmergencyCts 已取消，重置");
                 _environment.ResetEmergencyStop();
+                resetEmergencyStop = true;
             }
 
             var missing = CheckCoordinates(rules, coordinates, mode2ScourAlch, useExalt);
@@ -138,16 +140,19 @@ public sealed class CraftEngine
                 CancellationTokenSource.CreateLinkedTokenSource(_environment.EmergencyToken));
             _running = true;
             _wakeSignal.Set();
-            _environment.Log($"[引擎] Start: runId={_runId}, mode={rules.Mode}, delay={delayMs}ms, 坐标数={coordinates.Count}");
+            startMessage = $"[引擎] Start: runId={_runId}, mode={rules.Mode}, delay={delayMs}ms, 坐标数={coordinates.Count}";
         }
+        if (resetEmergencyStop) _environment.Log("[引擎] Start: EmergencyCts 已取消，重置");
+        _environment.Log(startMessage);
     }
 
     public void Stop()
     {
+        string stopMessage;
         lock (this)
         {
-            _environment.Log($"[引擎] Stop: runId={_runId}, _workCts={(_workCts != null ? "存在" : "null")}, " +
-                     $"EmergencyCts.IsCancellationRequested={_environment.EmergencyToken.IsCancellationRequested}");
+            stopMessage = $"[引擎] Stop: runId={_runId}, _workCts={(_workCts != null ? "存在" : "null")}, " +
+                          $"EmergencyCts.IsCancellationRequested={_environment.EmergencyToken.IsCancellationRequested}";
             _running = false;
             _workCts?.Cancel();
             var cancelledPending = _pendingRun is not null;
@@ -157,6 +162,7 @@ public sealed class CraftEngine
             // 因此由本次停止负责结束可见状态。保留最后实际运行的计数。
             if (cancelledPending) Stopped?.Invoke("已停止");
         }
+        _environment.Log(stopMessage);
     }
 
     /// <summary>永久关闭常驻循环，并在限定时间内等待 finally 完成按键释放。</summary>

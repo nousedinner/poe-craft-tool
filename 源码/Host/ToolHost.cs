@@ -79,7 +79,6 @@ public sealed class ToolHost : IClickerEnvironment, IKeyLoopEnvironment, ICraftE
     /// </summary>
     public void ResetEmergencyStop()
     {
-        Diag.Log("[宿主] ResetEmergencyStop: 创建新 CTS");
         _emergencyCts = new();
     }
 
