@@ -55,3 +55,16 @@ git ls-tree -r --name-only -z "$tree" | (
         exit 1
     fi
 )
+
+# 对实际待提交/待推送的树检查私钥 PEM 头，拦住改扩展名后的明文私钥。
+# 只输出拒绝原因，不回显密钥内容。
+if git grep -I -q -E -e '-----BEGIN( [A-Z]+)* PRIVATE KEY-----' "$tree" -- .; then
+    printf '%s\n' '拒绝入库：提交树包含未加密私钥 PEM 头；请移出 Git 暂存区或公开提交。' >&2
+    exit 1
+else
+    grep_status=$?
+    if (( grep_status != 1 )); then
+        printf '%s\n' '无法完成私钥内容检查，已拒绝提交或推送。' >&2
+        exit "$grep_status"
+    fi
+fi

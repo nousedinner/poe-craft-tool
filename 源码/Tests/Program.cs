@@ -52,7 +52,7 @@ var tests = new (string Name, Action Run)[]
     ("前台检测释放与查询并发保持句柄有效", ForegroundPerformanceChecks.ConcurrentDisposeCannotCloseAHandleDuringItsQuery),
     ("并发目标变更使已完成身份缓存失效", ForegroundPerformanceChecks.ConcurrentTargetChangeInvalidatesTheCompletedIdentity),
     ("批量日志保留并发顺序UTF8且释放文件", DiagnosticPerformanceChecks.ConcurrentBatchesPreserveOrderUtf8AndReleaseFile),
-    ("日志容量背压不丢行且停止能唤醒等待者", DiagnosticPerformanceChecks.CapacityWaitsWithoutLossAndShutdownWakesProducer),
+    ("短暂日志背压保留顺序且停止能唤醒等待者", DiagnosticPerformanceChecks.TransientCapacityWaitPreservesLinesAndShutdownWakesProducer),
     ("慢盘满队列限时丢弃并记录恢复摘要", DiagnosticPerformanceChecks.StalledWriterBoundsProducerWaitAndCountsDrops),
     ("日志截断阈值和前后顺序保持", DiagnosticPerformanceChecks.ClearCommandUsesOriginalThresholdAndOrderedBarrier),
     ("日志文件失败计数且后续写入可恢复", DiagnosticPerformanceChecks.FileFailureIsCountedAndLaterWritesRecover),

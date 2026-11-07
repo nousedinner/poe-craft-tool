@@ -44,27 +44,27 @@ internal static class DiagnosticPerformanceChecks
             finally { Require(log.Shutdown(Limit), "并发日志线程必须正常关闭"); }
         });
 
-    public static void CapacityWaitsWithoutLossAndShutdownWakesProducer()
+    public static void TransientCapacityWaitPreservesLinesAndShutdownWakesProducer()
         => InDirectory(directory =>
         {
             var files = new BlockingFiles();
-            var log = new BufferedDiagnosticLog(Path.Combine(directory, "debug.log"), new(1, 1, 0), files, _ => { });
+            var log = new BufferedDiagnosticLog(Path.Combine(directory, "debug.log"), new(1, 1, 0, 250), files, _ => { });
             try
             {
                 log.WriteLine("first");
                 Require(files.Entered.Wait(Limit), "首批必须进入实际写入");
                 log.WriteLine("queued");
                 var blocked = Task.Run(() => log.WriteLine("backpressure"));
-                Require(!blocked.Wait(50), "容量满时必须背压，不能静默丢行或无界增长");
+                Require(!blocked.Wait(50), "短暂满队列时应等待写入者释放容量");
                 files.Release.Set();
                 Require(blocked.Wait(Limit) && blocked.Result != 0 && log.Flush(Limit), "磁盘恢复后背压生产者必须继续");
                 Require(files.Text.ToString() == "first" + Environment.NewLine + "queued" + Environment.NewLine +
-                        "backpressure" + Environment.NewLine, "压力下所有行仍按原序保留");
+                        "backpressure" + Environment.NewLine, "短暂压力下已接收行仍按原序保留");
             }
             finally { files.Release.Set(); log.Shutdown(Limit); }
 
             var blockedFiles = new BlockingFiles();
-            var stopping = new BufferedDiagnosticLog(Path.Combine(directory, "blocked.log"), new(1, 1, 0), blockedFiles, _ => { });
+            var stopping = new BufferedDiagnosticLog(Path.Combine(directory, "blocked.log"), new(1, 1, 0, 250), blockedFiles, _ => { });
             stopping.WriteLine("in-flight");
             Require(blockedFiles.Entered.Wait(Limit), "停机测试必须有正在执行的写入");
             stopping.WriteLine("queued");
