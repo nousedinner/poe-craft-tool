@@ -242,11 +242,15 @@ public sealed class CraftEngine
 
         if (rules.Mode == CraftMode.Harvest)
         {
-            // 庄园工艺不用通货，只需要工艺按钮与物品区域两个位置。
+            // 庄园工艺不用通货。物品在工艺台界面内、工艺按钮也在同一界面，
+            // 与背包里的装备位置不是同一处，所以工艺区域单独占一个槽位。
             if (!coords.TryGetValue(CraftSlot.HarvestBench, out var bench) || !IsValid(bench))
                 return "工艺按钮坐标";
+            if (!coords.TryGetValue(CraftSlot.HarvestArea, out var area) || !IsValid(area))
+                return "工艺区域坐标";
+            return null;
         }
-        else if (rules.Mode == CraftMode.Single)
+        if (rules.Mode == CraftMode.Single)
         {
             if (!coords.TryGetValue(rules.SingleCurrency, out var c1) || !IsValid(c1))
                 return $"{Currency.Label(rules.SingleCurrency)}坐标";
@@ -276,7 +280,7 @@ public sealed class CraftEngine
                 return "崇高石坐标";
         }
 
-        if (!coords.TryGetValue("item", out var item) || !IsValid(item))
+        if (!coords.TryGetValue(CraftSlot.Item, out var item) || !IsValid(item))
             return "装备坐标";
         return null;
     }
@@ -492,12 +496,16 @@ public sealed class CraftEngine
         _environment.Log($"[引擎] 选择通货完成: {currency}");
     }
 
+    /// <summary>
+    /// 复制一次物品文本。slot 默认是背包里的装备位置；
+    /// 庄园工艺的物品在工艺台界面内，传 CraftSlot.HarvestArea。
+    /// </summary>
     private async Task<string?> TryCopyClipboardOnceAsync(int timeoutMs, bool throwOnClearFailure,
-        CancellationToken token)
+        CancellationToken token, string slot = CraftSlot.Item)
     {
         await AwaitForegroundAsync(token);
         _runMeasurement?.CopyAttempt();
-        var item = _coordinates["item"];
+        var item = _coordinates[slot];
         await _environment.Input.MoveToAsync((int)item.X, (int)item.Y, _timing.ItemMovementMs, token);
         if (!ClipboardHelper.TryClear(token))
         {
@@ -823,11 +831,11 @@ public sealed class CraftEngine
     private async Task HarvestAsync(CancellationToken token)
     {
         var benchCoord = _coordinates[CraftSlot.HarvestBench];
-        var itemCoord = _coordinates[CraftSlot.Item];
+        var areaCoord = _coordinates[CraftSlot.HarvestArea];
 
         ReportStatus("启动庄园工艺模式...", force: true);
         _environment.Log($"[引擎] 庄园工艺: 开始, 工艺按钮 ({benchCoord.X},{benchCoord.Y}), " +
-                 $"物品区域 ({itemCoord.X},{itemCoord.Y})");
+                 $"工艺区域 ({areaCoord.X},{areaCoord.Y})");
 
         string? previousText = null;
         var identicalResults = 0;
@@ -897,7 +905,7 @@ public sealed class CraftEngine
             token.ThrowIfCancellationRequested();
             attempts++;
             var text = await TryCopyClipboardOnceAsync(
-                CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token);
+                CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token, CraftSlot.HarvestArea);
             if (text is not null)
             {
                 _environment.Log($"[同步] 庄园工艺 复制成功: total={stopwatch.ElapsedMilliseconds}ms, " +
@@ -913,7 +921,7 @@ public sealed class CraftEngine
         _environment.Log($"[同步] 庄园工艺 复制超时: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}");
         _runMeasurement?.SyncFailed();
         throw new InvalidOperationException(
-            $"庄园工艺连续复制物品信息失败（{timeoutMs}ms）；已安全停止，请确认鼠标位于物品区域");
+            $"庄园工艺连续复制物品信息失败（{timeoutMs}ms）；已安全停止，请确认鼠标位于工艺区域");
     }
 
     // ── Mode 2：改造+增幅（Python _mode2）──

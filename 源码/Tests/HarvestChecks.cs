@@ -1,4 +1,6 @@
+using System.Text.Json.Nodes;
 using System.Windows;
+using ShiKe.Services;
 using ShiKe.Tools.Craft;
 
 // 庄园工艺：通货道具只按名称匹配、装备路径不变、工艺按钮坐标必备。
@@ -160,24 +162,37 @@ internal static class HarvestChecks
         Require(result.MeetsFinalRules(rules), "装备主命中 2 应通过终检");
     }
 
-    /// <summary>庄园工艺不用通货，只需要工艺按钮与物品区域两个坐标。</summary>
+    /// <summary>庄园工艺不用通货；工艺区域与背包装备位置不是同一处，必须是独立槽位。</summary>
     public static void HarvestCoordinatesRequireBench()
     {
         var rules = new CraftRules { Mode = CraftMode.Harvest };
-        var onlyItem = new Dictionary<string, Point> { [CraftSlot.Item] = new(100, 200) };
-        Equal("工艺按钮坐标", CraftEngine.CheckCoordinates(rules, onlyItem, false, false),
-            "缺少工艺按钮坐标必须拒绝启动");
+
+        // 只录了背包装备坐标不能启动：工艺台里的物品在另一处。
+        var inventoryOnly = new Dictionary<string, Point> { [CraftSlot.Item] = new(100, 200) };
+        Equal("工艺按钮坐标", CraftEngine.CheckCoordinates(rules, inventoryOnly, false, false),
+            "缺少工艺按钮坐标必须拒绝启动，且不能拿背包装备坐标顶替");
+
+        var benchOnly = new Dictionary<string, Point> { [CraftSlot.HarvestBench] = new(300, 400) };
+        Equal("工艺区域坐标", CraftEngine.CheckCoordinates(rules, benchOnly, false, false),
+            "缺少工艺区域坐标必须拒绝启动");
 
         var both = new Dictionary<string, Point>
         {
-            [CraftSlot.Item] = new(100, 200),
+            [CraftSlot.HarvestArea] = new(100, 200),
             [CraftSlot.HarvestBench] = new(300, 400),
         };
-        Require(CraftEngine.CheckCoordinates(rules, both, false, false) is null, "两个坐标齐全时必须允许启动");
+        Require(CraftEngine.CheckCoordinates(rules, both, false, false) is null, "两个工艺坐标齐全时必须允许启动");
 
-        var noItem = new Dictionary<string, Point> { [CraftSlot.HarvestBench] = new(300, 400) };
-        Equal("装备坐标", CraftEngine.CheckCoordinates(rules, noItem, false, false),
-            "缺少物品区域坐标必须拒绝启动");
+        // 庄园工艺不再要求背包装备坐标，反之通货模式也不该被工艺坐标满足。
+        Require(!both.ContainsKey(CraftSlot.Item), "庄园工艺的坐标集合不应包含背包装备槽位");
+        var single = new CraftRules { Mode = CraftMode.Single, SingleCurrency = Currency.Alteration };
+        var harvestOnly = new Dictionary<string, Point>
+        {
+            [CraftSlot.HarvestArea] = new(100, 200),
+            [CraftSlot.HarvestBench] = new(300, 400),
+        };
+        Equal("改造石坐标", CraftEngine.CheckCoordinates(single, harvestOnly, false, false),
+            "通货模式不能借用庄园工艺的坐标");
     }
 
     /// <summary>庄园工艺沿用可配置命中数，且不显示任何通货。</summary>
@@ -196,8 +211,43 @@ internal static class HarvestChecks
         Equal(0, Currency.ModeCurrencies[CraftMode.Harvest].Length, "庄园工艺不显示通货卡片");
     }
 
-    private static CraftRules HarvestRules(string primary, string? exclude = null)
+    /// <summary>
+    /// rules.json 的写入校验必须接受庄园工艺。否则切到模式 4 后任何一次保存都会失败，
+    /// 启动前保存规则时直接报「保存文件失败：rules.json」。
+    /// </summary>
+    public static void HarvestModeRoundTripsThroughStorage()
     {
+        var directory = Path.Combine(Path.GetTempPath(), "shike-harvest-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var storage = new StorageService(directory);
+            storage.SaveRules(new JsonObject
+            {
+                ["mode"] = (int)CraftMode.Harvest,
+                ["primary_affixes"] = new JsonArray("贪婪"),
+                ["primary_hit_count"] = 1,
+                ["secondary_hit_count"] = 0,
+            });
+            Equal((int)CraftMode.Harvest, storage.LoadRules()!["mode"]!.GetValue<int>(),
+                "庄园工艺模式必须能保存并原样读回");
+
+            storage.SaveRules(new JsonObject { ["mode"] = "harvest" });
+            Equal("harvest", storage.LoadRules()!["mode"]!.GetValue<string>(), "字符串形式的庄园工艺也必须被接受");
+
+            var rejected = false;
+            try { storage.SaveRules(new JsonObject { ["mode"] = 9 }); }
+            catch (StorageException) { rejected = true; }
+            Require(rejected, "未知模式仍必须拒绝，放宽校验不能把非法值一起放过");
+        }
+        finally
+        {
+            try { Directory.Delete(directory, true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static CraftRules HarvestRules(string primary, string? exclude = null)    {
         var rules = new CraftRules { Mode = CraftMode.Harvest, PrimaryHitCount = 1, SecondaryHitCount = 0 };
         rules.PrimaryAffixes.Add(new AffixRule { Text = primary });
         if (exclude is not null) rules.ExcludeAffixes.Add(new AffixRule { Text = exclude });

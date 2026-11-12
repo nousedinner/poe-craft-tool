@@ -114,6 +114,7 @@ public sealed partial class CraftTool : ITool, ICoordinateProvider, IEnableableT
             "single" => CraftMode.Single,
             "alt_aug" => CraftMode.AltAug,
             "alt_aug_regal" => CraftMode.AltAugRegal,
+            "harvest" => CraftMode.Harvest,
             _ => CraftMode.Single,
         },
         _ => CraftMode.Single,
@@ -195,12 +196,13 @@ public sealed partial class CraftTool : ITool, ICoordinateProvider, IEnableableT
         },
     ];
 
-    // ── 坐标槽位（物品 + 10 通货 + 庄园工艺按钮；divine 占位）──
+    // ── 坐标槽位（装备 + 庄园工艺区域/按钮 + 10 通货；divine 占位）──
     public IReadOnlyList<CoordinateSlot> GetCoordinateSlots()
     {
         var slots = new List<CoordinateSlot>
         {
             new() { SlotId = CraftSlot.Item, DisplayName = "装备位置" },
+            new() { SlotId = CraftSlot.HarvestArea, DisplayName = "工艺区域" },
             new() { SlotId = CraftSlot.HarvestBench, DisplayName = "工艺按钮位置" },
         };
         foreach (var key in Currency.All)

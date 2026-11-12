@@ -257,9 +257,10 @@ public sealed class StorageService
             throw new InvalidDataException("single_currency 必须是通货名称字符串");
         if (root.TryGetPropertyValue("mode", out var mode) &&
             (mode is not JsonValue mv ||
-             !(mv.TryGetValue<int>(out var modeNumber) && modeNumber is >= 1 and <= 3 ||
-               mv.TryGetValue<string>(out var modeName) && modeName is "single" or "alt_aug" or "alt_aug_regal")))
-            throw new InvalidDataException("mode 必须是 1～3，或 single / alt_aug / alt_aug_regal");
+             !(mv.TryGetValue<int>(out var modeNumber) && modeNumber is >= 1 and <= 4 ||
+               mv.TryGetValue<string>(out var modeName) &&
+               modeName is "single" or "alt_aug" or "alt_aug_regal" or "harvest")))
+            throw new InvalidDataException("mode 必须是 1～4，或 single / alt_aug / alt_aug_regal / harvest");
         foreach (var key in new[] { "primary_affixes", "secondary_affixes", "exclude_affixes" })
         {
             if (!root.ContainsKey(key)) continue;

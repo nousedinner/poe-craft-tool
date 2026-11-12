@@ -9,10 +9,14 @@ public enum CraftMode
     Harvest = 4,       // 庄园工艺台：点工艺按钮随机转换，再复制物品判定
 }
 
-/// <summary>坐标槽位 ID。装备位置各模式共用；庄园工艺额外需要一个工艺按钮。</summary>
+/// <summary>
+/// 坐标槽位 ID。装备位置供三个通货模式使用；庄园工艺的物品在工艺台界面内，
+/// 与背包里的装备位置不是同一处，因此另用 harvest_area，不能共用。
+/// </summary>
 public static class CraftSlot
 {
     public const string Item = "item";
+    public const string HarvestArea = "harvest_area";
     public const string HarvestBench = "harvest_bench";
 }
 

@@ -75,6 +75,8 @@ public partial class CraftPage : UserControl
         }
         else if (slot.SlotId == CraftSlot.Item)
             ItemCoordButton.Content = $"移动鼠标后按 {coordinateHotkey}...";
+        else if (slot.SlotId == CraftSlot.HarvestArea)
+            HarvestAreaCoordButton.Content = $"移动鼠标后按 {coordinateHotkey}...";
         else if (slot.SlotId == CraftSlot.HarvestBench)
             BenchCoordButton.Content = $"移动鼠标后按 {coordinateHotkey}...";
         else if (_cards.TryGetValue(slot.SlotId, out var card))
@@ -227,6 +229,10 @@ public partial class CraftPage : UserControl
         Mode3Frame.Visibility = CurrentMode == CraftMode.AltAugRegal ? Visibility.Visible : Visibility.Collapsed;
         SingleCurrencyFrame.Visibility = CurrentMode == CraftMode.Single ? Visibility.Visible : Visibility.Collapsed;
         HarvestHint.Visibility = harvest ? Visibility.Visible : Visibility.Collapsed;
+        // 庄园工艺的物品在工艺台界面内，与背包里的装备位置不是同一处，
+        // 因此切到该模式时整块「装备坐标」隐藏，改用独立的「工艺区域」。
+        ItemCoordSection.Visibility = harvest ? Visibility.Collapsed : Visibility.Visible;
+        HarvestAreaSection.Visibility = harvest ? Visibility.Visible : Visibility.Collapsed;
         HarvestBenchSection.Visibility = harvest ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -269,6 +275,8 @@ public partial class CraftPage : UserControl
         foreach (var key in _cards.Keys)
             UpdateCoordButton(key, coordinates.TryGetValue(key, out var pt) ? pt : null);
         UpdateCoordButton(CraftSlot.Item, coordinates.TryGetValue(CraftSlot.Item, out var item) ? item : null);
+        UpdateCoordButton(CraftSlot.HarvestArea,
+            coordinates.TryGetValue(CraftSlot.HarvestArea, out var area) ? area : null);
         UpdateCoordButton(CraftSlot.HarvestBench,
             coordinates.TryGetValue(CraftSlot.HarvestBench, out var bench) ? bench : null);
     }
@@ -278,6 +286,10 @@ public partial class CraftPage : UserControl
         if (slotId == CraftSlot.Item)
         {
             SetCoordButtonState(ItemCoordButton, ItemClearButton, pt);
+        }
+        else if (slotId == CraftSlot.HarvestArea)
+        {
+            SetCoordButtonState(HarvestAreaCoordButton, HarvestAreaClearButton, pt);
         }
         else if (slotId == CraftSlot.HarvestBench)
         {
@@ -337,9 +349,25 @@ public partial class CraftPage : UserControl
         UpdateCoordButton(CraftSlot.HarvestBench, null);
     }
 
+    private void HarvestAreaCoordButton_Click(object sender, RoutedEventArgs e)
+    {
+        StartRecordSlot(CraftSlot.HarvestArea, "工艺区域", HarvestAreaCoordButton);
+    }
+
+    private void HarvestAreaClearButton_Click(object sender, RoutedEventArgs e)
+    {
+        _host.Coordinates.ClearCoordinate(CraftSlot.HarvestArea);
+        _tool.Coordinates.Remove(CraftSlot.HarvestArea);
+        UpdateCoordButton(CraftSlot.HarvestArea, null);
+    }
+
     private void ClearAllCoordsButton_Click(object sender, RoutedEventArgs e)
     {
-        var ids = _cards.Keys.Append(CraftSlot.Item).Append(CraftSlot.HarvestBench).ToArray();
+        var ids = _cards.Keys
+            .Append(CraftSlot.Item)
+            .Append(CraftSlot.HarvestArea)
+            .Append(CraftSlot.HarvestBench)
+            .ToArray();
         _host.Coordinates.ClearCoordinates(ids);
         foreach (var key in ids)
         {

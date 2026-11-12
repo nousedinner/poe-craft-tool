@@ -91,7 +91,7 @@
                         </StackPanel>
                         <TextBlock x:Name="HarvestHint" Visibility="Collapsed" Margin="2,8,0,14" FontSize="11" TextWrapping="Wrap"
                                    Foreground="{StaticResource TextSecondary}"
-                                   Text="点一次工艺按钮＝转换一次，随后复制物品区域判定是否达标。道具只按名称匹配，装备按词缀规则匹配。"/>
+                                   Text="点一次工艺按钮＝转换一次，随后复制工艺区域判定是否达标。道具只按名称匹配，装备按词缀规则匹配。"/>
                         <Border BorderBrush="{StaticResource CardBorder}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,10,0,0">
                             <StackPanel>
                                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -114,12 +114,22 @@
                         </ItemsControl>
                         <Border BorderBrush="{StaticResource CardBorder}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,16,0,0">
                             <StackPanel>
-                                <TextBlock Text="装备坐标" Style="{StaticResource PoolHeading}" Margin="0,0,0,10"/>
-                                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <Button x:Name="ItemCoordButton" Content="设定坐标" Style="{StaticResource CardButton}" Click="ItemCoordButton_Click" MinHeight="32"/>
-                                    <Button x:Name="ItemClearButton" Grid.Column="1" Content="✕" Width="26" Padding="2" Visibility="Collapsed"
-                                            Margin="4,0,0,0" Click="ItemClearButton_Click" Foreground="{StaticResource DangerRed}"/>
-                                </Grid>
+                                <StackPanel x:Name="ItemCoordSection">
+                                    <TextBlock Text="装备坐标" Style="{StaticResource PoolHeading}" Margin="0,0,0,10"/>
+                                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <Button x:Name="ItemCoordButton" Content="设定坐标" Style="{StaticResource CardButton}" Click="ItemCoordButton_Click" MinHeight="32"/>
+                                        <Button x:Name="ItemClearButton" Grid.Column="1" Content="✕" Width="26" Padding="2" Visibility="Collapsed"
+                                                Margin="4,0,0,0" Click="ItemClearButton_Click" Foreground="{StaticResource DangerRed}"/>
+                                    </Grid>
+                                </StackPanel>
+                                <StackPanel x:Name="HarvestAreaSection" Visibility="Collapsed">
+                                    <TextBlock Text="工艺区域坐标" Style="{StaticResource PoolHeading}" Margin="0,0,0,10"/>
+                                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <Button x:Name="HarvestAreaCoordButton" Content="设定坐标" Style="{StaticResource CardButton}" Click="HarvestAreaCoordButton_Click" MinHeight="32"/>
+                                        <Button x:Name="HarvestAreaClearButton" Grid.Column="1" Content="✕" Width="26" Padding="2" Visibility="Collapsed"
+                                                Margin="4,0,0,0" Click="HarvestAreaClearButton_Click" Foreground="{StaticResource DangerRed}"/>
+                                    </Grid>
+                                </StackPanel>
                                 <StackPanel x:Name="HarvestBenchSection" Visibility="Collapsed" Margin="0,14,0,0">
                                     <TextBlock Text="工艺按钮坐标" Style="{StaticResource PoolHeading}" Margin="0,0,0,10"/>
                                     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
