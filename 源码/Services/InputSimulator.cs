@@ -40,6 +40,12 @@ public sealed class InputSimulator
     private const uint KEYEVENTF_UNICODE = 0x0004;
     private const uint KEYEVENTF_SCANCODE = 0x0008;
 
+    /// <summary>
+    /// 按下与抬起之间的保持时间。沿用原键盘路径的 10ms：太短会让按帧轮询的输入漏掉这次按下。
+    /// 键盘键与鼠标侧键共用同一数值，避免同一语义出现两个魔法数字。
+    /// </summary>
+    private const int PressHoldMs = 10;
+
     // ── Win32 结构体（Sequential 布局让 CLR 自动处理64位对齐）──
 
     [StructLayout(LayoutKind.Sequential)]
@@ -531,7 +537,7 @@ public sealed class InputSimulator
         PressKeyOrThrow(vk, $"按下 {key}");
         try
         {
-            await Task.Delay(10, CancellationToken.None);
+            await Task.Delay(PressHoldMs, CancellationToken.None);
         }
         finally
         {
@@ -542,7 +548,6 @@ public sealed class InputSimulator
     /// <summary>
     /// 按下并释放鼠标侧键（按键循环槽位使用）。按下与抬起之间不可取消，
     /// 保证停止或退出发生在中途时仍会释放，与键盘路径一致。
-    /// 保持时间取 40ms：游戏多半按帧轮询鼠标按键，10ms 低于 60fps 的单帧时会被漏掉。
     /// </summary>
     private async Task PressAndReleaseMouseButtonAsync(ushort vk, string key, CancellationToken token)
     {
@@ -552,15 +557,13 @@ public sealed class InputSimulator
         SendMouseOrThrow(MOUSEEVENTF_XDOWN, mouseData, $"按下 {key}");
         try
         {
-            await Task.Delay(MouseButtonHoldMs, CancellationToken.None);
+            await Task.Delay(PressHoldMs, CancellationToken.None);
         }
         finally
         {
             SendMouseOrThrow(MOUSEEVENTF_XUP, mouseData, $"释放 {key}");
         }
     }
-
-    private const int MouseButtonHoldMs = 40;
 
     /// <summary>每次 Craft 任务启动时清除上次运行的点击节拍。</summary>
     public void ResetCraftClickInterval()
