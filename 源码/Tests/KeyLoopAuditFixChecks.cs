@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Text.Json;
+using System.Windows;
 using ShiKe.Host;
 using ShiKe.Tools.KeyLoop;
 
@@ -298,6 +300,82 @@ internal static class KeyLoopAuditFixChecks
             Require(engine.Shutdown(TimeSpan.FromSeconds(2)), "跨轮发布检查未完整关闭 worker");
         }
     });
+
+    /// <summary>
+    /// 槽位录制会注销全部全局热键，所以别的自动化工具在跑时必须拒绝开始；
+    /// 被拒绝时不能留下“热键已暂停”的状态，允许录制后结束必须恢复。
+    /// </summary>
+    public static void SlotCaptureRefusesWhileOtherToolRuns() => WithRegistry((host, registry) =>
+    {
+        var craft = new NamedRuntimeTool("craft", "洗词缀");
+        registry.Register(craft);
+        var keyLoop = new KeyLoopTool();
+        registry.Register(keyLoop);
+        keyLoop.Initialize(host);
+        try
+        {
+            craft.IsRunning = true;
+            var refusal = keyLoop.TryBeginSlotCapture();
+            Require(refusal is not null && refusal.Contains("洗词缀", StringComparison.Ordinal),
+                "其他工具运行时必须拒绝开始槽位录制，并点名是哪个工具");
+            Require(!keyLoop.HotkeysPausedForCapture, "被拒绝时不得注销全局热键");
+
+            craft.IsRunning = false;
+            Require(keyLoop.TryBeginSlotCapture() is null, "没有工具运行时必须允许开始录制");
+            Require(keyLoop.HotkeysPausedForCapture, "允许录制后必须处于热键暂停状态");
+            keyLoop.EndSlotCapture();
+            Require(!keyLoop.HotkeysPausedForCapture, "结束录制必须恢复热键注册状态");
+        }
+        finally { keyLoop.OnShutdown(); }
+    });
+
+    private static void WithRegistry(Action<ToolHost, ToolRegistry> check)
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            ToolHost? host = null;
+            try
+            {
+                var registry = new ToolRegistry();
+                host = new ToolHost(registry);
+                check(host, registry);
+            }
+            catch (Exception error) { failure = error; }
+            finally
+            {
+                if (host is not null)
+                {
+                    host.Hotkeys.UnregisterAll();
+                    host.Sound.Dispose();
+                    host.Notification.Dispose();
+                    host.Network.Dispose();
+                }
+            }
+        }) { IsBackground = true };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Require(thread.Join(TimeSpan.FromSeconds(15)), "槽位录制防护检查超时");
+        if (failure is not null) throw new InvalidOperationException(failure.ToString(), failure);
+    }
+
+    private sealed class NamedRuntimeTool(string id, string name) : ITool, IToolRuntime
+    {
+        public string Id => id;
+        public string Name => name;
+        public string IconKey => id;
+        public bool IsRunning { get; set; }
+        public bool ShutdownCompleted => !IsRunning;
+        public void RequestStop() => IsRunning = false;
+        public void Initialize(ToolHost host) { }
+        public FrameworkElement CreatePage() => throw new InvalidOperationException("检查不创建页面");
+        public void OnActivate() { }
+        public void OnDeactivate() { }
+        public void OnShutdown() => RequestStop();
+        public IReadOnlyList<HotkeyRequest> GetHotkeyRequests() => [];
+        public void LoadSettings(JsonElement section) { }
+        public void SaveSettings(Utf8JsonWriter writer) { writer.WriteStartObject(); writer.WriteEndObject(); }
+    }
 
     private static object ReadField(KeyLoopEngine engine, string name)
         => typeof(KeyLoopEngine).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(engine)!;

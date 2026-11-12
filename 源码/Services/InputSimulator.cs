@@ -184,7 +184,11 @@ public sealed class InputSimulator
     /// <summary>发送鼠标事件。返回 true=SendInput 报告成功。</summary>
     private static bool SendMouse(uint flags) => SendMouse(flags, 0);
 
-    /// <summary>发送鼠标事件；侧键（XBUTTON）的键号在 mouseData 高字中。</summary>
+    /// <summary>
+    /// 发送鼠标事件。侧键（XBUTTON）的键号写在 <c>MOUSEINPUT.mouseData</c> 的**低字**
+    /// （XBUTTON1 = 1、XBUTTON2 = 2）；钩子上报走的 <c>MSLLHOOKSTRUCT.mouseData</c> 才是高字，
+    /// 两套编码不能互换，换算统一走 <see cref="MouseButtonKey"/>。
+    /// </summary>
     private static bool SendMouse(uint flags, uint mouseData)
     {
         Updates.UpdateAcceptanceContext.ForbidNativeOperation("SendInput(mouse)");

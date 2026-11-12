@@ -167,6 +167,7 @@ var tests = new (string Name, Action Run)[]
     ("取消其他槽位时重启不会发布旧错误或停止状态", KeyLoopAuditFixChecks.RestartDuringOtherSlotCancellationSkipsOldError),
     ("停止取消列表容忍已结束槽位释放令牌", KeyLoopAuditFixChecks.StopToleratesWorkerDisposingCollectedSource),
     ("槽位接手前停止仍释放该轮取消源", KeyLoopAuditFixChecks.StopBeforeWorkerStartsReleasesSources),
+    ("其他工具运行时拒绝开始槽位录制", KeyLoopAuditFixChecks.SlotCaptureRefusesWhileOtherToolRuns),
     ("洗装认领后停止不得开始输入", CraftAuditFixChecks.StopAfterClaimDoesNotBeginInput),
     ("洗装成功状态中重启不发布旧轮成功事件", CraftAuditFixChecks.RestartFromSuccessStatusSuppressesOldSuccessEvent),
     ("洗装快速重启隔离活动和排队运行快照", CraftAuditFixChecks.RapidRestartKeepsActiveAndPendingSnapshotsSeparate),

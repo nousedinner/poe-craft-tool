@@ -732,15 +732,17 @@ public sealed class CraftEngine
                      $"primary={result.PrimaryHits}[{string.Join(',', result.MatchedPrimaryRules)}], " +
                      $"secondary={result.SecondaryHits}[{string.Join(',', result.MatchedSecondaryRules)}], " +
                      $"exclude={result.HasExclude}[{string.Join(',', result.MatchedExcludeRules)}], " +
-                     $"命中原行={MatchedLineDigest(result)}");
+                     $"命中片段={MatchedLineDigest(result)}");
         }
         _runMeasurement?.CompleteMatching(item.Text, result);
         return (result, parsed.ExplicitAffixCount);
     }
 
     /// <summary>
-    /// 命中的原始行，用来说明规则到底撞上了哪一句。高级描述的头会带出词缀名，
+    /// 命中的匹配片段，用来说明规则到底撞上了哪一句。高级描述的头会带出词缀名，
     /// 例如规则「独裁」命中 '{ 前缀属性 "独裁者的" ... }'，不打出来很难自己看明白。
+    /// 注意显式词缀的匹配单元是「属性头 + 描述」的合并文本，这里输出的是该单元而不是严格的原行，
+    /// 并且截断到 80 字符——只用于诊断，不能当成逐行定位的依据。
     /// </summary>
     private static string MatchedLineDigest(AffixCheckResult result)
     {

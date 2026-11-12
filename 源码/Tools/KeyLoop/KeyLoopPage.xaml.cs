@@ -26,6 +26,7 @@ public partial class KeyLoopPage : UserControl
     private int? _captureIndex;
     private bool _allSlotsShown;
     private bool _loading = true;
+    private Window? _ownerWindow;
 
     public KeyLoopPage(KeyLoopTool tool)
     {
@@ -44,6 +45,7 @@ public partial class KeyLoopPage : UserControl
         CollectSettingsFromUi(); // 使初始显示的延时格式与后续运行配置一致，不提前落盘。
         tool.StatusUpdated += PublishStatus;
         _statusPresentation.Disposed += () => tool.StatusUpdated -= PublishStatus;
+        Loaded += Page_Loaded;
         Unloaded += Page_Unloaded;
     }
 
@@ -211,37 +213,79 @@ public partial class KeyLoopPage : UserControl
 
     private void StartCapture(int index)
     {
-        if (_tool.IsRunning) return;
+        if (_tool.IsRunning)
+        {
+            // 静默返回会让用户以为按钮坏了；拒绝必须给理由（与工具启动被拒的处理一致）。
+            ShowWarning("按键循环正在运行，请先停止后再设置槽位按键。");
+            return;
+        }
+        // 录制会注销全部全局热键，所以必须先确认没有别的工具在跑——否则洗装的停止热键、连点器的热键都会失效。
+        if (_tool.TryBeginSlotCapture() is { } refusal)
+        {
+            ShowWarning(refusal);
+            return;
+        }
+
         if (_captureIndex is { } previous && previous != index)
             RefreshKeyButton(previous);
         _captureIndex = index;
-        // 录制期间必须注销全局热键：否则按下侧键会先触发连点器等热键，连点会冲刷录制界面。
-        _tool.BeginSlotCapture();
         _rows[index].KeyButton.Content = "按下按键或侧键（Esc 取消）";
         _rows[index].KeyButton.Focus();
+        ShowCaptureHint(index);
     }
+
+    /// <summary>录制期间热键是暂停的，状态必须一直可见，不能只靠按钮文字暗示。</summary>
+    private void ShowCaptureHint(int index)
+    {
+        CaptureHint.Text = $"正在录制槽位 #{index + 1}：按 Esc 取消；全局热键已暂停";
+        CaptureHint.Visibility = Visibility.Visible;
+    }
+
+    private void HideCaptureHint() => CaptureHint.Visibility = Visibility.Collapsed;
 
     private void ClearKey(int index)
     {
         if (_tool.IsRunning) return;
         _captureIndex = null;
-        _tool.EndSlotCapture();
+        HideCaptureHint();
+        var restoreIssues = _tool.EndSlotCapture();
         _tool.Slots[index].Key = string.Empty;
         _rows[index].KeyButton.Tag = string.Empty;
         RefreshKeyButton(index);
         SaveRowChange();
+        ReportRestoreIssues(restoreIssues);
     }
 
     /// <summary>放弃本次录制，保留原键位并立即恢复全局热键。</summary>
-    private void CancelCapture()
+    private void CancelCapture(bool interactive = true)
     {
-        if (_captureIndex is not { } index) return;
-        _captureIndex = null;
-        RefreshKeyButton(index);
-        _tool.EndSlotCapture();
+        HideCaptureHint();
+        if (_captureIndex is { } index)
+        {
+            _captureIndex = null;
+            RefreshKeyButton(index);
+        }
+        // 即使没有待提交的录制，也要兜一次：保存异常可能让热键还停在暂停状态。
+        var issues = _tool.EndSlotCapture();
+        if (issues.Count == 0) return;
+        if (interactive) ShowWarning(RestoreFailureMessage(issues), "热键恢复失败");
+        else _tool.ReportHotkeyRestoreFailure(issues);
     }
 
-    private void Page_Unloaded(object sender, RoutedEventArgs e) => CancelCapture();
+    private void Page_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_ownerWindow is not null) return;
+        _ownerWindow = Window.GetWindow(this);
+        if (_ownerWindow is null) return;
+        // 窗口失焦（例如切回游戏）时结束录制并恢复热键，避免热键长时间处于暂停状态。
+        _ownerWindow.Deactivated += (_, _) => CancelCapture(interactive: false);
+        _ownerWindow.IsVisibleChanged += (_, args) =>
+        {
+            if (args.NewValue is false) CancelCapture(interactive: false);
+        };
+    }
+
+    private void Page_Unloaded(object sender, RoutedEventArgs e) => CancelCapture(interactive: false);
 
     private void Page_PreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -287,8 +331,9 @@ public partial class KeyLoopPage : UserControl
         {
             _captureIndex = null;
             RefreshKeyButton(index);
-            _tool.EndSlotCapture();
-            ShowWarning(error);
+            HideCaptureHint();
+            var restoreIssues = _tool.EndSlotCapture();
+            ShowWarning(restoreIssues.Count == 0 ? error : error + "\n\n" + RestoreFailureMessage(restoreIssues));
             return;
         }
 
@@ -296,17 +341,34 @@ public partial class KeyLoopPage : UserControl
         _rows[index].KeyButton.Tag = name;
         _captureIndex = null;
         RefreshKeyButton(index);
-        SaveRowChange();
-        _tool.EndSlotCapture();
+        HideCaptureHint();
+        try
+        {
+            SaveRowChange();
+        }
+        finally
+        {
+            // 保存抛异常（磁盘满、只读目录等）时也必须恢复热键：
+            // 此时录制状态已经清空，再走 CancelCapture 也救不回来，热键会一直停着。
+            _tool.ReportHotkeyRestoreFailure(_tool.EndSlotCapture());
+        }
     }
 
-    private void ShowWarning(string message)
+    private void ReportRestoreIssues(IReadOnlyList<string> issues)
+    {
+        if (issues.Count > 0) ShowWarning(RestoreFailureMessage(issues), "热键恢复失败");
+    }
+
+    private static string RestoreFailureMessage(IReadOnlyList<string> issues)
+        => "热键恢复失败：\n" + string.Join("\n", issues);
+
+    private void ShowWarning(string message, string title = "按键冲突")
     {
         var owner = Window.GetWindow(this);
         if (owner is null)
-            ThemedMessageBox.Show(message, "按键冲突", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
         else
-            ThemedMessageBox.Show(owner, message, "按键冲突", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(owner, message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private void RefreshKeyButton(int index)

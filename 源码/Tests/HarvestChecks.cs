@@ -307,7 +307,7 @@ internal static class HarvestChecks
 
         var dictator = AffixEngine.CheckAffixes(parsed, HarvestRules("独裁"));
         Equal(1, dictator.PrimaryHits, "「独裁」应命中装备上的独裁者的前缀");
-        // 命中原行必须就是带词缀名的高级描述头，而不是别的正文。
+        // 命中片段必须就是带词缀名的高级描述头，而不是别的正文。
         Require(dictator.MatchedPrimary.Any(line => line.Contains("独裁者的", StringComparison.Ordinal)),
             "「独裁」命中的行必须包含独裁者的，否则说明是别处误撞");
         Require(dictator.MeetsFinalRules(HarvestRules("独裁")), "主命中 1 应通过终检，这类样本会立即停止");

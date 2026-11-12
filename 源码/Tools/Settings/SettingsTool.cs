@@ -266,15 +266,8 @@ public sealed class SettingsTool : ITool, IEditableHotkeyProvider, IPassiveTool
         _page?.RefreshFromTool(refreshLists: false);
     }
 
-    private string? RunningToolsMessage(string action)
-    {
-        var running = (_host?.RegisteredTools ?? []).Where(tool => tool is IToolRuntime { IsRunning: true }).ToArray();
-        if (running.Length == 0) return null;
-        var names = string.Join("、", running.Select(tool => tool.Name).Distinct(StringComparer.Ordinal));
-        return running.All(tool => tool.Id == "hideout")
-            ? $"{names}正在执行，请等待完成后重试{action}。"
-            : $"当前仍在运行：{names}。请停止相关工具或等待执行完成后，再{action}。";
-    }
+    // 与按键循环槽位录制共用同一句提示，避免两处对“还有工具在跑”给出不同说法。
+    private string? RunningToolsMessage(string action) => ToolCapabilities.RunningToolsMessage(_host, action);
 
     private void ApplyRuntime(SettingsDraft draft)
     {

@@ -30,6 +30,24 @@ public interface IEditableHotkeyProvider
 
 public static class ToolCapabilities
 {
+    /// <summary>
+    /// 运行中自动化工具的统一提示。设置页修改热键、按键循环录制槽位键都必须先过这一关：
+    /// 这类操作会临时注销全部全局热键，正在跑的任务会因此失去停止入口。
+    /// <paramref name="excludeToolId"/> 给“自己正在运行”的入口留出例外。
+    /// </summary>
+    internal static string? RunningToolsMessage(ToolHost? host, string action, string? excludeToolId = null)
+    {
+        var running = (host?.RegisteredTools ?? [])
+            .Where(tool => tool is IToolRuntime { IsRunning: true })
+            .Where(tool => !string.Equals(tool.Id, excludeToolId, StringComparison.Ordinal))
+            .ToArray();
+        if (running.Length == 0) return null;
+        var names = string.Join("、", running.Select(tool => tool.Name).Distinct(StringComparer.Ordinal));
+        return running.All(tool => tool.Id == "hideout")
+            ? $"{names}正在执行，请等待完成后重试{action}。"
+            : $"当前仍在运行：{names}。请停止相关工具或等待执行完成后，再{action}。";
+    }
+
     public static bool HasActiveAutomation(IEnumerable<ITool> tools)
         => tools.Any(tool => (tool is IToolRuntime) == (tool is IPassiveTool) ||
                              tool is IToolRuntime runtime && runtime.IsRunning);
