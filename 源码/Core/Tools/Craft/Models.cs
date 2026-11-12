@@ -6,6 +6,14 @@ public enum CraftMode
     Single = 1,        // 单通货
     AltAug = 2,        // 改造+增幅
     AltAugRegal = 3,   // 改造+增幅+富豪
+    Harvest = 4,       // 庄园工艺台：点工艺按钮随机转换，再复制物品判定
+}
+
+/// <summary>坐标槽位 ID。装备位置各模式共用；庄园工艺额外需要一个工艺按钮。</summary>
+public static class CraftSlot
+{
+    public const string Item = "item";
+    public const string HarvestBench = "harvest_bench";
 }
 
 /// <summary>通货类型与布局（对齐 Python models.py CurrencyType + config_tab.py all_currencies）。</summary>
@@ -45,12 +53,14 @@ public static class Currency
         Divine,
     ];
 
-    /// <summary>每模式显示子集（对齐 models.py MODE_CURRENCIES；点金不在 Mode2 子集但属全局网格，方案 §6）。</summary>
+    /// <summary>每模式显示子集（对齐 models.py MODE_CURRENCIES；点金不在 Mode2 子集但属全局网格，方案 §6）。
+    /// 庄园工艺不使用通货，故为空集合。</summary>
     public static readonly Dictionary<CraftMode, string[]> ModeCurrencies = new()
     {
         [CraftMode.Single] = [Alteration, Chaos, Custom],
         [CraftMode.AltAug] = [Alteration, Augmentation, Alchemy, Scouring],
         [CraftMode.AltAugRegal] = [Alteration, Augmentation, Regal, Scouring, Transmutation, Exalted],
+        [CraftMode.Harvest] = [],
     };
 
     public static string Label(string key) => Labels.TryGetValue(key, out var l) ? l : key;
@@ -111,15 +121,31 @@ public enum ItemRarity
     Magic,
     Rare,
     Unique,
+    /// <summary>可堆叠通货/道具（化石、精华、催化剂、圣油等）；复制文本里稀有度一行就是「通货」。</summary>
+    Currency,
+}
+
+/// <summary>
+/// 物品大类。通货物品的正文是效果列表与使用说明，不是词缀，
+/// 因此只取名称参与匹配；装备仍沿用完整的词缀匹配规则。
+/// </summary>
+public enum ItemKind
+{
+    Equipment,
+    Currency,
 }
 
 /// <summary>
 /// 物品文本的双视图解析结果：
 /// MatchLines 保留装备名/基础类型供宽松匹配；ExplicitAffixes 仅表示真实前后缀。
+/// 通货物品的 MatchLines/MatchCandidates 只有名称一项。
 /// </summary>
 public sealed class ItemParseResult
 {
     public ItemRarity Rarity { get; set; }
+    /// <summary>名称行（稀有度之后第一段的第一行）；通货即道具名，装备即装备名。</summary>
+    public string ItemName { get; set; } = "";
+    public ItemKind Kind => Rarity == ItemRarity.Currency ? ItemKind.Currency : ItemKind.Equipment;
     public List<string> MatchLines { get; } = [];
     public List<ItemMatchCandidate> MatchCandidates { get; } = [];
     public List<ParsedItemAffix> ExplicitAffixes { get; } = [];
@@ -223,6 +249,7 @@ public sealed class CraftRules
     public List<AffixRule> ExcludeAffixes { get; } = [];
 
     // 旧规则/预设的数量仍可读取；单通货的校验、执行和保存使用同一固定需求。
+    // 庄园工艺兼做道具转换与洗装备，因此沿用可配置命中数；通货物品只有名称一个候选，最多贡献 1 次主命中。
     public int RequiredPrimaryHits => Mode == CraftMode.Single ? 1 : PrimaryHitCount;
     public int RequiredSecondaryHits => Mode == CraftMode.Single ? 0 : SecondaryHitCount;
 

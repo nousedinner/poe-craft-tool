@@ -240,7 +240,13 @@ public sealed class CraftEngine
     {
         static bool IsValid(Point c) => c.X != 0 || c.Y != 0;
 
-        if (rules.Mode == CraftMode.Single)
+        if (rules.Mode == CraftMode.Harvest)
+        {
+            // 庄园工艺不用通货，只需要工艺按钮与物品区域两个位置。
+            if (!coords.TryGetValue(CraftSlot.HarvestBench, out var bench) || !IsValid(bench))
+                return "工艺按钮坐标";
+        }
+        else if (rules.Mode == CraftMode.Single)
         {
             if (!coords.TryGetValue(rules.SingleCurrency, out var c1) || !IsValid(c1))
                 return $"{Currency.Label(rules.SingleCurrency)}坐标";
@@ -439,6 +445,9 @@ public sealed class CraftEngine
                 break;
             case CraftMode.AltAugRegal:
                 await Mode3Async(token);
+                break;
+            case CraftMode.Harvest:
+                await HarvestAsync(token);
                 break;
         }
     }
@@ -802,6 +811,109 @@ public sealed class CraftEngine
         {
             try { await _environment.Input.ReleaseShiftAsync(CancellationToken.None); } catch { }
         }
+    }
+
+    // ── 庄园工艺：工艺按钮随机转换 + 复制判定（继承 Mode1 的先动手后判定）──
+
+    /// <summary>
+    /// 庄园工艺台循环：点工艺按钮（一次＝一次转换）→ 等 delay → 移到物品区域复制 → 判定。
+    /// 不复用「等待文本变化」的闸门，因为随机转换本来就可能转出同一个道具；
+    /// 但连续多次完全相同仍然说明按钮没点中，此时按既有未变化阈值停止。
+    /// </summary>
+    private async Task HarvestAsync(CancellationToken token)
+    {
+        var benchCoord = _coordinates[CraftSlot.HarvestBench];
+        var itemCoord = _coordinates[CraftSlot.Item];
+
+        ReportStatus("启动庄园工艺模式...", force: true);
+        _environment.Log($"[引擎] 庄园工艺: 开始, 工艺按钮 ({benchCoord.X},{benchCoord.Y}), " +
+                 $"物品区域 ({itemCoord.X},{itemCoord.Y})");
+
+        string? previousText = null;
+        var identicalResults = 0;
+        while (true)
+        {
+            token.ThrowIfCancellationRequested();
+            await AwaitForegroundAsync(token);
+
+            // 与 Mode1 相同的产品语义：先动手再判定，启动时不预先读一次物品，
+            // 省掉循环里多出的一次「跑到物品区域再跑回来」。
+            await ClickHarvestBenchAsync(benchCoord, token);
+            UseCount++;
+
+            var text = await CopyHarvestItemAsync(token);
+
+            var normalized = CraftStateSync.NormalizeItemText(text.Text);
+            identicalResults = string.Equals(normalized, previousText, StringComparison.Ordinal)
+                ? identicalResults + 1 : 0;
+            previousText = normalized;
+
+            var (result, affixCount) = CheckItem(text);
+            MatchCount = result.TotalHits;
+            var name = text.Parsed.ItemName.Length > 0 ? text.Parsed.ItemName : "(未识别名称)";
+            var status = $"#{UseCount} {name} 主:{result.PrimaryHits} 次:{result.SecondaryHits}";
+            if (result.HasExclude) status += " [排除]";
+            ReportStatus(status);
+            _environment.Log($"[庄园工艺] #{UseCount} kind={text.Parsed.Kind}, rarity={text.Parsed.Rarity}, " +
+                     $"name={name}, affixes={affixCount}, 连续同结果={identicalResults}");
+
+            if (result.MeetsFinalRules(_rules))
+            {
+                OnSuccess(token);
+                return;
+            }
+
+            if (identicalResults >= Math.Max(1, _exhaustionThreshold))
+                throw new InvalidOperationException(
+                    $"连续 {identicalResults + 1} 次工艺转换得到的物品完全相同；" +
+                    "可能工艺按钮坐标不准或工艺台未打开，已安全停止");
+        }
+    }
+
+    private async Task ClickHarvestBenchAsync(Point benchCoord, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        _runMeasurement?.BeginClick("庄园工艺");
+        await _environment.Input.ClickAtExactAsync((int)benchCoord.X, (int)benchCoord.Y,
+            _timing.ItemMovementMs, token);
+        _runMeasurement?.ClickSent();
+    }
+
+    /// <summary>
+    /// 庄园工艺的复制门禁：点击后先等一个 delay 同步窗口，再重试复制直到拿到物品文本。
+    /// 只要拿到文本就返回，不要求与上一次不同。
+    /// </summary>
+    private async Task<CraftItemSnapshot> CopyHarvestItemAsync(CancellationToken token)
+    {
+        var firstWaitMs = _timing.FirstWaitMs(_delayMs);
+        if (firstWaitMs > 0)
+            await Task.Delay(firstWaitMs, token);
+
+        var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
+        var stopwatch = Stopwatch.StartNew();
+        var attempts = 0;
+        while (stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            token.ThrowIfCancellationRequested();
+            attempts++;
+            var text = await TryCopyClipboardOnceAsync(
+                CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token);
+            if (text is not null)
+            {
+                _environment.Log($"[同步] 庄园工艺 复制成功: total={stopwatch.ElapsedMilliseconds}ms, " +
+                         $"attempts={attempts}, {text.Length} chars");
+                _runMeasurement?.ConfirmTransition(text);
+                return new CraftItemSnapshot(text);
+            }
+
+            if (stopwatch.ElapsedMilliseconds >= timeoutMs) break;
+            await Task.Delay(CraftStateSync.RetryBackoffMs, token);
+        }
+
+        _environment.Log($"[同步] 庄园工艺 复制超时: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}");
+        _runMeasurement?.SyncFailed();
+        throw new InvalidOperationException(
+            $"庄园工艺连续复制物品信息失败（{timeoutMs}ms）；已安全停止，请确认鼠标位于物品区域");
     }
 
     // ── Mode 2：改造+增幅（Python _mode2）──

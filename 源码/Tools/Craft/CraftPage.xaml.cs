@@ -73,8 +73,10 @@ public partial class CraftPage : UserControl
             _host.Coordinates.CancelRecording();
             UpdateCoordButton(slot.SlotId, _host.Coordinates.GetCoordinate(slot.SlotId));
         }
-        else if (slot.SlotId == "item")
+        else if (slot.SlotId == CraftSlot.Item)
             ItemCoordButton.Content = $"移动鼠标后按 {coordinateHotkey}...";
+        else if (slot.SlotId == CraftSlot.HarvestBench)
+            BenchCoordButton.Content = $"移动鼠标后按 {coordinateHotkey}...";
         else if (_cards.TryGetValue(slot.SlotId, out var card))
             card.CoordButton.Content = $"移动鼠标后按 {coordinateHotkey}...";
     }
@@ -214,6 +216,7 @@ public partial class CraftPage : UserControl
 
     private void ApplyModeVisibility()
     {
+        var harvest = CurrentMode == CraftMode.Harvest;
         var visible = Currency.ModeCurrencies.TryGetValue(CurrentMode, out var keys) ? keys : [];
         foreach (var (key, card) in _cards)
         {
@@ -223,6 +226,8 @@ public partial class CraftPage : UserControl
         Mode2Frame.Visibility = CurrentMode == CraftMode.AltAug ? Visibility.Visible : Visibility.Collapsed;
         Mode3Frame.Visibility = CurrentMode == CraftMode.AltAugRegal ? Visibility.Visible : Visibility.Collapsed;
         SingleCurrencyFrame.Visibility = CurrentMode == CraftMode.Single ? Visibility.Visible : Visibility.Collapsed;
+        HarvestHint.Visibility = harvest ? Visibility.Visible : Visibility.Collapsed;
+        HarvestBenchSection.Visibility = harvest ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void SingleCurrency_Changed(object sender, SelectionChangedEventArgs e)
@@ -263,14 +268,20 @@ public partial class CraftPage : UserControl
         var coordinates = _host.Coordinates.GetCoordinates();
         foreach (var key in _cards.Keys)
             UpdateCoordButton(key, coordinates.TryGetValue(key, out var pt) ? pt : null);
-        UpdateCoordButton("item", coordinates.TryGetValue("item", out var item) ? item : null);
+        UpdateCoordButton(CraftSlot.Item, coordinates.TryGetValue(CraftSlot.Item, out var item) ? item : null);
+        UpdateCoordButton(CraftSlot.HarvestBench,
+            coordinates.TryGetValue(CraftSlot.HarvestBench, out var bench) ? bench : null);
     }
 
     private void UpdateCoordButton(string slotId, Point? pt)
     {
-        if (slotId == "item")
+        if (slotId == CraftSlot.Item)
         {
             SetCoordButtonState(ItemCoordButton, ItemClearButton, pt);
+        }
+        else if (slotId == CraftSlot.HarvestBench)
+        {
+            SetCoordButtonState(BenchCoordButton, BenchClearButton, pt);
         }
         else if (_cards.TryGetValue(slotId, out var card))
         {
@@ -304,19 +315,31 @@ public partial class CraftPage : UserControl
 
     private void ItemCoordButton_Click(object sender, RoutedEventArgs e)
     {
-        StartRecordSlot("item", "装备位置", ItemCoordButton);
+        StartRecordSlot(CraftSlot.Item, "装备位置", ItemCoordButton);
     }
 
     private void ItemClearButton_Click(object sender, RoutedEventArgs e)
     {
-        _host.Coordinates.ClearCoordinate("item");
-        _tool.Coordinates.Remove("item");
-        UpdateCoordButton("item", null);
+        _host.Coordinates.ClearCoordinate(CraftSlot.Item);
+        _tool.Coordinates.Remove(CraftSlot.Item);
+        UpdateCoordButton(CraftSlot.Item, null);
+    }
+
+    private void BenchCoordButton_Click(object sender, RoutedEventArgs e)
+    {
+        StartRecordSlot(CraftSlot.HarvestBench, "工艺按钮位置", BenchCoordButton);
+    }
+
+    private void BenchClearButton_Click(object sender, RoutedEventArgs e)
+    {
+        _host.Coordinates.ClearCoordinate(CraftSlot.HarvestBench);
+        _tool.Coordinates.Remove(CraftSlot.HarvestBench);
+        UpdateCoordButton(CraftSlot.HarvestBench, null);
     }
 
     private void ClearAllCoordsButton_Click(object sender, RoutedEventArgs e)
     {
-        var ids = _cards.Keys.Append("item").ToArray();
+        var ids = _cards.Keys.Append(CraftSlot.Item).Append(CraftSlot.HarvestBench).ToArray();
         _host.Coordinates.ClearCoordinates(ids);
         foreach (var key in ids)
         {
@@ -517,6 +540,7 @@ public partial class CraftPage : UserControl
     {
         if (Mode1Radio.IsChecked == true) return CraftMode.Single;
         if (Mode2Radio.IsChecked == true) return CraftMode.AltAug;
+        if (Mode4Radio.IsChecked == true) return CraftMode.Harvest;
         return CraftMode.AltAugRegal;
     }
 
@@ -756,6 +780,7 @@ public partial class CraftPage : UserControl
             {
                 case CraftMode.Single: Mode1Radio.IsChecked = true; break;
                 case CraftMode.AltAug: Mode2Radio.IsChecked = true; break;
+                case CraftMode.Harvest: Mode4Radio.IsChecked = true; break;
                 default: Mode3Radio.IsChecked = true; break;
             }
             ApplyModeVisibility();

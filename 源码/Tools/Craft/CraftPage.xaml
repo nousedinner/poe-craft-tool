@@ -69,6 +69,9 @@
                         <RadioButton x:Name="Mode3Radio" GroupName="Mode" Tag="3" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
                             <TextBlock Text="3 · 改造＋增幅＋富豪" FontSize="14"/>
                         </RadioButton>
+                        <RadioButton x:Name="Mode4Radio" GroupName="Mode" Tag="4" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
+                            <TextBlock Text="4 · 庄园工艺" FontSize="14"/>
+                        </RadioButton>
                         <StackPanel x:Name="SingleCurrencyFrame" Visibility="Collapsed" Margin="2,8,0,14">
                             <TextBlock Text="使用通货" Style="{StaticResource PoolHeading}" Margin="0,0,0,8"/>
                             <ComboBox x:Name="SingleCurrencyCombo" SelectedValuePath="Tag" SelectionChanged="SingleCurrency_Changed">
@@ -86,6 +89,9 @@
                             <ToggleButton x:Name="ExaltCheck" Content="富豪后使用崇高石" Style="{StaticResource ModernSwitchStyle}"
                                           FontSize="12" Checked="ExaltCheck_Changed" Unchecked="ExaltCheck_Changed"/>
                         </StackPanel>
+                        <TextBlock x:Name="HarvestHint" Visibility="Collapsed" Margin="2,8,0,14" FontSize="11" TextWrapping="Wrap"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   Text="点一次工艺按钮＝转换一次，随后复制物品区域判定是否达标。道具只按名称匹配，装备按词缀规则匹配。"/>
                         <Border BorderBrush="{StaticResource CardBorder}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,10,0,0">
                             <StackPanel>
                                 <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -114,6 +120,14 @@
                                     <Button x:Name="ItemClearButton" Grid.Column="1" Content="✕" Width="26" Padding="2" Visibility="Collapsed"
                                             Margin="4,0,0,0" Click="ItemClearButton_Click" Foreground="{StaticResource DangerRed}"/>
                                 </Grid>
+                                <StackPanel x:Name="HarvestBenchSection" Visibility="Collapsed" Margin="0,14,0,0">
+                                    <TextBlock Text="工艺按钮坐标" Style="{StaticResource PoolHeading}" Margin="0,0,0,10"/>
+                                    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <Button x:Name="BenchCoordButton" Content="设定坐标" Style="{StaticResource CardButton}" Click="BenchCoordButton_Click" MinHeight="32"/>
+                                        <Button x:Name="BenchClearButton" Grid.Column="1" Content="✕" Width="26" Padding="2" Visibility="Collapsed"
+                                                Margin="4,0,0,0" Click="BenchClearButton_Click" Foreground="{StaticResource DangerRed}"/>
+                                    </Grid>
+                                </StackPanel>
                                 <Button x:Name="ClearAllCoordsButton" Content="清空全部坐标" Style="{StaticResource CardButton}"
                                         HorizontalAlignment="Left" Margin="0,12,0,0" Click="ClearAllCoordsButton_Click"/>
                             </StackPanel>

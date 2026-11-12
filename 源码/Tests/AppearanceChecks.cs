@@ -200,6 +200,18 @@ internal static class AppearanceChecks
             Pump();
             CheckCurrencies(page, CraftMode.AltAugRegal);
 
+            Find<RadioButton>(page, "Mode4Radio").IsChecked = true;
+            Pump();
+            CheckCurrencies(page, CraftMode.Harvest);
+            Require(Find<StackPanel>(page, "HarvestBenchSection").IsVisible, "庄园工艺必须显示工艺按钮坐标");
+            Require(Find<TextBlock>(page, "HarvestHint").IsVisible, "庄园工艺必须显示流程说明");
+            Require(!Find<StackPanel>(page, "Mode2Frame").IsVisible && !Find<StackPanel>(page, "Mode3Frame").IsVisible,
+                    "庄园工艺不能残留子模式");
+            Snapshot(window, "T11-WPF-Harvest.png");
+            Find<RadioButton>(page, "Mode3Radio").IsChecked = true;
+            Pump();
+            Require(!Find<StackPanel>(page, "HarvestBenchSection").IsVisible, "切回 Mode 3 必须隐藏工艺按钮坐标");
+
             Find<TextBox>(page, "PrimaryInput").Text = "冰霜抗性";
             Descendants(page).OfType<Button>().Single(button => (string?)button.Tag == "primary")
                 .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));

@@ -195,10 +195,14 @@ public sealed partial class CraftTool : ITool, ICoordinateProvider, IEnableableT
         },
     ];
 
-    // ── 坐标槽位（物品 + 10 通货；divine 占位）──
+    // ── 坐标槽位（物品 + 10 通货 + 庄园工艺按钮；divine 占位）──
     public IReadOnlyList<CoordinateSlot> GetCoordinateSlots()
     {
-        var slots = new List<CoordinateSlot> { new() { SlotId = "item", DisplayName = "装备位置" } };
+        var slots = new List<CoordinateSlot>
+        {
+            new() { SlotId = CraftSlot.Item, DisplayName = "装备位置" },
+            new() { SlotId = CraftSlot.HarvestBench, DisplayName = "工艺按钮位置" },
+        };
         foreach (var key in Currency.All)
             slots.Add(new CoordinateSlot { SlotId = key, DisplayName = $"{Currency.Label(key)}位置" });
         return slots;

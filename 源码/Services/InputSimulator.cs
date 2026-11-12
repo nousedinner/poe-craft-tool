@@ -367,6 +367,26 @@ public sealed class InputSimulator
         SendMouseOrThrow(MOUSEEVENTF_LEFTUP, "鼠标左键抬起");
     }
 
+    /// <summary>
+    /// 固定坐标左键一次，不加随机偏移。庄园工艺按钮是界面上的小按钮，
+    /// 装备位置用的 ±10px 抖动会点空，因此这条路径按录制坐标原样落点。
+    /// </summary>
+    internal async Task ClickAtExactAsync(int x, int y, int settleMs, CancellationToken token)
+    {
+        Updates.UpdateAcceptanceContext.ForbidNativeOperation("SetCursorPos(craft)");
+        await EnsureForegroundForInputAsync(token);
+        CheckEmergencyStop();
+        if (!SetCursorPos(x, y))
+        {
+            var error = Marshal.GetLastWin32Error();
+            Diag.Win32Error($"SetCursorPos({x},{y})", error);
+            throw new InputSimulationException($"移动鼠标到 ({x}, {y}) 失败，Win32 错误码 {error}");
+        }
+        await Task.Delay(settleMs, token);
+        CheckEmergencyStop();
+        await SendCraftMouseClickAsync(Task.CompletedTask, token);
+    }
+
     /// <summary>普通左键点击（当前位置）。down/up 间不可取消（原子）。</summary>
     public async Task ClickAsync(int delayMs, CancellationToken token)
     {

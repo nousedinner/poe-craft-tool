@@ -34,11 +34,14 @@ public static class AffixEngine
         @"^每秒攻[击擊]次[数數]",
         @"^出售[获獲]得通[货貨]",
         @"^品[质質]",
+        // 通货/可堆叠道具的堆叠数量是元数据，不是物品属性。
+        @"^堆[叠疊][数數]量",
         // 英文
         @"^Rarity", @"^Item Class", @"^Item Level", @"^Requirements", @"^Level",
         @"^Sockets", @"^Quality", @"^Physical Damage", @"^Elemental Damage",
         @"^Fire Damage", @"^Cold Damage", @"^Lightning Damage",
         @"^Critical Strike Chance", @"^Attacks per Second",
+        @"^Stack Size",
     }.Select(pattern => pattern + @"\s*[:：]")
      // 需求分节可以独占一行；英文旧格式的 Requires / Vendor 值可以直接跟在空格后。
      .Concat(new[] { @"^需求$", @"^Requires(?:\s|[:：]|$)", @"^Vendor(?:\s|[:：]|$)" })
@@ -60,12 +63,33 @@ public static class AffixEngine
         var rawLines = clipboardText.Split('\n');
         var matchLinesByIndex = new Dictionary<int, string>();
 
-        foreach (var rawLine in rawLines)
+        var rarityLineIndex = -1;
+        for (var i = 0; i < rawLines.Length; i++)
         {
-            var rarity = ParseRarity(rawLine.Trim());
+            var rarity = ParseRarity(rawLines[i].Trim());
             if (rarity == ItemRarity.Unknown) continue;
             result.Rarity = rarity;
+            rarityLineIndex = i;
             break;
+        }
+
+        result.ItemName = FindName(rawLines, rarityLineIndex);
+
+        // 通货/可堆叠道具：稀有度一行为「通货」，正文是效果列表与使用说明而不是词缀。
+        // 描述里会成段出现「最大生命」「生命偷取」「品质」等字样，参与匹配必然误命中，
+        // 因此这里只保留名称一个候选（庄园工艺按名称前缀识别道具），装备路径不受影响。
+        if (result.Kind == ItemKind.Currency)
+        {
+            if (result.ItemName.Length > 0)
+            {
+                result.MatchLines.Add(result.ItemName);
+                result.MatchCandidates.Add(new ItemMatchCandidate
+                {
+                    DisplayText = result.ItemName,
+                    SearchText = result.ItemName,
+                });
+            }
+            return result;
         }
 
         // 匹配视图：保留装备名、基础类型、显式词缀头及描述；过滤元数据和说明注释。
@@ -132,6 +156,23 @@ public static class AffixEngine
     /// <summary>真实显式前/后缀总数。</summary>
     public static int GetAffixCount(string itemText) => ParseItem(itemText).ExplicitAffixCount;
 
+    /// <summary>
+    /// 名称行：稀有度之后的第一个非空行（遇到分段符即停止）。
+    /// 装备的名称与基础类型同在首段，只取第一行；通货的首段就只有道具名。
+    /// </summary>
+    private static string FindName(string[] rawLines, int rarityLineIndex)
+    {
+        if (rarityLineIndex < 0) return "";
+        for (var i = rarityLineIndex + 1; i < rawLines.Length; i++)
+        {
+            var line = rawLines[i].Trim();
+            if (line.Length == 0) continue;
+            if (line.StartsWith("--------")) return "";
+            return line;
+        }
+        return "";
+    }
+
     private static ItemRarity ParseRarity(string line)
     {
         var chinese = ChineseRarity.Match(line);
@@ -143,6 +184,8 @@ public static class AffixEngine
                 "魔法" => ItemRarity.Magic,
                 "稀有" => ItemRarity.Rare,
                 "传奇" or "傳奇" => ItemRarity.Unique,
+                // 可堆叠通货/道具（化石、精华、催化剂、圣油等）。
+                "通货" or "通貨" => ItemRarity.Currency,
                 _ => ItemRarity.Unknown,
             };
         }
@@ -155,6 +198,7 @@ public static class AffixEngine
             "magic" => ItemRarity.Magic,
             "rare" => ItemRarity.Rare,
             "unique" => ItemRarity.Unique,
+            "currency" => ItemRarity.Currency,
             _ => ItemRarity.Unknown,
         };
     }
