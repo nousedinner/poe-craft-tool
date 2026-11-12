@@ -227,6 +227,26 @@ public partial class SettingsPage : UserControl
         e.Handled = true;
     }
 
+    /// <summary>
+    /// 鼠标侧键不会产生 KeyEventArgs，必须单独从鼠标事件捕获。
+    /// 左右中键不参与热键：左键与普通点击、连点器语义冲突，中键留给用户自己的游戏操作。
+    /// </summary>
+    private void Page_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_capturing is null) return;
+        var vk = e.ChangedButton switch
+        {
+            MouseButton.XButton1 => MouseButtonKey.XButton1,
+            MouseButton.XButton2 => MouseButtonKey.XButton2,
+            _ => (ushort)0,
+        };
+        if (vk == 0) return;
+
+        e.Handled = true;
+        _capturedMainKey = true;
+        CompleteHotkeyCapture(FormatMouseHotkey(vk, Keyboard.Modifiers));
+    }
+
     private void Page_PreviewKeyUp(object sender, KeyEventArgs e)
     {
         if (_capturing is null || _capturedMainKey) return;
@@ -430,7 +450,7 @@ public partial class SettingsPage : UserControl
         ResultPanel.Visibility = Visibility.Visible;
         ResultPanel.Background = new SolidColorBrush(Color.FromRgb(0xEA, 0xF3, 0xFA));
         ResultPanel.BorderBrush = new SolidColorBrush(Color.FromRgb(0xD4, 0xE4, 0xF0));
-        ResultText.Text = "正在捕获热键；按 Esc 取消";
+        ResultText.Text = "正在捕获热键：键盘键或鼠标侧键（4/5）；更多侧键请先在鼠标驱动映射为 F13～F24；Esc 取消";
         ResultText.Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x6B, 0x2D));
     }
 
@@ -473,7 +493,15 @@ public partial class SettingsPage : UserControl
     private static string? FormatHotkey(Key key, ModifierKeys modifiers)
     {
         var main = KeyName(key);
-        if (main is null) return null;
+        return main is null ? null : JoinHotkey(main, modifiers);
+    }
+
+    /// <summary>鼠标侧键与键盘键共用同一修饰键顺序，同一组合必须得到同一字符串。</summary>
+    internal static string FormatMouseHotkey(ushort vk, ModifierKeys modifiers)
+        => JoinHotkey(MouseButtonKey.KeyName(vk), modifiers);
+
+    private static string JoinHotkey(string main, ModifierKeys modifiers)
+    {
         var parts = new List<string>();
         if ((modifiers & ModifierKeys.Control) != 0) parts.Add("Ctrl");
         if ((modifiers & ModifierKeys.Alt) != 0) parts.Add("Alt");

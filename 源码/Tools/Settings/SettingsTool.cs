@@ -120,6 +120,9 @@ public sealed class SettingsTool : ITool, IEditableHotkeyProvider, IPassiveTool
     {
         var current = CaptureDraft();
         var resolution = HotkeyConflictResolver.Resolve(current.Hotkeys.WithKey(id, key), id);
+        // 反向校验：新热键不能与按键循环已启用的槽位键相同，否则按一次键会同时走两条路径。
+        if (KeyLoopSlotConflict(resolution.Hotkeys, id) is { } slotConflict)
+            return SettingsApplyResult.Fail(slotConflict);
         var result = ApplyDraft(current with { Hotkeys = resolution.Hotkeys });
         if (!result.Success) return result;
 
@@ -132,6 +135,22 @@ public sealed class SettingsTool : ITool, IEditableHotkeyProvider, IPassiveTool
         if (string.IsNullOrEmpty(resolution.Hotkeys.CraftStop))
             message += "\n洗装停止热键未绑定，重新绑定前无法启动洗装";
         return SettingsApplyResult.Ok(message);
+    }
+
+    /// <summary>只比较本次修改的热键项，避免历史遗留冲突把整页保存一起锁死。</summary>
+    private string? KeyLoopSlotConflict(HotkeySettings hotkeys, string id)
+    {
+        var slots = new List<(string Name, string Key)>();
+        for (var index = 0; index < _keyLoop.Slots.Count; index++)
+        {
+            var slot = _keyLoop.Slots[index];
+            if (!slot.Enabled || string.IsNullOrWhiteSpace(slot.Key)) continue;
+            slots.Add(($"槽位 {index + 1}", slot.Key));
+        }
+        if (slots.Count == 0) return null;
+
+        var entry = hotkeys.GetEntries().Single(candidate => candidate.Id == id);
+        return SettingsValidation.ValidateSlotKeyConflicts([entry], slots).FirstOrDefault();
     }
 
     public SettingsApplyResult ApplyDraft(SettingsDraft requested)

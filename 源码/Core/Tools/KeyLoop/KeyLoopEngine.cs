@@ -126,14 +126,22 @@ public sealed class KeyLoopEngine
                 if (runtime.Active) activeIndexes.Add(index);
             }
 
-            if (activeIndexes.Count == 0) return false;
+            if (activeIndexes.Count == 0)
+            {
+                // 没有任何槽位可跑时必须留下原因：否则界面上只是一次无反应的启动。
+                var enabledKeys = string.Join(',', Enumerable.Range(0, MaxSlots)
+                    .Where(index => snapshots[index].Enabled)
+                    .Select(index => $"{index + 1}({snapshots[index].Key})"));
+                _host.Log("[按键循环] 无可运行槽位: 已启用=" + (enabledKeys.Length > 0 ? enabledKeys : "无"));
+                return false;
+            }
             _running = true;
             _lastStatusTimestamp = 0;
         }
 
         foreach (var index in activeIndexes) _slots[index].WakeSignal.Release();
         ReportStatus("按键循环运行中...", running: true, force: true, runId: runId);
-        _host.Log($"[按键循环] 启动: active={string.Join(',', activeIndexes.Select(i => i + 1))}");
+        _host.Log($"[按键循环] 启动: active={string.Join(',', activeIndexes.Select(i => $"{i + 1}({snapshots[i].Key})"))}");
         return true;
     }
 

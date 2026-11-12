@@ -25,6 +25,12 @@ public sealed class HotkeyManager
     private const int WM_SYSKEYUP = 0x0105;
     private const uint LLKHF_LOWER_IL_INJECTED = 0x02;
     private const uint LLKHF_INJECTED = 0x10;
+    private const int WH_MOUSE_LL = 14;
+    private const int WM_XBUTTONDOWN = 0x020B;
+    private const int WM_XBUTTONUP = 0x020C;
+    // 鼠标钩子与键盘钩子的注入标志位不同，不能复用 LLKHF_* 常量。
+    private const uint LLMHF_INJECTED = 0x01;
+    private const uint LLMHF_LOWER_IL_INJECTED = 0x02;
 
     private readonly Dictionary<int, HotkeyRequest> _registered = [];   // hotkeyId → Toggle 请求
     private sealed class HoldBinding
@@ -37,7 +43,13 @@ public sealed class HotkeyManager
     private readonly HashSet<HoldBinding> _activeHoldBindings = [];
     private readonly HashSet<HotkeyRequest> _startedHoldRequests = [];
     private readonly HashSet<ushort> _keysDown = [];
+    // 鼠标侧键无法用 RegisterHotKey 注册，按主键分组后由 WH_MOUSE_LL 检测。
+    // 鼠标侧键的按住释放必须与键盘按住分开记录：键盘抬起事件不能结束鼠标侧键的 Hold。
+    private readonly Dictionary<ushort, List<HoldBinding>> _mouseByVk = [];
+    private readonly HashSet<HoldBinding> _activeMouseBindings = [];
+    private readonly HashSet<ushort> _pressedMouseButtons = [];
     private readonly LowLevelKeyboardProc _hookProc;
+    private readonly LowLevelMouseProc _mouseHookProc;
     private readonly Func<bool> _isTargetForeground;
     private readonly Action<Action> _queueOnUi;
 
@@ -45,6 +57,7 @@ public sealed class HotkeyManager
     private nint _hwnd;
     private int _nextId = 0xC001;
     private nint _hookHandle;
+    private nint _mouseHookHandle;
     private int _registrationGeneration;
 
     /// <summary>
@@ -62,17 +75,21 @@ public sealed class HotkeyManager
         _isTargetForeground = isTargetForeground;
         _queueOnUi = queueOnUi;
         _hookProc = HookCallback; // 实例方法委托，防止回调被 GC
+        _mouseHookProc = MouseHookCallback;
     }
 
     // ── Win32 ──
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(nint hWnd, int id, uint fsModifiers, uint vk);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(nint hWnd, int id);
     [DllImport("user32.dll", SetLastError = true)] private static extern nint SetWindowsHookExW(int idHook, LowLevelKeyboardProc lpfn, nint hMod, uint dwThreadId);
+    [DllImport("user32.dll", EntryPoint = "SetWindowsHookExW", SetLastError = true)]
+    private static extern nint SetWindowsMouseHookEx(int idHook, LowLevelMouseProc lpfn, nint hMod, uint dwThreadId);
     [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(nint hhk);
     [DllImport("user32.dll")] private static extern nint CallNextHookEx(nint hhk, int nCode, nint wParam, nint lParam);
     [DllImport("kernel32.dll")] private static extern nint GetModuleHandleW(string? lpModuleName);
 
     private delegate nint LowLevelKeyboardProc(int nCode, nint wParam, nint lParam);
+    private delegate nint LowLevelMouseProc(int nCode, nint wParam, nint lParam);
 
     /// <summary>附着到主窗口（拿句柄 + WM_HOTKEY 消息）。窗口句柄未就绪时等 SourceInitialized。</summary>
     public void AttachToWindow(Window window)
@@ -141,6 +158,12 @@ public sealed class HotkeyManager
             if (item.Parsed is not ParsedHotkey parsed || duplicateTriggers.ContainsKey(parsed))
                 continue;
 
+            if (parsed.IsMouseButton)
+            {
+                RegisterMouseBinding(req, parsed, conflicts);
+                continue;
+            }
+
             if (req.Mode == HotkeyMode.Toggle)
             {
                 int id = _nextId++;
@@ -156,6 +179,7 @@ public sealed class HotkeyManager
             }
             else // Hold
             {
+                if (!TryInstallKeyboardHook(req, conflicts)) continue;
                 var binding = new HoldBinding { Request = req, Hotkey = parsed };
                 if (!_holdByVk.TryGetValue(parsed.Vk, out var bindings))
                 {
@@ -163,20 +187,45 @@ public sealed class HotkeyManager
                     _holdByVk[parsed.Vk] = bindings;
                 }
                 bindings.Add(binding);
-                if (_hookHandle == 0)
-                {
-                    _hookHandle = SetWindowsHookExW(WH_KEYBOARD_LL, _hookProc, GetModuleHandleW(null), 0);
-                    if (_hookHandle == 0)
-                    {
-                        bindings.Remove(binding);
-                        if (bindings.Count == 0) _holdByVk.Remove(parsed.Vk);
-                        conflicts.Add($"热键 '{req.Key}'（{req.DisplayName}）低级键盘钩子安装失败：Win32 {Marshal.GetLastWin32Error()}");
-                    }
-                }
             }
         }
 
         return conflicts;
+    }
+
+    /// <summary>
+    /// 鼠标侧键没有 RegisterHotKey 等价接口，统一改由低级鼠标钩子检测：
+    /// Toggle 在按下时触发一次，Hold 与键盘按住共用释放与注销清理。
+    /// </summary>
+    private void RegisterMouseBinding(HotkeyRequest req, ParsedHotkey parsed, List<string> conflicts)
+    {
+        // 组合键的修饰键状态由键盘钩子维护；没有修饰键的纯侧键不需要键盘钩子。
+        if (parsed.Modifiers != 0 && !TryInstallKeyboardHook(req, conflicts)) return;
+
+        var binding = new HoldBinding { Request = req, Hotkey = parsed };
+        if (!_mouseByVk.TryGetValue(parsed.Vk, out var bindings))
+        {
+            bindings = [];
+            _mouseByVk[parsed.Vk] = bindings;
+        }
+        bindings.Add(binding);
+
+        if (_mouseHookHandle != 0) return;
+        _mouseHookHandle = SetWindowsMouseHookEx(WH_MOUSE_LL, _mouseHookProc, GetModuleHandleW(null), 0);
+        if (_mouseHookHandle != 0) return;
+        bindings.Remove(binding);
+        if (bindings.Count == 0) _mouseByVk.Remove(parsed.Vk);
+        conflicts.Add($"热键 '{req.Key}'（{req.DisplayName}）鼠标钩子安装失败：Win32 {Marshal.GetLastWin32Error()}");
+    }
+
+    // 键盘钩子同时负责 Hold 的按下/松开和组合热键的修饰键物理状态。
+    private bool TryInstallKeyboardHook(HotkeyRequest req, List<string> conflicts)
+    {
+        if (_hookHandle != 0) return true;
+        _hookHandle = SetWindowsHookExW(WH_KEYBOARD_LL, _hookProc, GetModuleHandleW(null), 0);
+        if (_hookHandle != 0) return true;
+        conflicts.Add($"热键 '{req.Key}'（{req.DisplayName}）低级键盘钩子安装失败：Win32 {Marshal.GetLastWin32Error()}");
+        return false;
     }
 
     /// <summary>注销全部（Toggle 与 Hold 两类分开清理，对应 Python 坑 #2）。</summary>
@@ -184,9 +233,9 @@ public sealed class HotkeyManager
     {
         // 排队的旧按下/松开/拒绝提示同时失效，不能在设置捕获或重注册完成后再执行。
         Interlocked.Increment(ref _registrationGeneration);
-        // 运行时修改热键可能发生在 Hold 正处于按下状态。注销钩子前必须先执行释放回调，
-        // 否则连点器会失去 key-up 事件而继续保持运行。
-        foreach (var request in _activeHoldBindings.Select(binding => binding.Request).Concat(_startedHoldRequests).Distinct().ToList())
+        // 注销钩子前必须先执行释放回调，否则鼠标侧键或键盘按住会失去松开事件而继续保持运行。
+        foreach (var request in _activeHoldBindings.Concat(_activeMouseBindings)
+                     .Select(binding => binding.Request).Concat(_startedHoldRequests).Distinct().ToList())
         {
             try { request.ReleaseHandler?.Invoke(); }
             catch (Exception ex) { Diag.Log($"[热键] 注销 Hold 时释放失败: {ex.Message}"); }
@@ -205,6 +254,15 @@ public sealed class HotkeyManager
         _activeHoldBindings.Clear();
         _startedHoldRequests.Clear();
         _keysDown.Clear();
+
+        if (_mouseHookHandle != 0)
+        {
+            UnhookWindowsHookEx(_mouseHookHandle);
+            _mouseHookHandle = 0;
+        }
+        _mouseByVk.Clear();
+        _activeMouseBindings.Clear();
+        _pressedMouseButtons.Clear();
     }
 
     public List<string> ReRegister(IReadOnlyList<HotkeyRequest> requests)
@@ -381,9 +439,90 @@ public sealed class HotkeyManager
             }
         }
     }
+
+    // ── WH_MOUSE_LL（钩子线程，经 Dispatcher 回 UI 线程）──
+
+    private nint MouseHookCallback(int nCode, nint wParam, nint lParam)
+    {
+        if (nCode >= 0)
+        {
+            // MSLLHOOKSTRUCT：pt(0) / mouseData(8) / flags(12)；鼠标结构体没有 vkCode 字段，
+            // 4/5 号键必须由消息类型和 mouseData 高字换算。
+            var message = (int)wParam;
+            var mouseData = unchecked((uint)Marshal.ReadInt32(lParam, 8));
+            var flags = unchecked((uint)Marshal.ReadInt32(lParam, 12));
+            HandleMouseHookEvent(message, mouseData, flags);
+        }
+        return CallNextHookEx(_mouseHookHandle, nCode, wParam, lParam);
+    }
+
+    /// <summary>
+    /// 鼠标侧键事件入口。合成事件（连点器、按键循环、其他宏软件）与键盘一样直接忽略，
+    /// 否则程序自己发出的鼠标输入会反向触发热键。左右中键不参与热键。
+    /// </summary>
+    internal void HandleMouseHookEvent(int message, uint mouseData, uint flags)
+    {
+        if ((flags & (LLMHF_INJECTED | LLMHF_LOWER_IL_INJECTED)) != 0) return;
+
+        var down = message == WM_XBUTTONDOWN;
+        var up = message == WM_XBUTTONUP;
+        if (!down && !up) return;
+
+        var vk = MouseButtonKey.FromHookMouseData(mouseData);
+        if (vk == 0) return;
+
+        if (down)
+        {
+            // 部分驱动会对同一次按下重复上报，按住不放不应重复切换。
+            if (!_pressedMouseButtons.Add(vk)) return;
+            if (!_mouseByVk.TryGetValue(vk, out var bindings)) return;
+
+            foreach (var binding in bindings)
+            {
+                if (!HotkeyParser.AreModifiersPressed(binding.Hotkey.Modifiers, key => _keysDown.Contains(key)))
+                    continue;
+
+                if (binding.Request.Mode == HotkeyMode.Toggle)
+                {
+                    // 鼠标按键没有系统自动重复，按下边沿即等价于 MOD_NOREPEAT。
+                    QueueHookCallback(() => TryInvoke(binding.Request));
+                    continue;
+                }
+
+                if (_activeMouseBindings.Contains(binding)) continue;
+                if (!CanDispatch(binding.Request, out var foregroundError))
+                {
+                    QueueHookCallback(() =>
+                    {
+                        if (foregroundError is not null)
+                            ReportRuntimeError(binding.Request, "前台检查", foregroundError);
+                        else
+                            InvokeSafely(binding.Request, binding.Request.ForegroundRejectedHandler, "前台拒绝提示");
+                    });
+                    continue;
+                }
+                _activeMouseBindings.Add(binding);
+                QueueHoldCallback(binding.Request, start: true);
+            }
+        }
+
+        if (!up) return;
+        _pressedMouseButtons.Remove(vk);
+        // 与键盘相同：已启动的 Hold 无论当前前台如何，松开都必须释放，防止残留连点。
+        foreach (var binding in _activeMouseBindings.ToList())
+        {
+            if (binding.Hotkey.Vk != vk) continue;
+            _activeMouseBindings.Remove(binding);
+            QueueHoldCallback(binding.Request, start: false);
+        }
+    }
 }
 
-public readonly record struct ParsedHotkey(uint Modifiers, ushort Vk);
+public readonly record struct ParsedHotkey(uint Modifiers, ushort Vk)
+{
+    /// <summary>鼠标侧键不能走 RegisterHotKey，注册与派发需按此分流。</summary>
+    public bool IsMouseButton => MouseButtonKey.IsSideButton(Vk);
+}
 
 /// <summary>热键字符串解析："F5" / "Ctrl+F5" → (修饰键, 虚拟键码)。</summary>
 public static class HotkeyParser
@@ -440,8 +579,13 @@ public static class HotkeyParser
                     break;
                 default:
                     if (vk != 0) return null; // 不支持两个主键组成的 chord
-                    vk = KeyCode.Parse(part);
-                    if (vk == 0) return null;
+                    // 鼠标侧键与键盘键共用同一 VK 空间做冲突比较，但解析入口保持分离：
+                    // KeyCode 仍只认键盘键，避免按键循环把鼠标键当扫描码发送。
+                    if (!MouseButtonKey.TryParse(part, out vk))
+                    {
+                        vk = KeyCode.Parse(part);
+                        if (vk == 0) return null;
+                    }
                     break;
             }
         }

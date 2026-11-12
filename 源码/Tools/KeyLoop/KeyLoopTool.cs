@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using System.Windows;
 using ShiKe.Host;
 using ShiKe.Services;
+using ShiKe.Tools.Settings;
 
 namespace ShiKe.Tools.KeyLoop;
 
@@ -12,6 +13,7 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
     private KeyLoopEngine? _engine;
     private KeyLoopPage? _page;
     private bool _lastReportedRunning;
+    private bool _hotkeysPausedForCapture;
     private readonly MissingTargetReminder _missingTargetReminder = new();
 
     public string Id => "keyloop";
@@ -54,6 +56,8 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
 
     public void OnDeactivate()
     {
+        // 录制中切走页面也要恢复全局热键，否则热键会一直处于暂停状态。
+        EndSlotCapture();
         SaveSettingsToStorage();
     }
 
@@ -87,7 +91,11 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
 
     private void ToggleFromHotkey()
     {
-        if (!_enabled) return;
+        if (!_enabled)
+        {
+            Diag.Log("[按键循环] 热键被忽略：功能处于停用状态");
+            return;
+        }
         if (_engine is null) return;
         if (IsRunning)
         {
@@ -103,10 +111,15 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
         var error = ValidateSlots();
         if (error is not null)
         {
+            // 拒绝原因必须进日志：否则只剩一个转瞬即逝的提示，事后无法判断是哪一项不合法。
+            Diag.Log($"[按键循环] 启动被拒绝: {error}");
             _host.Notification.ShowError(error);
             return;
         }
-        _engine.Start(Slots);
+        if (_engine.Start(Slots)) return;
+        // 引擎拒绝启动以前是静默的：界面像是“没反应”，日志里也没有任何痕迹。
+        Diag.Log("[按键循环] 引擎拒绝启动：已在运行、正在退出，或没有可发送的槽位");
+        _host.Notification.ShowError("按键循环未能启动，请检查槽位按键与延时设置");
     }
 
     public ToolEnablementResult SetEnabled(bool enabled)
@@ -130,13 +143,76 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
             enabledCount++;
             if (string.IsNullOrWhiteSpace(slot.Key))
                 return $"按键槽位 {index + 1} 已启用，但尚未设置按键";
-            if (KeyCode.Parse(slot.Key) == 0)
+            if (KeyCode.Parse(slot.Key) == 0 && !MouseButtonKey.TryParse(slot.Key, out _))
                 return $"按键槽位 {index + 1} 的按键“{slot.Key}”无法识别";
             if (slot.DelaySeconds is < 0.1 or > 999.0 || double.IsNaN(slot.DelaySeconds))
                 return $"按键槽位 {index + 1} 的延时必须在 0.1～999 秒之间";
         }
-        return enabledCount == 0 ? "请至少启用一个按键槽位" : null;
+        if (enabledCount == 0) return "请至少启用一个按键槽位";
+
+        // 槽位键与全局热键、槽位与槽位都不能共用同一个触发器，否则一次按键会同时触发两条路径。
+        return SettingsValidation.ValidateSlotKeyConflicts(RegisteredHotkeyEntries(), SlotKeyBindings(null))
+            .FirstOrDefault();
     }
+
+    /// <summary>录制槽位键时的即时校验：候选键不能与全局热键或其他已启用槽位重复。</summary>
+    internal string? ValidateSlotKey(int index, string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return null;
+        return SettingsValidation.ValidateSlotKeyConflicts(RegisteredHotkeyEntries(), SlotKeyBindings(index, key))
+            .FirstOrDefault();
+    }
+
+    private IReadOnlyList<HotkeyEntry> RegisteredHotkeyEntries()
+        => _host is null
+            ? []
+            : _host.BuildHotkeyRequests()
+                .Where(request => !string.IsNullOrWhiteSpace(request.Key))
+                .Select(request => new HotkeyEntry(string.Empty, request.DisplayName, request.Key, request.Mode))
+                .ToList();
+
+    /// <summary>启用中的槽位键；<paramref name="editingIndex"/> 用候选键替换该槽位当前值。</summary>
+    private List<(string Name, string Key)> SlotKeyBindings(int? editingIndex, string? candidateKey = null)
+    {
+        var bindings = new List<(string, string)>();
+        for (var index = 0; index < Slots.Count; index++)
+        {
+            var slot = Slots[index];
+            var key = index == editingIndex ? candidateKey : slot.Key;
+            if (!slot.Enabled || string.IsNullOrWhiteSpace(key)) continue;
+            bindings.Add(($"槽位 {index + 1}", key));
+        }
+        // 录制一个尚未启用的槽位时，它本身也要参与校验。
+        if (editingIndex is { } target && Slots[target] is { Enabled: false } && !string.IsNullOrWhiteSpace(candidateKey))
+            bindings.Add(($"槽位 {target + 1}", candidateKey));
+        return bindings;
+    }
+
+    /// <summary>
+    /// 进入槽位录制：临时注销全部全局热键。
+    /// 否则按下的侧键或功能键会先触发热键（例如连点器按住），录制界面被连点冲刷，配置落不下来。
+    /// </summary>
+    internal void BeginSlotCapture()
+    {
+        if (_host is null || _hotkeysPausedForCapture) return;
+        _host.Hotkeys.UnregisterAll();
+        _hotkeysPausedForCapture = true;
+        Diag.Log("[按键循环] 槽位录制开始：已临时暂停全局热键");
+    }
+
+    /// <summary>结束槽位录制并恢复全局热键；可重复调用。</summary>
+    internal void EndSlotCapture()
+    {
+        if (_host is null || !_hotkeysPausedForCapture) return;
+        _hotkeysPausedForCapture = false;
+        var issues = _host.Hotkeys.ReRegister(_host.BuildHotkeyRequests());
+        Diag.Log(issues.Count == 0
+            ? "[按键循环] 槽位录制结束：已恢复全局热键"
+            : "[按键循环] 槽位录制结束但恢复异常：" + string.Join(" | ", issues));
+    }
+
+    internal bool HotkeysPausedForCapture => _hotkeysPausedForCapture;
+
 
     public void SaveSettingsToStorage()
     {

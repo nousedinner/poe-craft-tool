@@ -38,7 +38,8 @@ public sealed class ToolHost : IClickerEnvironment, IKeyLoopEnvironment, ICraftE
         => button == ClickerMouseButton.Left ? Input.ClickAsync(0, token) : Input.RightClickAsync(0, token);
     void IClickerEnvironment.ReleaseMouseButtons() => Input.ReleaseMouseButtons();
     bool IKeyLoopEnvironment.IsTargetForeground() => Foreground.IsTargetForeground();
-    bool IKeyLoopEnvironment.IsSupportedKey(string key) => KeyCode.Parse(key) != 0;
+    bool IKeyLoopEnvironment.IsSupportedKey(string key)
+        => KeyCode.Parse(key) != 0 || MouseButtonKey.TryParse(key, out _);
     Task IKeyLoopEnvironment.PressAndReleaseAsync(string key, CancellationToken token)
         => Input.PressAndReleaseAsync(key, token);
     string ICraftEnvironment.DataDirectory => Storage.DataDir;

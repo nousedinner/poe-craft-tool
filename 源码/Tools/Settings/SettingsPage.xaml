@@ -3,7 +3,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:theme="clr-namespace:ShiKe.Themes"
              Focusable="True" FocusVisualStyle="{x:Null}"
-             PreviewKeyDown="Page_PreviewKeyDown" PreviewKeyUp="Page_PreviewKeyUp">
+             PreviewKeyDown="Page_PreviewKeyDown" PreviewKeyUp="Page_PreviewKeyUp"
+             PreviewMouseDown="Page_PreviewMouseDown">
     <UserControl.Resources>
         <Style x:Key="HotkeyButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Padding" Value="5,3"/><Setter Property="Width" Value="118"/><Setter Property="Height" Value="28"/>

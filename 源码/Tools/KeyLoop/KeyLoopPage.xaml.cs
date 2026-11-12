@@ -44,6 +44,7 @@ public partial class KeyLoopPage : UserControl
         CollectSettingsFromUi(); // 使初始显示的延时格式与后续运行配置一致，不提前落盘。
         tool.StatusUpdated += PublishStatus;
         _statusPresentation.Disposed += () => tool.StatusUpdated -= PublishStatus;
+        Unloaded += Page_Unloaded;
     }
 
     internal void PublishStatus(KeyLoopStatus status) => _statusPresentation.Publish(status);
@@ -65,7 +66,7 @@ public partial class KeyLoopPage : UserControl
             };
             var keyButton = new Button
             {
-                Content = string.IsNullOrWhiteSpace(slot.Key) ? "点击设置" : slot.Key,
+                Content = string.IsNullOrWhiteSpace(slot.Key) ? "点击设置" : HotkeySetting.Display(slot.Key),
                 Width = 140,
                 Height = 27,
                 Padding = new Thickness(5, 2, 5, 2),
@@ -214,7 +215,9 @@ public partial class KeyLoopPage : UserControl
         if (_captureIndex is { } previous && previous != index)
             RefreshKeyButton(previous);
         _captureIndex = index;
-        _rows[index].KeyButton.Content = "按下按键...";
+        // 录制期间必须注销全局热键：否则按下侧键会先触发连点器等热键，连点会冲刷录制界面。
+        _tool.BeginSlotCapture();
+        _rows[index].KeyButton.Content = "按下按键或侧键（Esc 取消）";
         _rows[index].KeyButton.Focus();
     }
 
@@ -222,32 +225,95 @@ public partial class KeyLoopPage : UserControl
     {
         if (_tool.IsRunning) return;
         _captureIndex = null;
+        _tool.EndSlotCapture();
         _tool.Slots[index].Key = string.Empty;
         _rows[index].KeyButton.Tag = string.Empty;
         RefreshKeyButton(index);
         SaveRowChange();
     }
 
+    /// <summary>放弃本次录制，保留原键位并立即恢复全局热键。</summary>
+    private void CancelCapture()
+    {
+        if (_captureIndex is not { } index) return;
+        _captureIndex = null;
+        RefreshKeyButton(index);
+        _tool.EndSlotCapture();
+    }
+
+    private void Page_Unloaded(object sender, RoutedEventArgs e) => CancelCapture();
+
     private void Page_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (_captureIndex is not { } index) return;
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            CancelCapture();
+            return;
+        }
+
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var name = KeyToName(key);
         e.Handled = true;
         if (name is null) return;
+
+        CommitCapturedKey(index, name);
+    }
+
+    /// <summary>
+    /// 鼠标侧键不会产生 KeyEventArgs，需要单独从鼠标事件录制。
+    /// 槽位记录的是“替用户按下的键”，因此侧键槽位在运行时由输入层真实模拟 XBUTTON，
+    /// 与全局热键的“监听侧键”是两条不同的路径。
+    /// </summary>
+    private void Page_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_captureIndex is not { } index) return;
+        var vk = e.ChangedButton switch
+        {
+            MouseButton.XButton1 => MouseButtonKey.XButton1,
+            MouseButton.XButton2 => MouseButtonKey.XButton2,
+            _ => (ushort)0,
+        };
+        if (vk == 0) return;
+
+        e.Handled = true;
+        CommitCapturedKey(index, MouseButtonKey.KeyName(vk));
+    }
+
+    private void CommitCapturedKey(int index, string name)
+    {
+        if (_tool.ValidateSlotKey(index, name) is { } error)
+        {
+            _captureIndex = null;
+            RefreshKeyButton(index);
+            _tool.EndSlotCapture();
+            ShowWarning(error);
+            return;
+        }
 
         _tool.Slots[index].Key = name;
         _rows[index].KeyButton.Tag = name;
         _captureIndex = null;
         RefreshKeyButton(index);
         SaveRowChange();
+        _tool.EndSlotCapture();
+    }
+
+    private void ShowWarning(string message)
+    {
+        var owner = Window.GetWindow(this);
+        if (owner is null)
+            ThemedMessageBox.Show(message, "按键冲突", MessageBoxButton.OK, MessageBoxImage.Warning);
+        else
+            ThemedMessageBox.Show(owner, message, "按键冲突", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private void RefreshKeyButton(int index)
     {
         var key = _tool.Slots[index].Key;
         _rows[index].KeyButton.Tag = key;
-        _rows[index].KeyButton.Content = string.IsNullOrWhiteSpace(key) ? "点击设置" : key;
+        _rows[index].KeyButton.Content = string.IsNullOrWhiteSpace(key) ? "点击设置" : HotkeySetting.Display(key);
     }
 
     private void CommitDelay(int index)

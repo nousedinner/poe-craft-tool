@@ -3,10 +3,10 @@ namespace ShiKe.Host;
 /// <summary>热键触发模式。</summary>
 public enum HotkeyMode
 {
-    /// <summary>RegisterHotKey：按下触发，再按停止。</summary>
+    /// <summary>按下触发，再按停止。键盘键走 RegisterHotKey，鼠标侧键走 WH_MOUSE_LL 的按下边沿。</summary>
     Toggle,
 
-    /// <summary>WH_KEYBOARD_LL 低级钩子：按下开始，松开停止。</summary>
+    /// <summary>按下开始，松开停止。键盘走 WH_KEYBOARD_LL，鼠标侧键走 WH_MOUSE_LL。</summary>
     Hold
 }
 

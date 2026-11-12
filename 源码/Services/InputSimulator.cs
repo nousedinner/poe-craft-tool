@@ -33,6 +33,8 @@ public sealed class InputSimulator
     private const uint MOUSEEVENTF_LEFTUP = 0x0004;
     private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
     private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+    private const uint MOUSEEVENTF_XDOWN = 0x0080;
+    private const uint MOUSEEVENTF_XUP = 0x0100;
     private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint KEYEVENTF_UNICODE = 0x0004;
@@ -174,18 +176,21 @@ public sealed class InputSimulator
     }
 
     /// <summary>发送鼠标事件。返回 true=SendInput 报告成功。</summary>
-    private static bool SendMouse(uint flags)
+    private static bool SendMouse(uint flags) => SendMouse(flags, 0);
+
+    /// <summary>发送鼠标事件；侧键（XBUTTON）的键号在 mouseData 高字中。</summary>
+    private static bool SendMouse(uint flags, uint mouseData)
     {
         Updates.UpdateAcceptanceContext.ForbidNativeOperation("SendInput(mouse)");
         var input = new INPUT
         {
             type = INPUT_MOUSE,
-            union = new INPUT_UNION { mi = new MOUSEINPUT { dwFlags = flags, dwExtraInfo = 0 } }
+            union = new INPUT_UNION { mi = new MOUSEINPUT { mouseData = mouseData, dwFlags = flags, dwExtraInfo = 0 } }
         };
         var sent = SendInput(1, [input], Marshal.SizeOf<INPUT>());
         if (sent == 0)
         {
-            Diag.Win32Error($"SendInput(mouse=0x{flags:X4})", Marshal.GetLastWin32Error());
+            Diag.Win32Error($"SendInput(mouse=0x{flags:X4},data=0x{mouseData:X})", Marshal.GetLastWin32Error());
             return false;
         }
         return true;
@@ -194,6 +199,12 @@ public sealed class InputSimulator
     private static void SendMouseOrThrow(uint flags, string action)
     {
         if (!SendMouse(flags))
+            throw new InputSimulationException($"{action}失败，Windows 未接受鼠标输入");
+    }
+
+    private static void SendMouseOrThrow(uint flags, uint mouseData, string action)
+    {
+        if (!SendMouse(flags, mouseData))
             throw new InputSimulationException($"{action}失败，Windows 未接受鼠标输入");
     }
 
@@ -505,6 +516,13 @@ public sealed class InputSimulator
     /// </summary>
     public async Task PressAndReleaseAsync(string key, CancellationToken token)
     {
+        // 鼠标侧键走独立的鼠标发送路径；KeyCode 仍只表示键盘键，不参与鼠标键解析。
+        if (MouseButtonKey.TryParse(key, out var mouseVk))
+        {
+            await PressAndReleaseMouseButtonAsync(mouseVk, key, token);
+            return;
+        }
+
         var vk = KeyCode.Parse(key);
         if (vk == 0) throw new InputSimulationException($"无法识别按键“{key}”");
 
@@ -520,6 +538,29 @@ public sealed class InputSimulator
             ReleaseKeyOrThrow(vk, $"释放 {key}");
         }
     }
+
+    /// <summary>
+    /// 按下并释放鼠标侧键（按键循环槽位使用）。按下与抬起之间不可取消，
+    /// 保证停止或退出发生在中途时仍会释放，与键盘路径一致。
+    /// 保持时间取 40ms：游戏多半按帧轮询鼠标按键，10ms 低于 60fps 的单帧时会被漏掉。
+    /// </summary>
+    private async Task PressAndReleaseMouseButtonAsync(ushort vk, string key, CancellationToken token)
+    {
+        await EnsureForegroundForInputAsync(token);
+        CheckEmergencyStop();
+        var mouseData = MouseButtonKey.ToInputMouseData(vk);
+        SendMouseOrThrow(MOUSEEVENTF_XDOWN, mouseData, $"按下 {key}");
+        try
+        {
+            await Task.Delay(MouseButtonHoldMs, CancellationToken.None);
+        }
+        finally
+        {
+            SendMouseOrThrow(MOUSEEVENTF_XUP, mouseData, $"释放 {key}");
+        }
+    }
+
+    private const int MouseButtonHoldMs = 40;
 
     /// <summary>每次 Craft 任务启动时清除上次运行的点击节拍。</summary>
     public void ResetCraftClickInterval()

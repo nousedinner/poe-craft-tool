@@ -1,7 +1,7 @@
 <UserControl x:Class="ShiKe.Tools.KeyLoop.KeyLoopPage"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:theme="clr-namespace:ShiKe.Themes" PreviewKeyDown="Page_PreviewKeyDown">
+             xmlns:theme="clr-namespace:ShiKe.Themes" PreviewKeyDown="Page_PreviewKeyDown" PreviewMouseDown="Page_PreviewMouseDown">
     <Grid x:Name="PageRoot">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid x:Name="PageHeader" Style="{StaticResource ToolPageHeader}">
