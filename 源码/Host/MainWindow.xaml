@@ -21,6 +21,60 @@
                 <Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{StaticResource AccentBrush}"/></Trigger>
             </Style.Triggers>
         </Style>
+        <!-- 底部「使用说明 / 问题反馈」：胶囊按钮，一实心一描边，等宽以保证视觉对齐。 -->
+        <Style x:Key="FooterPrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Width" Value="104"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="BorderThickness" Value="1.5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Surface" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="14" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="{StaticResource AccentDeep}"/>
+                                <Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource AccentDeep}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Opacity" Value=".8"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value=".45"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="FooterSecondaryButton" TargetType="Button" BasedOn="{StaticResource FooterPrimaryButton}">
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Background" Value="#FFFFFF"/>
+            <Setter Property="Margin" Value="8,0,0,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Surface" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="14" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Surface" Property="Background" Value="{StaticResource AccentSoft}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Opacity" Value=".8"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value=".45"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
     <Grid Background="{StaticResource WindowBackground}">
         <Grid.RowDefinitions>
@@ -99,8 +153,8 @@
                            TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" VerticalAlignment="Center" Margin="7,0,12,0"/>
                 <TextBlock x:Name="UseCountLabel" Grid.Column="2" Text="已使用 0 次" Foreground="{StaticResource AccentBrush}" FontSize="12"
                            FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,14,0" Visibility="Collapsed"/>
-                <Button Grid.Column="3" Content="使用说明" Style="{StaticResource LinkButton}" Click="GuideButton_Click"/>
-                <Button Grid.Column="4" Content="反馈" Style="{StaticResource LinkButton}" Click="FeedbackButton_Click"/>
+                <Button Grid.Column="3" Content="使用说明" Style="{StaticResource FooterPrimaryButton}" Click="GuideButton_Click"/>
+                <Button Grid.Column="4" Content="问题反馈" Style="{StaticResource FooterSecondaryButton}" Click="FeedbackButton_Click"/>
             </Grid>
         </Border>
     </Grid>

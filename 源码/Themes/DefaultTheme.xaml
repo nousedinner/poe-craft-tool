@@ -11,6 +11,7 @@
     <SolidColorBrush x:Key="CardBackground" Color="#D9FFFFFF"/>
     <SolidColorBrush x:Key="CardBorder" Color="#D4E6F0"/>
     <SolidColorBrush x:Key="AccentBrush" Color="#4990B1"/>
+    <SolidColorBrush x:Key="AccentDeep" Color="#356E88"/>
     <SolidColorBrush x:Key="AccentSoft" Color="#EAF5FC"/>
     <SolidColorBrush x:Key="TextPrimary" Color="#243D50"/>
     <SolidColorBrush x:Key="TextSecondary" Color="#607D90"/>
