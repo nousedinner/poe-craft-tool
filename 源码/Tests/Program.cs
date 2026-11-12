@@ -152,6 +152,8 @@ var tests = new (string Name, Action Run)[]
     ("设置页与槽位均捕获鼠标侧键", MouseHotkeyChecks.SettingsPageCapturesMouseButtons),
     ("按键循环槽位键与全局热键互相判冲突", MouseHotkeyChecks.KeyLoopSlotKeysConflictWithHotkeys),
     ("按键循环侧键槽位可启动并派发原始键名", MouseHotkeyChecks.KeyLoopEngineRunsMouseSlot),
+    ("裸侧键与组合侧键同时派发", MouseHotkeyChecks.OverlappingModifierCombosBothDispatch),
+    ("侧键按住松开必需修饰键立即停止", MouseHotkeyChecks.MouseHoldStopsWhenRequiredModifierReleased),
     ("连点旧轮错误不影响快速重启", ClickerAuditFixChecks.OldWorkerFailureDoesNotAffectRestartedRun),
     ("连点待运行取消源在停止时回收", ClickerAuditFixChecks.PendingRunSourcesAreReleased),
     ("连点停止容忍取消源已被工作任务释放", ClickerAuditFixChecks.DisposedCancellationSnapshotIsHarmless),

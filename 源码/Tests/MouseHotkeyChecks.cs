@@ -144,6 +144,61 @@ internal static class MouseHotkeyChecks
         comboManager.HandleMouseHookEvent(XButtonUp, data4, 0);
     }
 
+    /// <summary>
+    /// 与 RegisterHotKey 的实际语义一致：额外按下的修饰键不参与匹配，
+    /// 所以裸侧键与「Ctrl+侧键」会同时派发。这是明确保留的行为，用测试固定下来。
+    /// </summary>
+    public static void OverlappingModifierCombosBothDispatch()
+    {
+        var plain = 0;
+        var combo = 0;
+        var manager = CreateMouseManager(() => true,
+            ("Mouse4", HotkeyMode.Toggle, () => plain++, null),
+            ("Ctrl+Mouse4", HotkeyMode.Toggle, () => combo++, null));
+        var data = HookMouseData(MouseButtonKey.XButton1);
+
+        manager.HandleMouseHookEvent(XButtonDown, data, 0);
+        Require(plain == 1 && combo == 0, "没按修饰键时只应触发裸侧键热键");
+        manager.HandleMouseHookEvent(XButtonUp, data, 0);
+
+        manager.HandleKeyboardHookEvent(LeftControl, KeyDown, 0);
+        manager.HandleMouseHookEvent(XButtonDown, data, 0);
+        Require(plain == 2 && combo == 1, "按住 Ctrl 时裸侧键与 Ctrl+侧键都会派发");
+        manager.HandleMouseHookEvent(XButtonUp, data, 0);
+    }
+
+    /// <summary>
+    /// 组合侧键的按住必须和键盘 Hold 一样，跟着必需修饰键松开；
+    /// 无修饰键的侧键按住则只认侧键自己的松开。
+    /// </summary>
+    public static void MouseHoldStopsWhenRequiredModifierReleased()
+    {
+        var starts = 0;
+        var stops = 0;
+        var combo = CreateMouseManager("Ctrl+Mouse4", HotkeyMode.Hold, () => true, () => starts++, () => stops++);
+        var data = HookMouseData(MouseButtonKey.XButton1);
+
+        combo.HandleKeyboardHookEvent(LeftControl, KeyDown, 0);
+        combo.HandleMouseHookEvent(XButtonDown, data, 0);
+        Require(starts == 1 && stops == 0, "按住 Ctrl 再按侧键应启动一次按住");
+
+        combo.HandleKeyboardHookEvent(0x41, KeyUp, 0);
+        Require(stops == 0, "松开无关按键不得结束侧键按住");
+
+        combo.HandleKeyboardHookEvent(LeftControl, KeyUp, 0);
+        Require(stops == 1, "松开必需的修饰键必须立即结束侧键按住");
+        combo.HandleMouseHookEvent(XButtonUp, data, 0);
+        Require(stops == 1, "已释放的按住不能在松开侧键时重复释放");
+
+        var plainStops = 0;
+        var plain = CreateMouseManager("Mouse4", HotkeyMode.Hold, () => true, () => { }, () => plainStops++);
+        plain.HandleMouseHookEvent(XButtonDown, data, 0);
+        plain.HandleKeyboardHookEvent(LeftControl, KeyUp, 0);
+        Require(plainStops == 0, "无修饰键的侧键按住不能因为键盘事件结束");
+        plain.HandleMouseHookEvent(XButtonUp, data, 0);
+        Require(plainStops == 1, "无修饰键的侧键按住应在松开侧键时结束");
+    }
+
     public static void MouseButtonEncodingAndKeyLoopSlots()
     {
         // 两套编码必须分开：注入走 MOUSEINPUT.mouseData 低字，钩子上报走 MSLLHOOKSTRUCT.mouseData 高字。
@@ -275,27 +330,38 @@ internal static class MouseHotkeyChecks
     /// <summary>仅建立托管绑定；不注册原生热键、不安装钩子。</summary>
     private static HotkeyManager CreateMouseManager(string key, HotkeyMode mode, Func<bool> foreground,
         Action handler, Action? releaseHandler)
+        => CreateMouseManager(foreground, (key, mode, handler, releaseHandler));
+
+    /// <summary>同一个侧键上挂多条绑定（不同修饰键），用于验证叠加派发与修饰键释放。</summary>
+    private static HotkeyManager CreateMouseManager(Func<bool> foreground,
+        params (string Key, HotkeyMode Mode, Action Handler, Action? ReleaseHandler)[] entries)
     {
         var manager = new HotkeyManager(foreground, callback => callback());
-        var request = new HotkeyRequest
-        {
-            Key = key,
-            DisplayName = "受控鼠标热键",
-            CheckForeground = true,
-            Mode = mode,
-            Handler = handler,
-            ReleaseHandler = releaseHandler,
-        };
-        var parsed = HotkeyParser.ParseHold(key) ?? throw new InvalidOperationException($"{key} 应可解析");
         var bindingType = typeof(HotkeyManager).GetNestedType("HoldBinding", BindingFlags.NonPublic)!;
-        var binding = Activator.CreateInstance(bindingType)!;
-        bindingType.GetProperty("Request")!.SetValue(binding, request);
-        bindingType.GetProperty("Hotkey")!.SetValue(binding, parsed);
-        var bindings = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(bindingType))!;
-        bindings.Add(binding);
         var map = (IDictionary)typeof(HotkeyManager)
             .GetField("_mouseByVk", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
-        map.Add(parsed.Vk, bindings);
+        foreach (var entry in entries)
+        {
+            var request = new HotkeyRequest
+            {
+                Key = entry.Key,
+                DisplayName = "受控鼠标热键",
+                CheckForeground = true,
+                Mode = entry.Mode,
+                Handler = entry.Handler,
+                ReleaseHandler = entry.ReleaseHandler,
+            };
+            var parsed = HotkeyParser.ParseHold(entry.Key) ?? throw new InvalidOperationException($"{entry.Key} 应可解析");
+            var binding = Activator.CreateInstance(bindingType)!;
+            bindingType.GetProperty("Request")!.SetValue(binding, request);
+            bindingType.GetProperty("Hotkey")!.SetValue(binding, parsed);
+            if (map[parsed.Vk] is not IList bindings)
+            {
+                bindings = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(bindingType))!;
+                map[parsed.Vk] = bindings;
+            }
+            bindings.Add(binding);
+        }
         return manager;
     }
 

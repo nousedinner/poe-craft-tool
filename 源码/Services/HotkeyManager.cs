@@ -437,6 +437,16 @@ public sealed class HotkeyManager
                 _activeHoldBindings.Remove(binding);
                 QueueHoldCallback(binding.Request, start: false);
             }
+
+            // 组合侧键的按住也必须跟着修饰键松开，否则同一个组合键在两套输入上行为不一致：
+            // 键盘 Ctrl+F11 松开 Ctrl 就停，侧键 Ctrl+Mouse4 却要等到松开侧键。
+            foreach (var binding in _activeMouseBindings.ToList())
+            {
+                if (HotkeyParser.AreModifiersPressed(binding.Hotkey.Modifiers, key => _keysDown.Contains(key)))
+                    continue;
+                _activeMouseBindings.Remove(binding);
+                QueueHoldCallback(binding.Request, start: false);
+            }
         }
     }
 
