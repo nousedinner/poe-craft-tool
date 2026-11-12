@@ -245,9 +245,9 @@ public sealed class CraftEngine
             // 庄园工艺不用通货。物品在工艺台界面内、工艺按钮也在同一界面，
             // 与背包里的装备位置不是同一处，所以工艺区域单独占一个槽位。
             if (!coords.TryGetValue(CraftSlot.HarvestBench, out var bench) || !IsValid(bench))
-                return "工艺按钮坐标";
+                return "工艺按钮";
             if (!coords.TryGetValue(CraftSlot.HarvestArea, out var area) || !IsValid(area))
-                return "工艺区域坐标";
+                return "工艺区域";
             return null;
         }
         if (rules.Mode == CraftMode.Single)
@@ -715,10 +715,26 @@ public sealed class CraftEngine
             _environment.Log($"[词缀] rarity={parsed.Rarity}, affixes={parsed.ExplicitAffixCount}, " +
                      $"primary={result.PrimaryHits}[{string.Join(',', result.MatchedPrimaryRules)}], " +
                      $"secondary={result.SecondaryHits}[{string.Join(',', result.MatchedSecondaryRules)}], " +
-                     $"exclude={result.HasExclude}[{string.Join(',', result.MatchedExcludeRules)}]");
+                     $"exclude={result.HasExclude}[{string.Join(',', result.MatchedExcludeRules)}], " +
+                     $"命中原行={MatchedLineDigest(result)}");
         }
         _runMeasurement?.CompleteMatching(item.Text, result);
         return (result, parsed.ExplicitAffixCount);
+    }
+
+    /// <summary>
+    /// 命中的原始行，用来说明规则到底撞上了哪一句。高级描述的头会带出词缀名，
+    /// 例如规则「独裁」命中 '{ 前缀属性 "独裁者的" ... }'，不打出来很难自己看明白。
+    /// </summary>
+    private static string MatchedLineDigest(AffixCheckResult result)
+    {
+        var lines = result.MatchedPrimary
+            .Concat(result.MatchedSecondary)
+            .Concat(result.MatchedExclude)
+            .Distinct(StringComparer.Ordinal)
+            .Select(line => line.Length <= 80 ? line : line[..80] + "…")
+            .ToArray();
+        return lines.Length == 0 ? "(无)" : string.Join(" ‖ ", lines);
     }
 
     private async Task ClickItemAsync(Point itemCoord, CancellationToken token)
@@ -859,8 +875,10 @@ public sealed class CraftEngine
             var (result, affixCount) = CheckItem(text);
             MatchCount = result.TotalHits;
             var name = text.Parsed.ItemName.Length > 0 ? text.Parsed.ItemName : "(未识别名称)";
-            var status = $"#{UseCount} {name} 主:{result.PrimaryHits} 次:{result.SecondaryHits}";
-            if (result.HasExclude) status += " [排除]";
+            // 带上命中的规则名，避免"到底命中了哪一条"只能靠翻日志猜。
+            var status = $"#{UseCount} {name} 主:{result.PrimaryHits}{RuleSuffix(result.MatchedPrimaryRules)}" +
+                         $" 次:{result.SecondaryHits}{RuleSuffix(result.MatchedSecondaryRules)}";
+            if (result.HasExclude) status += $" 排除{RuleSuffix(result.MatchedExcludeRules)}";
             ReportStatus(status);
             _environment.Log($"[庄园工艺] #{UseCount} kind={text.Parsed.Kind}, rarity={text.Parsed.Rarity}, " +
                      $"name={name}, affixes={affixCount}, 连续同结果={identicalResults}");
@@ -877,6 +895,9 @@ public sealed class CraftEngine
                     "可能工艺按钮坐标不准或工艺台未打开，已安全停止");
         }
     }
+
+    private static string RuleSuffix(List<string> rules)
+        => rules.Count == 0 ? "" : $"[{string.Join('|', rules)}]";
 
     private async Task ClickHarvestBenchAsync(Point benchCoord, CancellationToken token)
     {

@@ -169,11 +169,11 @@ internal static class HarvestChecks
 
         // 只录了背包装备坐标不能启动：工艺台里的物品在另一处。
         var inventoryOnly = new Dictionary<string, Point> { [CraftSlot.Item] = new(100, 200) };
-        Equal("工艺按钮坐标", CraftEngine.CheckCoordinates(rules, inventoryOnly, false, false),
+        Equal("工艺按钮", CraftEngine.CheckCoordinates(rules, inventoryOnly, false, false),
             "缺少工艺按钮坐标必须拒绝启动，且不能拿背包装备坐标顶替");
 
         var benchOnly = new Dictionary<string, Point> { [CraftSlot.HarvestBench] = new(300, 400) };
-        Equal("工艺区域坐标", CraftEngine.CheckCoordinates(rules, benchOnly, false, false),
+        Equal("工艺区域", CraftEngine.CheckCoordinates(rules, benchOnly, false, false),
             "缺少工艺区域坐标必须拒绝启动");
 
         var both = new Dictionary<string, Point>
@@ -245,6 +245,80 @@ internal static class HarvestChecks
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
+    }
+
+    private const string RareStaff = """
+        物品类别: 法杖
+        稀 有 度: 稀有
+        活尸 战具
+        魔性法杖
+        --------
+        法杖
+        品质: +30% (augmented)
+        物理伤害: 156-307 (augmented)
+        攻击暴击率: 8.00%
+        每秒攻击次数: 2.37 (augmented)
+        --------
+        需求:
+        等级: 66
+        智慧: 188 (unmet)
+        --------
+        插槽: R R
+        --------
+        物品等级: 84
+        --------
+        外延物理词缀增幅提高 8% (enchant)
+        --------
+        { 基底属性 — 伤害, 施法 }
+        法术伤害提高 37(33-37)%
+        --------
+        { 破碎的 前缀属性 "独裁者的" (等阶：1) — 伤害, 物理, 攻击 ——提高 23 }
+        物理伤害提高 79(75-79)%
+        +189(175-200) 命中值
+        { 前缀属性 "锻炼的" (等阶：2) — 伤害, 物理, 攻击 ——提高 23 }
+        该装备附加 23(19-25) - 45(39-45) 基础物理伤害
+        { 前缀属性 "钴蓝的" (等阶：11) — 魔力 }
+        +47(40-49) 最大魔力
+        { 后缀属性 "喝采之" (等阶：1) — 攻击, 速度 }
+        攻击速度加快 18(17-19)%
+        --------
+        分裂
+        --------
+        { 分配熔炉天赋 (等阶：5) }
+        该装备附加 6 - 15 基础物理伤害
+        { 分配熔炉天赋 (等阶：3) }
+        攻击速度加快 30%
+        全域伤害总降 15%
+        --------
+        分裂之物
+        --------
+        出售获得通货:非绑定
+        """;
+
+    /// <summary>
+    /// 用户实机样本：筛选「无情／独裁」后第一次转换就报命中，需要能说明命中的是哪一句。
+    /// 结论是装备确实带「独裁者的」前缀，规则的「独裁」子串命中了高级描述头那一行。
+    /// </summary>
+    public static void StaffMatchesDictatorThroughAffixHeader()
+    {
+        var parsed = AffixEngine.ParseItem(RareStaff);
+        Equal(ItemRarity.Rare, parsed.Rarity, "法杖必须仍按装备解析");
+        Equal("活尸 战具", parsed.ItemName, "装备名解析错误");
+
+        var dictator = AffixEngine.CheckAffixes(parsed, HarvestRules("独裁"));
+        Equal(1, dictator.PrimaryHits, "「独裁」应命中装备上的独裁者的前缀");
+        // 命中原行必须就是带词缀名的高级描述头，而不是别的正文。
+        Require(dictator.MatchedPrimary.Any(line => line.Contains("独裁者的", StringComparison.Ordinal)),
+            "「独裁」命中的行必须包含独裁者的，否则说明是别处误撞");
+        Require(dictator.MeetsFinalRules(HarvestRules("独裁")), "主命中 1 应通过终检，这类样本会立即停止");
+
+        // 反证：没有的前缀不能命中，避免"什么都能命中"的误解。
+        Equal(0, AffixEngine.CheckAffixes(parsed, HarvestRules("无情")).PrimaryHits, "无情的装备不能命中无情");
+        Equal(0, AffixEngine.CheckAffixes(parsed, HarvestRules("锯齿")).PrimaryHits, "无关名称不能命中");
+
+        // 「破碎的 前缀属性」不满足显式词缀头格式，只作为普通语料参与匹配、不计入词缀数，
+        // 所以这里只有 锻炼的／钴蓝的／喝采之 三条显式词缀。
+        Equal(3, parsed.ExplicitAffixCount, "破碎头不能被当成普通前缀计入词缀数");
     }
 
     private static CraftRules HarvestRules(string primary, string? exclude = null)    {

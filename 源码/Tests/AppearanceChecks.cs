@@ -207,7 +207,6 @@ internal static class AppearanceChecks
             Require(Find<StackPanel>(page, "HarvestBenchSection").IsVisible, "庄园工艺必须显示工艺按钮坐标");
             Require(!Find<StackPanel>(page, "ItemCoordSection").IsVisible,
                     "庄园工艺的物品在工艺台内，不能沿用背包的装备坐标");
-            Require(Find<TextBlock>(page, "HarvestHint").IsVisible, "庄园工艺必须显示流程说明");
             Require(!Find<StackPanel>(page, "Mode2Frame").IsVisible && !Find<StackPanel>(page, "Mode3Frame").IsVisible,
                     "庄园工艺不能残留子模式");
             Snapshot(window, "T11-WPF-Harvest.png");

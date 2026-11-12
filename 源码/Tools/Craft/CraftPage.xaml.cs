@@ -228,7 +228,6 @@ public partial class CraftPage : UserControl
         Mode2Frame.Visibility = CurrentMode == CraftMode.AltAug ? Visibility.Visible : Visibility.Collapsed;
         Mode3Frame.Visibility = CurrentMode == CraftMode.AltAugRegal ? Visibility.Visible : Visibility.Collapsed;
         SingleCurrencyFrame.Visibility = CurrentMode == CraftMode.Single ? Visibility.Visible : Visibility.Collapsed;
-        HarvestHint.Visibility = harvest ? Visibility.Visible : Visibility.Collapsed;
         // 庄园工艺的物品在工艺台界面内，与背包里的装备位置不是同一处，
         // 因此切到该模式时整块「装备坐标」隐藏，改用独立的「工艺区域」。
         ItemCoordSection.Visibility = harvest ? Visibility.Collapsed : Visibility.Visible;

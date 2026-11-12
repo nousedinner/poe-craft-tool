@@ -88,6 +88,7 @@ var tests = new (string Name, Action Run)[]
     ("庄园工艺道具按名称前缀识别", HarvestChecks.CurrencyNamePrefixHits),
     ("庄园工艺道具正文不参与匹配也不误触发排除", HarvestChecks.CurrencyDescriptionsDoNotPolluteMatching),
     ("庄园工艺洗装备沿用原有词缀规则", HarvestChecks.EquipmentParsingStaysUnchanged),
+    ("庄园工艺命中时能说明命中了哪一句", HarvestChecks.StaffMatchesDictatorThroughAffixHeader),
     ("庄园工艺启动要求独立的工艺区域与工艺按钮坐标", HarvestChecks.HarvestCoordinatesRequireBench),
     ("庄园工艺沿用可配置命中数且不显示通货", HarvestChecks.HarvestRulesUseConfiguredHits),
     ("庄园工艺模式可以通过rules.json存储校验", HarvestChecks.HarvestModeRoundTripsThroughStorage),
@@ -310,8 +311,20 @@ var tests = new (string Name, Action Run)[]
     ("Mode2/3 任意编辑后启动校验上限", MultiCurrencyLimitsAreCheckedAtStart),
 };
 
+// 只跑名字包含关键字的用例：ShiKe.InternalTests.exe --filter 庄园工艺
+// 小改动不值得每次都跑全套，全量留给发布前。
+var filter = args.Length >= 2 && args[0] == "--filter" ? args[1] : null;
+var selected = filter is null
+    ? tests
+    : tests.Where(test => test.Name.Contains(filter, StringComparison.Ordinal)).ToArray();
+if (selected.Length == 0)
+{
+    Console.Error.WriteLine($"FAIL 没有名称包含「{filter}」的用例");
+    return 1;
+}
+
 var failed = 0;
-foreach (var (name, run) in tests)
+foreach (var (name, run) in selected)
 {
     try
     {
@@ -330,7 +343,7 @@ if (!Diag.Shutdown(TimeSpan.FromSeconds(2)))
     Console.Error.WriteLine("FAIL 内部用例日志退出刷新未完成");
     return 2;
 }
-Console.WriteLine($"RESULT total={tests.Length}, passed={tests.Length - failed}, failed={failed}");
+Console.WriteLine($"RESULT total={selected.Length}, passed={selected.Length - failed}, failed={failed}");
 return failed == 0 ? 0 : 1;
 
 static void ItemNameMatchesWithoutIncreasingAffixCount()

@@ -8,7 +8,7 @@ internal static class FormalReleaseChecks
     {
         var expected = new Dictionary<string, string>
         {
-            ["Tools/Craft/CraftPage.xaml"] = "D0538244E00DEAE79B8387235D8A843333914C9C6DF21AFCD05FFA630C880A83",
+            ["Tools/Craft/CraftPage.xaml"] = "E65712F0ABC119810E2D1901E8C4900136E7263DA226635FED6510A976DBA71B",
         };
         // 已确认的 XAML 布局和文字保持。架构重构允许 C# 实现变化：
         // 动态布局由 AppearanceChecks 的真实 WPF 检查保护，配置/运行由架构回归保护。

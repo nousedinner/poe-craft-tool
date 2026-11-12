@@ -203,7 +203,7 @@ public sealed partial class CraftTool : ITool, ICoordinateProvider, IEnableableT
         {
             new() { SlotId = CraftSlot.Item, DisplayName = "装备位置" },
             new() { SlotId = CraftSlot.HarvestArea, DisplayName = "工艺区域" },
-            new() { SlotId = CraftSlot.HarvestBench, DisplayName = "工艺按钮位置" },
+            new() { SlotId = CraftSlot.HarvestBench, DisplayName = "工艺按钮" },
         };
         foreach (var key in Currency.All)
             slots.Add(new CoordinateSlot { SlotId = key, DisplayName = $"{Currency.Label(key)}位置" });
