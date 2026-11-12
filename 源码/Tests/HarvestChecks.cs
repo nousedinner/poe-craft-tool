@@ -101,7 +101,7 @@ internal static class HarvestChecks
         {
             var parsed = AffixEngine.ParseItem(text);
             Equal(ItemRarity.Currency, parsed.Rarity, $"{name} 稀有度必须是通货");
-            Equal(ItemKind.Currency, parsed.Kind, $"{name} 必须归为道具");
+            Require(parsed.IsCurrencyItem, $"{name} 必须归为道具");
             Equal(name, parsed.ItemName, $"{name} 名称行解析错误");
             Equal(1, parsed.MatchLines.Count, $"{name} 只能有名称一条匹配语料");
             Equal(name, parsed.MatchLines[0], $"{name} 匹配语料必须就是名称");
@@ -149,7 +149,7 @@ internal static class HarvestChecks
     {
         var parsed = AffixEngine.ParseItem(RareHelmet);
         Equal(ItemRarity.Rare, parsed.Rarity, "装备稀有度保持不变");
-        Equal(ItemKind.Equipment, parsed.Kind, "装备必须归为装备");
+        Require(!parsed.IsCurrencyItem, "装备必须归为装备");
         Equal("末日之冠", parsed.ItemName, "装备名称行解析错误");
         Equal(2, parsed.ExplicitAffixCount, "两条显式词缀必须照常计数");
         Require(parsed.MatchLines.Contains("铁帽"), "基础类型仍须参与宽松匹配");

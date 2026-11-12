@@ -78,7 +78,7 @@ public static class AffixEngine
         // 通货/可堆叠道具：稀有度一行为「通货」，正文是效果列表与使用说明而不是词缀。
         // 描述里会成段出现「最大生命」「生命偷取」「品质」等字样，参与匹配必然误命中，
         // 因此这里只保留名称一个候选（庄园工艺按名称前缀识别道具），装备路径不受影响。
-        if (result.Kind == ItemKind.Currency)
+        if (result.IsCurrencyItem)
         {
             if (result.ItemName.Length > 0)
             {

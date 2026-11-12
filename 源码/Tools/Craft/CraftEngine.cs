@@ -546,7 +546,16 @@ public sealed class CraftEngine
     }
 
     /// <summary>启动基线允许重试复制，避免一次丢失的 Ctrl+Alt+C 直接终止任务。</summary>
-    private async Task<CraftItemSnapshot> CopyBaselineWithRetryAsync(string context, CancellationToken token)
+    private Task<CraftItemSnapshot> CopyBaselineWithRetryAsync(string context, CancellationToken token)
+        => CopyWithRetryAsync(context, CraftSlot.Item, isBaseline: true, token);
+
+    /// <summary>
+    /// 复制物品文本并允许重试，避免一次丢失的 Ctrl+Alt+C 直接终止任务。
+    /// isBaseline=true 表示启动基线（只记基线，不要求与上一次不同）；
+    /// false 表示点击后的结果（记为本次转换确认）。日志与失败提示沿用各自原文。
+    /// </summary>
+    private async Task<CraftItemSnapshot> CopyWithRetryAsync(string context, string slot,
+        bool isBaseline, CancellationToken token)
     {
         var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
         var stopwatch = Stopwatch.StartNew();
@@ -557,13 +566,15 @@ public sealed class CraftEngine
             token.ThrowIfCancellationRequested();
             attempts++;
             var text = await TryCopyClipboardOnceAsync(
-                CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token);
+                CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token, slot);
             if (text is not null)
             {
-                _environment.Log($"[同步] {context} 启动基线已建立: total={stopwatch.ElapsedMilliseconds}ms, " +
-                         $"attempts={attempts}, {text.Length} chars");
+                _environment.Log(isBaseline
+                    ? $"[同步] {context} 启动基线已建立: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}, {text.Length} chars"
+                    : $"[同步] {context} 复制成功: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}, {text.Length} chars");
                 var snapshot = new CraftItemSnapshot(text);
-                _runMeasurement?.RecordBaseline(text);
+                if (isBaseline) _runMeasurement?.RecordBaseline(text);
+                else _runMeasurement?.ConfirmTransition(text);
                 return snapshot;
             }
 
@@ -571,9 +582,14 @@ public sealed class CraftEngine
             await Task.Delay(CraftStateSync.RetryBackoffMs, token);
         }
 
-        _environment.Log($"[同步] {context} 启动基线复制超时: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}");
-        throw new InvalidOperationException(
-            $"启动时连续复制物品信息失败（{timeoutMs}ms）；已安全停止，请确认鼠标位于装备上");
+        _environment.Log(isBaseline
+            ? $"[同步] {context} 启动基线复制超时: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}"
+            : $"[同步] {context} 复制超时: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}");
+        if (!isBaseline) _runMeasurement?.SyncFailed();
+        var location = slot == CraftSlot.HarvestArea ? "工艺区域" : "装备上";
+        throw new InvalidOperationException(isBaseline
+            ? $"启动时连续复制物品信息失败（{timeoutMs}ms）；已安全停止，请确认鼠标位于装备上"
+            : $"{context}连续复制物品信息失败（{timeoutMs}ms）；已安全停止，请确认鼠标位于{location}");
     }
 
     /// <summary>
@@ -792,7 +808,7 @@ public sealed class CraftEngine
     private async Task Mode1Async(CancellationToken token)
     {
         var currCoord = _coordinates[_rules.SingleCurrency];
-        var itemCoord = _coordinates["item"];
+        var itemCoord = _coordinates[CraftSlot.Item];
 
         ReportStatus("启动单通货模式...", force: true);
         _environment.Log($"[引擎] Mode1: 开始, 通货={_rules.SingleCurrency} ({currCoord.X},{currCoord.Y}), 物品 ({itemCoord.X},{itemCoord.Y})");
@@ -865,7 +881,9 @@ public sealed class CraftEngine
             await ClickHarvestBenchAsync(benchCoord, token);
             UseCount++;
 
-            var text = await CopyHarvestItemAsync(token);
+            var firstWaitMs = _timing.FirstWaitMs(_delayMs);
+            if (firstWaitMs > 0) await Task.Delay(firstWaitMs, token);
+            var text = await CopyWithRetryAsync("庄园工艺", CraftSlot.HarvestArea, isBaseline: false, token);
 
             var normalized = CraftStateSync.NormalizeItemText(text.Text);
             identicalResults = string.Equals(normalized, previousText, StringComparison.Ordinal)
@@ -875,12 +893,10 @@ public sealed class CraftEngine
             var (result, affixCount) = CheckItem(text);
             MatchCount = result.TotalHits;
             var name = text.Parsed.ItemName.Length > 0 ? text.Parsed.ItemName : "(未识别名称)";
-            // 带上命中的规则名，避免"到底命中了哪一条"只能靠翻日志猜。
-            var status = $"#{UseCount} {name} 主:{result.PrimaryHits}{RuleSuffix(result.MatchedPrimaryRules)}" +
-                         $" 次:{result.SecondaryHits}{RuleSuffix(result.MatchedSecondaryRules)}";
-            if (result.HasExclude) status += $" 排除{RuleSuffix(result.MatchedExcludeRules)}";
+            var status = $"#{UseCount} {name} 主:{result.PrimaryHits} 次:{result.SecondaryHits}";
+            if (result.HasExclude) status += " [排除]";
             ReportStatus(status);
-            _environment.Log($"[庄园工艺] #{UseCount} kind={text.Parsed.Kind}, rarity={text.Parsed.Rarity}, " +
+            _environment.Log($"[庄园工艺] #{UseCount} rarity={text.Parsed.Rarity}, " +
                      $"name={name}, affixes={affixCount}, 连续同结果={identicalResults}");
 
             if (result.MeetsFinalRules(_rules))
@@ -896,9 +912,6 @@ public sealed class CraftEngine
         }
     }
 
-    private static string RuleSuffix(List<string> rules)
-        => rules.Count == 0 ? "" : $"[{string.Join('|', rules)}]";
-
     private async Task ClickHarvestBenchAsync(Point benchCoord, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
@@ -908,49 +921,12 @@ public sealed class CraftEngine
         _runMeasurement?.ClickSent();
     }
 
-    /// <summary>
-    /// 庄园工艺的复制门禁：点击后先等一个 delay 同步窗口，再重试复制直到拿到物品文本。
-    /// 只要拿到文本就返回，不要求与上一次不同。
-    /// </summary>
-    private async Task<CraftItemSnapshot> CopyHarvestItemAsync(CancellationToken token)
-    {
-        var firstWaitMs = _timing.FirstWaitMs(_delayMs);
-        if (firstWaitMs > 0)
-            await Task.Delay(firstWaitMs, token);
-
-        var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
-        var stopwatch = Stopwatch.StartNew();
-        var attempts = 0;
-        while (stopwatch.ElapsedMilliseconds < timeoutMs)
-        {
-            token.ThrowIfCancellationRequested();
-            attempts++;
-            var text = await TryCopyClipboardOnceAsync(
-                CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token, CraftSlot.HarvestArea);
-            if (text is not null)
-            {
-                _environment.Log($"[同步] 庄园工艺 复制成功: total={stopwatch.ElapsedMilliseconds}ms, " +
-                         $"attempts={attempts}, {text.Length} chars");
-                _runMeasurement?.ConfirmTransition(text);
-                return new CraftItemSnapshot(text);
-            }
-
-            if (stopwatch.ElapsedMilliseconds >= timeoutMs) break;
-            await Task.Delay(CraftStateSync.RetryBackoffMs, token);
-        }
-
-        _environment.Log($"[同步] 庄园工艺 复制超时: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}");
-        _runMeasurement?.SyncFailed();
-        throw new InvalidOperationException(
-            $"庄园工艺连续复制物品信息失败（{timeoutMs}ms）；已安全停止，请确认鼠标位于工艺区域");
-    }
-
     // ── Mode 2：改造+增幅（Python _mode2）──
 
     private async Task Mode2Async(CancellationToken token)
     {
         var altCoord = _coordinates[Currency.Alteration];
-        var itemCoord = _coordinates["item"];
+        var itemCoord = _coordinates[CraftSlot.Item];
 
         ReportStatus("启动改造+增幅模式...", force: true);
 
@@ -1013,7 +989,7 @@ public sealed class CraftEngine
     private async Task Mode2ScourAlchAsync(CancellationToken token)
     {
         var alchCoord = _coordinates[Currency.Alchemy];
-        var itemCoord = _coordinates["item"];
+        var itemCoord = _coordinates[CraftSlot.Item];
 
         ReportStatus("启动重铸+点金模式...", force: true);
 
@@ -1077,7 +1053,7 @@ public sealed class CraftEngine
         var scourCoord = _coordinates[Currency.Scouring];
         var transCoord = _coordinates[Currency.Transmutation];
         var exaltCoord = _coordinates.TryGetValue(Currency.Exalted, out var e) ? e : default;
-        var itemCoord = _coordinates["item"];
+        var itemCoord = _coordinates[CraftSlot.Item];
 
         ReportStatus("启动改造+增幅+富豪模式...", force: true);
         // 阈值 = 主+次命中数 - 1（富豪补 1，铁律 #6；方案 D4）

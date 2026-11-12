@@ -130,16 +130,6 @@ public enum ItemRarity
 }
 
 /// <summary>
-/// 物品大类。通货物品的正文是效果列表与使用说明，不是词缀，
-/// 因此只取名称参与匹配；装备仍沿用完整的词缀匹配规则。
-/// </summary>
-public enum ItemKind
-{
-    Equipment,
-    Currency,
-}
-
-/// <summary>
 /// 物品文本的双视图解析结果：
 /// MatchLines 保留装备名/基础类型供宽松匹配；ExplicitAffixes 仅表示真实前后缀。
 /// 通货物品的 MatchLines/MatchCandidates 只有名称一项。
@@ -149,11 +139,13 @@ public sealed class ItemParseResult
     public ItemRarity Rarity { get; set; }
     /// <summary>名称行（稀有度之后第一段的第一行）；通货即道具名，装备即装备名。</summary>
     public string ItemName { get; set; } = "";
-    public ItemKind Kind => Rarity == ItemRarity.Currency ? ItemKind.Currency : ItemKind.Equipment;
     public List<string> MatchLines { get; } = [];
     public List<ItemMatchCandidate> MatchCandidates { get; } = [];
     public List<ParsedItemAffix> ExplicitAffixes { get; } = [];
     public int ExplicitAffixCount => ExplicitAffixes.Count;
+
+    /// <summary>可堆叠通货/道具的正文是效果列表与使用说明，不是词缀，只能按名称匹配。</summary>
+    public bool IsCurrencyItem => Rarity == ItemRarity.Currency;
 }
 
 /// <summary>Mode2改造阶段下一步；两词缀失败继续当前改造阶段。</summary>

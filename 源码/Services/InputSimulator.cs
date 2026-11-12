@@ -339,20 +339,31 @@ public sealed class InputSimulator
 
     private async Task PrepareCraftClickAsync(int x, int y, int delayMs, int settleMs, CancellationToken token)
     {
-        Updates.UpdateAcceptanceContext.ForbidNativeOperation("SetCursorPos(craft)");
-        await EnsureForegroundForInputAsync(token);
-        int ox = x + Random.Shared.Next(-10, 11);
-        int oy = y + Random.Shared.Next(-10, 11);
-        CheckEmergencyStop();
-        if (!SetCursorPos(ox, oy))
-        {
-            var error = Marshal.GetLastWin32Error();
-            Diag.Win32Error($"SetCursorPos({ox},{oy})", error);
-            throw new InputSimulationException($"移动鼠标到装备位置失败，Win32 错误码 {error}");
-        }
-        await Task.Delay(settleMs, token);
+        await MoveCursorForCraftAsync(x, y, settleMs, jitter: true, token);
         await WaitForCraftClickIntervalAsync(delayMs, token);
         CheckEmergencyStop();
+    }
+
+    /// <summary>
+    /// 把光标放到工艺点击目标上。装备位置用 ±10px 抖动；
+    /// 庄园工艺按钮是小按钮，必须 jitter:false 按录制坐标原样落点。
+    /// </summary>
+    private async Task MoveCursorForCraftAsync(int x, int y, int settleMs, bool jitter, CancellationToken token)
+    {
+        Updates.UpdateAcceptanceContext.ForbidNativeOperation("SetCursorPos(craft)");
+        await EnsureForegroundForInputAsync(token);
+        var targetX = jitter ? x + Random.Shared.Next(-10, 11) : x;
+        var targetY = jitter ? y + Random.Shared.Next(-10, 11) : y;
+        CheckEmergencyStop();
+        if (!SetCursorPos(targetX, targetY))
+        {
+            var error = Marshal.GetLastWin32Error();
+            Diag.Win32Error($"SetCursorPos({targetX},{targetY})", error);
+            throw new InputSimulationException(jitter
+                ? "移动鼠标到装备位置失败"
+                : $"移动鼠标到 ({x}, {y}) 失败，Win32 错误码 {error}");
+        }
+        await Task.Delay(settleMs, token);
     }
 
     private async Task SendCraftMouseClickAsync(Task preparation, CancellationToken token)
@@ -373,17 +384,7 @@ public sealed class InputSimulator
     /// </summary>
     internal async Task ClickAtExactAsync(int x, int y, int settleMs, CancellationToken token)
     {
-        Updates.UpdateAcceptanceContext.ForbidNativeOperation("SetCursorPos(craft)");
-        await EnsureForegroundForInputAsync(token);
-        CheckEmergencyStop();
-        if (!SetCursorPos(x, y))
-        {
-            var error = Marshal.GetLastWin32Error();
-            Diag.Win32Error($"SetCursorPos({x},{y})", error);
-            throw new InputSimulationException($"移动鼠标到 ({x}, {y}) 失败，Win32 错误码 {error}");
-        }
-        await Task.Delay(settleMs, token);
-        CheckEmergencyStop();
+        await MoveCursorForCraftAsync(x, y, settleMs, jitter: false, token);
         await SendCraftMouseClickAsync(Task.CompletedTask, token);
     }
 
