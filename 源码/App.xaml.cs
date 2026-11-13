@@ -311,7 +311,9 @@ public partial class App : Application
                 if (_isShuttingDown || !_settingsLoadedSuccessfully || _host is null ||
                     _host.Storage.ReadOnlyForUpdateValidation || failure.Sequence <= _lastDiagnosticNotification) return;
                 _lastDiagnosticNotification = failure.Sequence;
-                try { _host.Notification.Show("部分诊断日志未能保存，程序功能仍可使用。"); }
+                // 2026-11-13 决策：错误必须保留到用户看到并主动关闭，不能再用 2s Toast 一闪而过。
+                // _errorShown 与事件限频共同防止故障通道递归弹窗。
+                try { _host.Notification.ShowError("部分诊断日志未能保存，程序功能仍可使用。"); }
                 catch { /* 故障通道不能再递归调用日志或错误弹窗。 */ }
             }));
         }

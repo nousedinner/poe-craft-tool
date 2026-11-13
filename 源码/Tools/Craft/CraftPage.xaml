@@ -202,9 +202,13 @@
                 </ScrollViewer>
             </Border>
         </Grid>
+        <!-- 2026-11-13 决策：页脚不再常驻运行状态，平时完全空白。
+             CraftStatusText 仍是状态管道的落点（用例读它），保持隐藏；
+             只有异常（坐标录制热键未绑定）才显示 CraftExceptionText。 -->
         <Grid Grid.Row="2" Style="{StaticResource ToolPageFooter}">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <TextBlock x:Name="CraftStatusText" Text="就绪" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
+            <TextBlock x:Name="CraftStatusText" Text="就绪" Visibility="Collapsed" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
+            <TextBlock x:Name="CraftExceptionText" Text="" Foreground="{StaticResource DangerRed}" VerticalAlignment="Center"/>
         </Grid>
     </Grid>
 </UserControl>

@@ -40,9 +40,11 @@
                 </StackPanel>
             </ScrollViewer>
         </Border>
+        <!-- 2026-11-13 决策：页脚状态（圆点/状态/已点击）不再常驻显示；
+             控件保留供状态管道与用例读取；启停提示与累计点击数均保持原有2 秒浮层。 -->
         <Grid Grid.Row="2" Style="{StaticResource ToolPageFooter}">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
                 <TextBlock x:Name="StatusDot" Text="●" Foreground="#AAAAAA" Margin="0,0,5,0"/>
                 <TextBlock x:Name="StatusText" Text="连点器就绪" Foreground="{StaticResource TextSecondary}"/>
                 <TextBlock Text="已点击" Foreground="{StaticResource TextSecondary}" Margin="20,0,5,0"/>

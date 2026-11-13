@@ -21,9 +21,10 @@
                 </StackPanel>
             </ScrollViewer>
         </Border>
+        <!-- 2026-11-13 决策：页脚状态（圆点/状态）不再常驻显示；控件保留供状态管道与用例读取。 -->
         <Grid Grid.Row="2" Style="{StaticResource ToolPageFooter}">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
                 <TextBlock x:Name="StatusDot" Text="●" Foreground="#AAAAAA" Margin="0,0,5,0"/>
                 <TextBlock x:Name="StatusText" Text="按键循环就绪" Foreground="{StaticResource TextSecondary}"/>
                 <TextBlock x:Name="CaptureHint" Visibility="Collapsed" Margin="18,0,0,0"

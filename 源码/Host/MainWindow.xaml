@@ -146,15 +146,15 @@
             </Grid>
         </Border>
         <Border Grid.Row="3" Background="{StaticResource AccentSoft}" BorderBrush="{StaticResource CardBorder}" BorderThickness="0,1,0,0">
+            <!-- 2026-11-13 决策：底栏只保留「锁定状态」一行——未锁定时给出引导，锁定后显示已锁定: X；
+                 状态圆点、「已使用 N 次」与工具运行状态不再常驻（游戏在前台时本窗口被遮住，看不到）；
+                 「使用说明／问题反馈」保持 v1.0.57 的胶囊按钮样式与文案不变。 -->
             <Grid Margin="20,0">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                <TextBlock x:Name="StatusDot" Text="●" Foreground="#AAAAAA" FontSize="12" VerticalAlignment="Center"/>
-                <TextBlock x:Name="StatusText" Grid.Column="1" Text="就绪" Foreground="{StaticResource TextSecondary}" FontSize="12"
-                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" VerticalAlignment="Center" Margin="7,0,12,0"/>
-                <TextBlock x:Name="UseCountLabel" Grid.Column="2" Text="已使用 0 次" Foreground="{StaticResource AccentBrush}" FontSize="12"
-                           FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,14,0" Visibility="Collapsed"/>
-                <Button Grid.Column="3" Content="使用说明" Style="{StaticResource FooterPrimaryButton}" Click="GuideButton_Click"/>
-                <Button Grid.Column="4" Content="问题反馈" Style="{StaticResource FooterSecondaryButton}" Click="FeedbackButton_Click"/>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock x:Name="StatusText" Text="就绪" Foreground="{StaticResource TextSecondary}" FontSize="12"
+                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <Button Grid.Column="1" Content="使用说明" Style="{StaticResource FooterPrimaryButton}" Click="GuideButton_Click"/>
+                <Button Grid.Column="2" Content="问题反馈" Style="{StaticResource FooterSecondaryButton}" Click="FeedbackButton_Click"/>
             </Grid>
         </Border>
     </Grid>

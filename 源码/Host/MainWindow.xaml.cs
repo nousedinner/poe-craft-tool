@@ -17,11 +17,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, FrameworkElement> _pages = [];
     private ITool? _currentTool;
     private string? _bottomAdUrl;
-    private volatile bool _statusUiVisible;
-    private int _statusRefreshPending;
     private bool _restoringGradientSpeed;
-    private static readonly SolidColorBrush ActiveStatusBrush = MakeStatusBrush(0x1B, 0x8A, 0x3E);
-    private static readonly SolidColorBrush IdleStatusBrush = MakeStatusBrush(0xAA, 0xAA, 0xAA);
 
     public MainWindow(ToolRegistry registry, ToolHost host)
     {
@@ -37,17 +33,7 @@ public partial class MainWindow : Window
         _host = host;
         GradientSpeed.Value = host.GradientSpeed;
         GradientSpeed.ValueChanged += GradientSpeed_ValueChanged;
-        _host.Statuses.Changed += ScheduleStatusRefresh;
-        IsVisibleChanged += (_, _) =>
-        {
-            _statusUiVisible = IsVisible;
-            if (_statusUiVisible) RefreshStatus();
-        };
-        Closed += (_, _) =>
-        {
-            _statusUiVisible = false;
-            _host.Statuses.Changed -= ScheduleStatusRefresh;
-        };
+        IsVisibleChanged += (_, _) => { if (IsVisible) RefreshStatus(); };
 
         // 导航绑定注册表，注册顺序 = 导航顺序
         ToolList.ItemsSource = registry.Tools;
@@ -114,51 +100,17 @@ public partial class MainWindow : Window
         RefreshStatus();
     }
 
-    // ── 状态栏 ──
-
-    private static SolidColorBrush MakeStatusBrush(byte red, byte green, byte blue)
-    {
-        var brush = new SolidColorBrush(Color.FromRgb(red, green, blue));
-        brush.Freeze();
-        return brush;
-    }
-
-    private void ScheduleStatusRefresh()
-    {
-        if (!_statusUiVisible || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished ||
-            Interlocked.Exchange(ref _statusRefreshPending, 1) != 0) return;
-        try
-        {
-            Dispatcher.BeginInvoke(() =>
-            {
-                Interlocked.Exchange(ref _statusRefreshPending, 0);
-                if (_statusUiVisible) RefreshStatus();
-            });
-        }
-        catch (InvalidOperationException) { Interlocked.Exchange(ref _statusRefreshPending, 0); }
-    }
-
+    /// <summary>
+    /// 底栏只显示游戏进程锁定状态（2026-11-13 决策）：未锁定给出引导，锁定后显示进程名。
+    /// 工具运行状态不再进底栏——游戏在前台时本窗口被遮住，常驻状态看不到；
+    /// 状态数据仍写入 ToolStatusStore，供页面与用例读取。
+    /// </summary>
     public void RefreshStatus()
     {
-        var (selected, anyRunning) = _host.Statuses.Read(_currentTool?.Id ?? "");
-        var text = selected?.Text ?? (anyRunning ? "其他工具正在运行" :
-            string.IsNullOrWhiteSpace(_host.Foreground.TargetProcess) ? "就绪" : $"已锁定: {_host.Foreground.TargetProcess}");
-        if (selected is { Running: false } && anyRunning) text += "；另有工具运行中";
-        SetStatus(text, anyRunning);
-        SetUseCount(selected?.UseCount ?? 0);
-    }
-
-    private void SetStatus(string text, bool active)
-    {
-        StatusText.Text = text;
-        StatusDot.Foreground = active ? ActiveStatusBrush : IdleStatusBrush;
-    }
-
-    /// <summary>工具声明的可选使用次数；没有计数的工具保持隐藏。</summary>
-    public void SetUseCount(int count)
-    {
-        UseCountLabel.Text = $"已使用 {count} 次";
-        UseCountLabel.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        var target = _host.Foreground.TargetProcess;
+        StatusText.Text = string.IsNullOrWhiteSpace(target)
+            ? "尚未锁定游戏进程，请先在设置中选择目标进程"
+            : $"已锁定: {target}";
     }
 
     // ── 广告 ──

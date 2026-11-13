@@ -249,9 +249,13 @@ public partial class CraftPage : UserControl
     {
         if (string.IsNullOrWhiteSpace(_host.CoordinateHotkey))
         {
-            CraftStatusText.Text = "坐标录制热键未绑定，请先在设置中绑定";
+            // 2026-11-13 决策：页脚不再常驻运行状态，只在异常时显示；这句是页面专属异常，保留。
+            // 页脚本身保持可见（固定高度，保证四个页面内容区等高），靠文本是否为空控制显隐。
+            CraftExceptionText.Text = "坐标录制热键未绑定，请先在设置中绑定";
             return;
         }
+        // 热键可用：清掉上一次的异常提示，页脚回到完全空白（空 TextBlock 不占宽度）。
+        CraftExceptionText.Text = string.Empty;
         _host.Coordinates.StartRecording(new CoordinateSlot { SlotId = slotId, DisplayName = displayName });
         btn.Content = $"移动鼠标后按 {_host.CoordinateHotkey}...";
         btn.Background = (Brush)FindResource("AccentSoft");
