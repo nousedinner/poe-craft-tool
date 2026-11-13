@@ -224,6 +224,7 @@ var tests = new (string Name, Action Run)[]
     ("Clicker 和 KeyLoop 仅保留热键运行入口", ToolPagesUseHotkeysForRuntimeStart),
     ("滑块开关包含缓动动画", SwitchStyleContainsMotionAnimation),
     ("设置热键捕获成对暂停和恢复注册", SettingsHotkeyCaptureIsSymmetric),
+    ("热键注册器替换钩子只在用例中使用", HotkeyRegistrationOverrideStaysTestOnly),
     ("启动性能覆盖首帧和 Craft 初始化", StartupTimingMarkersCoverFirstRender),
     ("启动测量不能在日常目录或未标记副本绕过单实例", StartupProfilesRequireOwnedCopy),
     ("延迟通知支持首次显示隐藏及丢弃退出后的排队请求", LazyNotificationLifecycleIsSafe),
@@ -1243,6 +1244,38 @@ static void SwitchStyleContainsMotionAnimation()
     True(theme.Contains("DoubleAnimation", StringComparison.Ordinal), "滑块必须包含位置动画");
     True(theme.Contains("ColorAnimation", StringComparison.Ordinal), "滑块必须包含轨道颜色动画");
     True(theme.Contains("CubicEase", StringComparison.Ordinal), "滑块移动必须使用缓动而非线性跳变");
+}
+
+static void HotkeyRegistrationOverrideStaysTestOnly()
+{
+    var root = FindProjectRoot();
+    var separator = Path.DirectorySeparatorChar;
+
+    static int Occurrences(string text, string token)
+    {
+        var count = 0;
+        for (var index = text.IndexOf(token, StringComparison.Ordinal); index >= 0;
+             index = text.IndexOf(token, index + token.Length, StringComparison.Ordinal))
+            count++;
+        return count;
+    }
+
+    var files = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+        .Where(path => !path.Contains($"{separator}obj{separator}", StringComparison.OrdinalIgnoreCase) &&
+                       !path.Contains($"{separator}bin{separator}", StringComparison.OrdinalIgnoreCase))
+        .Select(path => (Relative: Path.GetRelativePath(root, path).Replace('\\', '/'), Text: File.ReadAllText(path)))
+        .Where(entry => entry.Text.Contains("RegistrationOverride", StringComparison.Ordinal))
+        .ToArray();
+
+    var production = files.Where(entry => !entry.Relative.StartsWith("Tests/", StringComparison.Ordinal)).ToArray();
+    Equal(1, production.Length,
+        "注册器替换钩子只能留在热键管理器里，生产代码出现第二处就说明测试钩子扩散了");
+    Equal("Services/HotkeyManager.cs", production[0].Relative,
+        "注册器替换钩子必须留在热键管理器，不能搬到别的服务");
+    Equal(2, Occurrences(production[0].Text, "RegistrationOverride"),
+        "生产代码只允许声明与读取各一处，出现赋值即视为测试钩子泄漏");
+    True(files.Any(entry => entry.Relative.StartsWith("Tests/", StringComparison.Ordinal)),
+        "必须有用例真正使用它，否则这个钩子没有存在价值");
 }
 
 static void SettingsHotkeyCaptureIsSymmetric()
