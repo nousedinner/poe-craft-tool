@@ -310,19 +310,19 @@ internal static class MouseHotkeyChecks
             Hotkey("按键循环", "F9"),
         };
 
-        var errors = SettingsValidation.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", "Mouse4")]);
+        var errors = HotkeyConflictRules.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", "Mouse4")]);
         Require(errors.Count == 1 && errors[0].Contains("冲突", StringComparison.Ordinal),
             "槽位键与全局热键同键必须判为冲突");
 
-        Require(SettingsValidation.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", "Ctrl+Mouse4")]).Count == 0,
+        Require(HotkeyConflictRules.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", "Ctrl+Mouse4")]).Count == 0,
             "修饰键不同的侧键不应与纯侧键热键冲突");
-        Require(SettingsValidation.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", "F9")]).Count == 1,
+        Require(HotkeyConflictRules.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", "F9")]).Count == 1,
             "槽位键与按键循环自身热键同键也必须判为冲突");
-        Require(SettingsValidation.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", "F1"), ("槽位 2", "F1")]).Count == 1,
+        Require(HotkeyConflictRules.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", "F1"), ("槽位 2", "F1")]).Count == 1,
             "两个槽位同键必须判为冲突");
-        Require(SettingsValidation.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", "Mouse9")]).Count == 1,
+        Require(HotkeyConflictRules.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", "Mouse9")]).Count == 1,
             "未定义的侧键必须报无法识别");
-        Require(SettingsValidation.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", ""), ("槽位 2", "w")]).Count == 0,
+        Require(HotkeyConflictRules.ValidateSlotKeyConflicts(hotkeys, [("槽位 1", ""), ("槽位 2", "w")]).Count == 0,
             "空槽位不参与冲突判定");
     }
 

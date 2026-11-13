@@ -21,7 +21,7 @@ internal static class HarvestChecks
         按住 Shift 点击以分开堆叠
         """;
 
-    private const string Essence = """
+    internal const string Essence = """
         物品类别: 可堆叠通货
         稀 有 度: 通货
         贪婪之破空精华

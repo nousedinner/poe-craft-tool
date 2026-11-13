@@ -45,6 +45,15 @@ internal static class HarvestLoop
             var step = new Step(useCount, item, evaluate(item), identicalResults);
             onStep(step);
 
+            // 通货只有名称一个候选：最多 1 次主命中、0 次次命中。要求更高时永远不可能满足，
+            // 而随机转换结果各不相同，「连续相同」阈值兜不住，只会把堆叠烧光后报「坐标不准」——这里第一次就停。
+            if (item.Parsed is { IsCurrencyItem: true } &&
+                (rules.RequiredPrimaryHits > 1 || rules.RequiredSecondaryHits > 0))
+                throw new InvalidOperationException(
+                    $"工艺区域是通货「{(item.Parsed.ItemName.Length > 0 ? item.Parsed.ItemName : "未识别名称")}」，" +
+                    $"它只有名称一个候选（最多主命中 1、次命中 0），无法满足 主命中 {rules.RequiredPrimaryHits}/次命中 {rules.RequiredSecondaryHits}；" +
+                    "已安全停止，未继续消耗道具");
+
             if (step.Result.MeetsFinalRules(rules)) return step;
 
             if (identicalResults >= Math.Max(1, identicalThreshold))

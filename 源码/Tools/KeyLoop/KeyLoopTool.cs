@@ -152,7 +152,7 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
         if (enabledCount == 0) return "请至少启用一个按键槽位";
 
         // 槽位键与全局热键、槽位与槽位都不能共用同一个触发器，否则一次按键会同时触发两条路径。
-        return SettingsValidation.ValidateSlotKeyConflicts(RegisteredHotkeyEntries(), SlotKeyBindings(null))
+        return HotkeyConflictRules.ValidateSlotKeyConflicts(RegisteredHotkeyEntries(), SlotKeyBindings(null))
             .FirstOrDefault();
     }
 
@@ -160,7 +160,7 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
     internal string? ValidateSlotKey(int index, string key)
     {
         if (string.IsNullOrWhiteSpace(key)) return null;
-        return SettingsValidation.ValidateSlotKeyConflicts(RegisteredHotkeyEntries(), SlotKeyBindings(index, key))
+        return HotkeyConflictRules.ValidateSlotKeyConflicts(RegisteredHotkeyEntries(), SlotKeyBindings(index, key))
             .FirstOrDefault();
     }
 

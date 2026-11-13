@@ -97,6 +97,7 @@ var tests = new (string Name, Action Run)[]
     ("庄园工艺复制失败立即停止", HarvestLoopChecks.CopyFailureStopsImmediately),
     ("庄园工艺取消后不再转换", HarvestLoopChecks.CancellationStopsBeforeNextConversion),
     ("庄园工艺交替结果重置连续计数", HarvestLoopChecks.DifferentResultsResetIdenticalCounter),
+    ("庄园工艺通货不可能命中时第一次就停", HarvestLoopChecks.CurrencyWithImpossibleHitCountStopsAfterFirstConversion),
     ("庄园工艺循环复用Core判定并复制工艺区域", HarvestAsyncUsesAreaSlotAndLoop),
     ("括号说明行不参与匹配", ParentheticalNotesAreIgnored),
     ("同一显式词缀在同一池内不重复计数", OneAffixCannotSatisfyTwoRulesInSamePool),
@@ -549,8 +550,18 @@ static void CraftRejectsInvalidRuleBounds()
 {
     foreach (var mode in new[] { CraftMode.Single, CraftMode.AltAug, CraftMode.AltAugRegal })
     {
+        // 主0且次0：MeetsFinalRules 对任何物品都为真，第一次转换就会报「匹配成功」——任何模式都要拒绝。
         var rules = new CraftRules { Mode = mode, PrimaryHitCount = 0, SecondaryHitCount = 0 };
-        Equal(mode != CraftMode.Single, rules.Validate().Ok, "只有多通货模式保留零命中，单通货必须有主池目标");
+        False(rules.Validate().Ok, "主0且次0 会让第一次转换就判成功，必须在启动前拒绝");
+
+        // 单池为 0 仍然合法：只要另一个池有要求（Mode1 固定主1次0，走各自的池校验）。
+        if (mode != CraftMode.Single)
+        {
+            var onePool = new CraftRules { Mode = mode, PrimaryHitCount = 0, SecondaryHitCount = 1 };
+            onePool.SecondaryAffixes.Add(new AffixRule { Text = "生命" });
+            True(onePool.Validate().Ok, "只要求次池（主0）必须仍然合法");
+        }
+
         rules.PrimaryHitCount = -1;
         False(rules.Validate().Ok, "负主命中数不得放宽规则");
         rules.PrimaryHitCount = 0;

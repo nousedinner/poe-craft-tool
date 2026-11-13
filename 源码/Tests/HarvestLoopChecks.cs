@@ -97,6 +97,22 @@ internal static class HarvestLoopChecks
         True(steps.All(step => step.IdenticalResults == 0), "交替物品的任何一轮都不该累计连续次数");
     }
 
+    /// <summary>通货只有名称一个候选：主命中要求超过 1 时，第一次转换就停，不允许把堆叠烧光。</summary>
+    public static void CurrencyWithImpossibleHitCountStopsAfterFirstConversion()
+    {
+        var rules = new CraftRules { Mode = CraftMode.Harvest, PrimaryHitCount = 2 };
+        rules.PrimaryAffixes.Add(new AffixRule { Text = "贪婪" });
+        var script = new Scripted().Add(HarvestChecks.Essence, Miss);
+        var steps = new List<HarvestLoop.Step>();
+
+        var failure = Catch(() => Run(rules, identicalThreshold: 10, script, steps));
+
+        True(failure is InvalidOperationException, "通货无法满足主命中 2 时必须立刻停止");
+        True(failure!.Message.Contains("通货", StringComparison.Ordinal), "停止提示必须点明是通货");
+        Equal(1, script.CopyCalls, "只允许消耗 1 次转换就停");
+        Equal(1, steps.Count, "那一次转换仍要上报");
+    }
+
     // ── 夹具 ──
 
     private static CraftRules Rules()

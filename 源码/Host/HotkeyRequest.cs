@@ -40,3 +40,6 @@ public sealed class HotkeyRequest
     /// <summary>Hold 模式专用：松开按键时调用（对应 Python on_release_key）。Toggle 模式忽略。</summary>
     public Action? ReleaseHandler { get; init; }
 }
+
+/// <summary>一条已登记热键的可读描述；设置页与按键循环都用它做冲突判定。</summary>
+public sealed record HotkeyEntry(string Id, string Name, string Key, HotkeyMode Mode);

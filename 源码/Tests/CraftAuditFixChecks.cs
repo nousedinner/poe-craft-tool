@@ -246,7 +246,10 @@ internal static class CraftAuditFixChecks
             rules.SecondaryAffixes.Add(new AffixRule { Text = "次甲" });
             rules.SecondaryAffixes.Add(new AffixRule { Text = "次乙" });
             rules.ExcludeAffixes.Add(new AffixRule { Text = "禁用" });
-            Require(rules.Validate().Ok, "测试必须使用合法命中需求");
+            if (total == 0)
+                Require(!rules.Validate().Ok, "主0且次0 必须在启动前被拒绝（引擎判定不受影响）");
+            else
+                Require(rules.Validate().Ok, "测试必须使用合法命中需求");
             var item = AffixEngine.ParseItem("物品类别: 头盔\n稀有度: 魔法\n铁帽\n--------\n" +
                 "{ 前缀属性 \"测试前缀\" (等阶: 1) }\n目标\n" +
                 "{ 后缀属性 \"测试后缀\" (等阶: 1) }\n禁用");

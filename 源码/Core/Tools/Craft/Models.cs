@@ -265,13 +265,17 @@ public sealed class CraftRules
         return snapshot;
     }
 
-    /// <summary>启动校验；单通货固定主1次0，Mode2/3 保留各池零命中和原总数上限。</summary>
+    /// <summary>启动校验；单通货固定主1次0，Mode2/3/4 保留单池零命中与原总数上限，但主次都为 0 会被拒绝。</summary>
     public (bool Ok, string Message) Validate()
     {
         if (!Enum.IsDefined(Mode))
             return (false, "洗词缀模式无法识别，请重新选择模式");
         if (PrimaryHitCount < 0 || SecondaryHitCount < 0)
             return (false, "主/次词缀命中数不能为负数");
+        // 主0且次0 时 MeetsFinalRules 对任何物品都为真，第一次转换就会报「匹配成功」——必须启动前拦下。
+        // 单池为0仍然合法（例如只用次池），所以只拒绝两个都为0 的组合。
+        if (RequiredPrimaryHits == 0 && RequiredSecondaryHits == 0)
+            return (false, "主词缀与次级词缀的命中数都是 0，任何物品都会被判为成功；请至少设置一个命中数");
         var seenRules = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (poolName, rules) in new[]
                  {
