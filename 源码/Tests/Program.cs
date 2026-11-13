@@ -322,6 +322,8 @@ var tests = new (string Name, Action Run)[]
     ("淡彩弹窗保持按钮、模态、长文与自动消失行为", PromptChecks.Run),
     ("T11 实际窗口布局、切页保存与渐变生命周期", AppearanceChecks.Run),
     ("Mode2/3 任意编辑后启动校验上限", MultiCurrencyLimitsAreCheckedAtStart),
+    // WPF 用例：放在真实窗口用例之后，复用它们创建的 Application（见 RunOnSta）。
+    ("槽位录制保存失败仍恢复热键", KeyLoopCaptureChecks.SaveFailureStillRestoresHotkeys),
 };
 
 // 只跑名字包含关键字的用例：ShiKe.InternalTests.exe --filter 庄园工艺
