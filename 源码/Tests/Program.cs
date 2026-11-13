@@ -98,6 +98,7 @@ var tests = new (string Name, Action Run)[]
     ("庄园工艺取消后不再转换", HarvestLoopChecks.CancellationStopsBeforeNextConversion),
     ("庄园工艺交替结果重置连续计数", HarvestLoopChecks.DifferentResultsResetIdenticalCounter),
     ("庄园工艺通货不可能命中时第一次就停", HarvestLoopChecks.CurrencyWithImpossibleHitCountStopsAfterFirstConversion),
+    ("庄园工艺通货名称命中次池时正常成功", HarvestLoopChecks.CurrencyNameMatchingSecondaryRuleSucceeds),
     ("庄园工艺循环复用Core判定并复制工艺区域", HarvestAsyncUsesAreaSlotAndLoop),
     ("括号说明行不参与匹配", ParentheticalNotesAreIgnored),
     ("同一显式词缀在同一池内不重复计数", OneAffixCannotSatisfyTwoRulesInSamePool),

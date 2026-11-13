@@ -45,16 +45,19 @@ internal static class HarvestLoop
             var step = new Step(useCount, item, evaluate(item), identicalResults);
             onStep(step);
 
-            // 通货只有名称一个候选：最多 1 次主命中、0 次次命中。要求更高时永远不可能满足，
-            // 而随机转换结果各不相同，「连续相同」阈值兜不住，只会把堆叠烧光后报「坐标不准」——这里第一次就停。
-            if (item.Parsed is { IsCurrencyItem: true } &&
-                (rules.RequiredPrimaryHits > 1 || rules.RequiredSecondaryHits > 0))
+            if (step.Result.MeetsFinalRules(rules)) return step;
+
+            // 通货只有名称一个候选，主池和次池规则共用它（同一候选至多被一条规则消费），主+次合计最多 1 次命中。
+            // 要求的总命中数超过候选数时永远不可能满足，而随机转换结果各不相同，
+            // 「连续相同」阈值兜不住，只会把堆叠烧光后报「坐标不准」——这里第一次就停。
+            var candidates = item.Parsed.MatchCandidates.Count;
+            if (item.Parsed.IsCurrencyItem &&
+                rules.RequiredPrimaryHits + rules.RequiredSecondaryHits > candidates)
                 throw new InvalidOperationException(
                     $"工艺区域是通货「{(item.Parsed.ItemName.Length > 0 ? item.Parsed.ItemName : "未识别名称")}」，" +
-                    $"它只有名称一个候选（最多主命中 1、次命中 0），无法满足 主命中 {rules.RequiredPrimaryHits}/次命中 {rules.RequiredSecondaryHits}；" +
+                    $"它按名称最多只能贡献 {candidates} 次命中（主命中与次命中合计），" +
+                    $"无法满足 主命中 {rules.RequiredPrimaryHits}/次命中 {rules.RequiredSecondaryHits}；" +
                     "已安全停止，未继续消耗道具");
-
-            if (step.Result.MeetsFinalRules(rules)) return step;
 
             if (identicalResults >= Math.Max(1, identicalThreshold))
                 throw new InvalidOperationException(

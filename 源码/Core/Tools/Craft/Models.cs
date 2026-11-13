@@ -245,7 +245,7 @@ public sealed class CraftRules
     public List<AffixRule> ExcludeAffixes { get; } = [];
 
     // 旧规则/预设的数量仍可读取；单通货的校验、执行和保存使用同一固定需求。
-    // 庄园工艺兼做道具转换与洗装备，因此沿用可配置命中数；通货物品只有名称一个候选，最多贡献 1 次主命中。
+    // 庄园工艺兼做道具转换与洗装备，因此沿用可配置命中数；通货物品只有名称一个候选，主、次池合计最多命中 1 次。
     public int RequiredPrimaryHits => Mode == CraftMode.Single ? 1 : PrimaryHitCount;
     public int RequiredSecondaryHits => Mode == CraftMode.Single ? 0 : SecondaryHitCount;
 

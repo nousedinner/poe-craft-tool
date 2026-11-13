@@ -97,20 +97,48 @@ internal static class HarvestLoopChecks
         True(steps.All(step => step.IdenticalResults == 0), "交替物品的任何一轮都不该累计连续次数");
     }
 
-    /// <summary>通货只有名称一个候选：主命中要求超过 1 时，第一次转换就停，不允许把堆叠烧光。</summary>
-    public static void CurrencyWithImpossibleHitCountStopsAfterFirstConversion()
+    /// <summary>主 0 次 1 是合法配置；通货名称命中次池规则时本应成功，不能被「不可能命中」的拦截提前判死。</summary>
+    public static void CurrencyNameMatchingSecondaryRuleSucceeds()
     {
-        var rules = new CraftRules { Mode = CraftMode.Harvest, PrimaryHitCount = 2 };
-        rules.PrimaryAffixes.Add(new AffixRule { Text = "贪婪" });
-        var script = new Scripted().Add(HarvestChecks.Essence, Miss);
+        var rules = new CraftRules { Mode = CraftMode.Harvest, PrimaryHitCount = 0, SecondaryHitCount = 1 };
+        rules.SecondaryAffixes.Add(new AffixRule { Text = "贪婪" });
+        var script = new Scripted().Add(HarvestChecks.Essence, () => Evaluate(HarvestChecks.Essence, rules));
         var steps = new List<HarvestLoop.Step>();
 
-        var failure = Catch(() => Run(rules, identicalThreshold: 10, script, steps));
+        var result = Run(rules, identicalThreshold: 10, script, steps);
 
-        True(failure is InvalidOperationException, "通货无法满足主命中 2 时必须立刻停止");
-        True(failure!.Message.Contains("通货", StringComparison.Ordinal), "停止提示必须点明是通货");
-        Equal(1, script.CopyCalls, "只允许消耗 1 次转换就停");
-        Equal(1, steps.Count, "那一次转换仍要上报");
+        Equal(1, script.CopyCalls, "命中后不得再转换一次");
+        Equal(1, steps.Count, "命中步必须上报一次");
+        Equal(0, result.Result.PrimaryHits, "通货名称不应算进主池");
+        Equal(1, result.Result.SecondaryHits, "通货名称命中次池规则");
+        True(result.Result.MeetsFinalRules(rules), "主 0 次 1 命中必须判成功，不得被提前拦截");
+    }
+
+    /// <summary>通货只有名称一个候选：主+次要求合计超过候选数时，第一次转换就停，不允许把堆叠烧光。</summary>
+    public static void CurrencyWithImpossibleHitCountStopsAfterFirstConversion()
+    {
+        foreach (var (primary, secondary) in new[] { (2, 0), (1, 1), (0, 2) })
+        {
+            var rules = new CraftRules
+            {
+                Mode = CraftMode.Harvest,
+                PrimaryHitCount = primary,
+                SecondaryHitCount = secondary,
+            };
+            rules.PrimaryAffixes.Add(new AffixRule { Text = "贪婪" });
+            rules.SecondaryAffixes.Add(new AffixRule { Text = "精华" });
+            var script = new Scripted().Add(HarvestChecks.Essence, Miss);
+            var steps = new List<HarvestLoop.Step>();
+
+            var failure = Catch(() => Run(rules, identicalThreshold: 10, script, steps));
+
+            True(failure is InvalidOperationException, $"通货无法满足 主{primary}/次{secondary} 时必须立刻停止");
+            True(failure!.Message.Contains("通货", StringComparison.Ordinal), "停止提示必须点明是通货");
+            True(failure.Message.Contains($"主命中 {primary}/次命中 {secondary}", StringComparison.Ordinal),
+                $"停止提示必须写明实际要求，实际：{failure.Message}");
+            Equal(1, script.CopyCalls, "只允许消耗 1 次转换就停");
+            Equal(1, steps.Count, "那一次转换仍要上报");
+        }
     }
 
     // ── 夹具 ──
@@ -123,6 +151,10 @@ internal static class HarvestLoopChecks
     }
 
     private static AffixCheckResult Hit(CraftRules rules) => new() { PrimaryHits = rules.RequiredPrimaryHits };
+
+    /// <summary>走真实的解析与匹配，回归用例必须能证明「名称命中次池」不是靠夹具硬凑出来的。</summary>
+    private static AffixCheckResult Evaluate(string text, CraftRules rules)
+        => AffixEngine.CheckAffixes(AffixEngine.ParseItem(text), rules);
 
     private static AffixCheckResult Miss() => new();
 
