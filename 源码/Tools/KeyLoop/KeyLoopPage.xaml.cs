@@ -248,12 +248,12 @@ public partial class KeyLoopPage : UserControl
         if (_tool.IsRunning) return;
         _captureIndex = null;
         HideCaptureHint();
-        var restoreIssues = _tool.EndSlotCapture();
+        // 恢复失败由 EndSlotCapture 直接通知，放在保存之前：保存抛异常也不会吞掉这条提示。
+        _tool.EndSlotCapture();
         _tool.Slots[index].Key = string.Empty;
         _rows[index].KeyButton.Tag = string.Empty;
         RefreshKeyButton(index);
         SaveRowChange();
-        ReportRestoreIssues(restoreIssues);
     }
 
     /// <summary>放弃本次录制，保留原键位并立即恢复全局热键。</summary>
@@ -266,10 +266,9 @@ public partial class KeyLoopPage : UserControl
             RefreshKeyButton(index);
         }
         // 即使没有待提交的录制，也要兜一次：保存异常可能让热键还停在暂停状态。
-        var issues = _tool.EndSlotCapture();
-        if (issues.Count == 0) return;
-        if (interactive) ShowWarning(RestoreFailureMessage(issues), "热键恢复失败");
-        else _tool.ReportHotkeyRestoreFailure(issues);
+        // 交互路径自己弹对话框，其余路径交给工具的默认通知。
+        var issues = _tool.EndSlotCapture(notify: !interactive);
+        if (interactive && issues.Count > 0) ShowWarning(RestoreFailureMessage(issues), "热键恢复失败");
     }
 
     private void Page_Loaded(object sender, RoutedEventArgs e)
@@ -332,7 +331,8 @@ public partial class KeyLoopPage : UserControl
             _captureIndex = null;
             RefreshKeyButton(index);
             HideCaptureHint();
-            var restoreIssues = _tool.EndSlotCapture();
+            // 这条路径已经要弹冲突提示，把恢复异常合并进去，避免再叠一个通知。
+            var restoreIssues = _tool.EndSlotCapture(notify: false);
             ShowWarning(restoreIssues.Count == 0 ? error : error + "\n\n" + RestoreFailureMessage(restoreIssues));
             return;
         }
@@ -350,13 +350,9 @@ public partial class KeyLoopPage : UserControl
         {
             // 保存抛异常（磁盘满、只读目录等）时也必须恢复热键：
             // 此时录制状态已经清空，再走 CancelCapture 也救不回来，热键会一直停着。
-            _tool.ReportHotkeyRestoreFailure(_tool.EndSlotCapture());
+            // 恢复失败由工具内部通知，不会因为这里抛异常而掩盖保存失败的原因。
+            _tool.EndSlotCapture();
         }
-    }
-
-    private void ReportRestoreIssues(IReadOnlyList<string> issues)
-    {
-        if (issues.Count > 0) ShowWarning(RestoreFailureMessage(issues), "热键恢复失败");
     }
 
     private static string RestoreFailureMessage(IReadOnlyList<string> issues)

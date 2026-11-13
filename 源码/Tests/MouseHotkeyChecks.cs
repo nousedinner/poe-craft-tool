@@ -19,6 +19,8 @@ internal static class MouseHotkeyChecks
     private const uint Injected = 0x01;
     private const uint LowerIntegrityInjected = 0x02;
     private const ushort LeftControl = 0xA2;
+    private const ushort RightControl = 0xA3;
+    private const ushort LeftShift = 0xA0;
 
     public static void MouseKeysParseWithoutPollutingKeyboardKeys()
     {
@@ -197,6 +199,54 @@ internal static class MouseHotkeyChecks
         Require(plainStops == 0, "无修饰键的侧键按住不能因为键盘事件结束");
         plain.HandleMouseHookEvent(XButtonUp, data, 0);
         Require(plainStops == 1, "无修饰键的侧键按住应在松开侧键时结束");
+
+        // 左右 Ctrl 同时按住时，松开其中一个仍然满足组合条件，不能停。
+        var eitherStarts = 0;
+        var eitherStops = 0;
+        var either = CreateMouseManager("Ctrl+Mouse4", HotkeyMode.Hold, () => true,
+            () => eitherStarts++, () => eitherStops++);
+        either.HandleKeyboardHookEvent(LeftControl, KeyDown, 0);
+        either.HandleKeyboardHookEvent(RightControl, KeyDown, 0);
+        either.HandleMouseHookEvent(XButtonDown, data, 0);
+        Require(eitherStarts == 1, "左右 Ctrl 都按住时应满足组合条件");
+        either.HandleKeyboardHookEvent(LeftControl, KeyUp, 0);
+        Require(eitherStops == 0, "松开其中一个 Ctrl 时另一个还按着，不得结束按住");
+        either.HandleKeyboardHookEvent(RightControl, KeyUp, 0);
+        Require(eitherStops == 1, "最后一个 Ctrl 松开时必须结束按住");
+        either.HandleMouseHookEvent(XButtonUp, data, 0);
+
+        // 双修饰键组合：只松开其中一个就应停止。
+        var twoStarts = 0;
+        var twoStops = 0;
+        var two = CreateMouseManager("Ctrl+Shift+Mouse4", HotkeyMode.Hold, () => true,
+            () => twoStarts++, () => twoStops++);
+        two.HandleKeyboardHookEvent(LeftControl, KeyDown, 0);
+        two.HandleKeyboardHookEvent(LeftShift, KeyDown, 0);
+        two.HandleMouseHookEvent(XButtonDown, data, 0);
+        Require(twoStarts == 1, "Ctrl+Shift+侧键应满足组合条件");
+        two.HandleKeyboardHookEvent(LeftShift, KeyUp, 0);
+        Require(twoStops == 1, "双修饰键组合只松开一个就必须结束按住");
+        two.HandleMouseHookEvent(XButtonUp, data, 0);
+        Require(twoStops == 1, "已结束的按住不能在松开侧键时重复释放");
+    }
+
+    /// <summary>同一侧键上同时存在 Toggle 与 Hold 绑定时的派发边界（配置校验会拦，但派发层必须自洽）。</summary>
+    public static void HoldAndToggleCanShareOneMouseButton()
+    {
+        var toggles = 0;
+        var starts = 0;
+        var stops = 0;
+        var manager = CreateMouseManager(() => true,
+            ("Mouse4", HotkeyMode.Toggle, () => toggles++, null),
+            ("Mouse4", HotkeyMode.Hold, () => starts++, () => stops++));
+        var data = HookMouseData(MouseButtonKey.XButton1);
+
+        manager.HandleMouseHookEvent(XButtonDown, data, 0);
+        Require(toggles == 1 && starts == 1, "按下时 Toggle 与 Hold 各触发一次");
+        manager.HandleMouseHookEvent(XButtonDown, data, 0);
+        Require(toggles == 1 && starts == 1, "按住不放不得重复触发 Toggle 或 Hold");
+        manager.HandleMouseHookEvent(XButtonUp, data, 0);
+        Require(stops == 1 && toggles == 1, "松开只结束 Hold，不应再次触发 Toggle");
     }
 
     public static void MouseButtonEncodingAndKeyLoopSlots()

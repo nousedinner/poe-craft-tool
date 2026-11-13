@@ -114,11 +114,18 @@ public sealed class HotkeyManager
     }
 
     /// <summary>
+    /// 内部用例替换注册实现：只记录调用与返回，不安装钩子、不调用 RegisterHotKey。
+    /// 正式路径始终为 null；置空即恢复真实注册。
+    /// </summary>
+    internal Func<IReadOnlyList<HotkeyRequest>, List<string>>? RegistrationOverride { get; set; }
+
+    /// <summary>
     /// 注册全部热键。返回冲突/失败描述列表（空 = 全部成功）。
     /// 空绑定跳过；按修饰键和主键检测冲突，重复触发器跳过注册。
     /// </summary>
     public List<string> RegisterAll(IReadOnlyList<HotkeyRequest> requests)
     {
+        if (RegistrationOverride is { } replacement) return replacement(requests);
         if (requests.Count > 0) ShiKe.Services.Updates.UpdateAcceptanceContext.ForbidNativeOperation("RegisterHotkeys");
         var conflicts = new List<string>();
         if (_hwnd == 0)

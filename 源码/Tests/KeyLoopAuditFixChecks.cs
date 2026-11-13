@@ -312,6 +312,10 @@ internal static class KeyLoopAuditFixChecks
         var keyLoop = new KeyLoopTool();
         registry.Register(keyLoop);
         keyLoop.Initialize(host);
+        // 测试进程里 Hotkeys 没有附着窗口，真实 RegisterAll 只会返回“尚未附着”，
+        // 断言如果只看暂停标志，删掉重注册也不会变红。这里替换注册实现，直接数调用次数。
+        var registers = 0;
+        host.Hotkeys.RegistrationOverride = _ => { registers++; return []; };
         try
         {
             craft.IsRunning = true;
@@ -319,14 +323,77 @@ internal static class KeyLoopAuditFixChecks
             Require(refusal is not null && refusal.Contains("洗词缀", StringComparison.Ordinal),
                 "其他工具运行时必须拒绝开始槽位录制，并点名是哪个工具");
             Require(!keyLoop.HotkeysPausedForCapture, "被拒绝时不得注销全局热键");
+            Require(registers == 0, "被拒绝时不得尝试重新注册热键");
 
             craft.IsRunning = false;
             Require(keyLoop.TryBeginSlotCapture() is null, "没有工具运行时必须允许开始录制");
             Require(keyLoop.HotkeysPausedForCapture, "允许录制后必须处于热键暂停状态");
-            keyLoop.EndSlotCapture();
-            Require(!keyLoop.HotkeysPausedForCapture, "结束录制必须恢复热键注册状态");
+
+            var issues = keyLoop.EndSlotCapture();
+            Require(!keyLoop.HotkeysPausedForCapture, "结束录制必须解除暂停标志");
+            Require(registers == 1, "结束录制必须真正重注册一次热键");
+            Require(issues.Count == 0, "注册成功时不得报告恢复异常");
+        }
+        finally
+        {
+            keyLoop.EndSlotCapture(notify: false);
+            keyLoop.OnShutdown();
+        }
+    });
+
+    /// <summary>恢复注册返回失败项时，必须从返回值报出来，不能只写日志。</summary>
+    public static void SlotCaptureReportsRestoreIssues() => WithRegistry((host, registry) =>
+    {
+        var keyLoop = new KeyLoopTool();
+        registry.Register(keyLoop);
+        keyLoop.Initialize(host);
+        host.Hotkeys.RegistrationOverride = _ => ["模拟注册失败：热键被占用"];
+        try
+        {
+            Require(keyLoop.TryBeginSlotCapture() is null, "没有工具运行时必须允许开始录制");
+            var issues = keyLoop.EndSlotCapture(notify: false);
+            Require(issues.Count == 1 && issues[0].Contains("模拟注册失败", StringComparison.Ordinal),
+                "注册失败必须从返回值报出来");
+            Require(!keyLoop.HotkeysPausedForCapture, "注册流程走完（即使有失败项）应解除暂停标志");
         }
         finally { keyLoop.OnShutdown(); }
+    });
+
+    /// <summary>
+    /// 重注册抛异常时不能先清暂停标志：否则后续所有恢复出口都成了空操作，热键再也回不来。
+    /// </summary>
+    public static void SlotCaptureKeepsRetryWhenRestoreThrows() => WithRegistry((host, registry) =>
+    {
+        var keyLoop = new KeyLoopTool();
+        registry.Register(keyLoop);
+        keyLoop.Initialize(host);
+        var attempts = 0;
+        host.Hotkeys.RegistrationOverride = _ =>
+        {
+            attempts++;
+            throw new InvalidOperationException("受控的注册器故障");
+        };
+        try
+        {
+            Require(keyLoop.TryBeginSlotCapture() is null, "没有工具运行时必须允许开始录制");
+            var issues = keyLoop.EndSlotCapture(notify: false);
+            Require(attempts == 1 && issues.Count == 1 &&
+                    issues[0].Contains("受控的注册器故障", StringComparison.Ordinal),
+                "注册器异常必须转成可显示的恢复失败");
+            Require(keyLoop.HotkeysPausedForCapture,
+                "恢复抛异常时必须保留暂停标志，否则后续出口无法重试");
+
+            host.Hotkeys.RegistrationOverride = _ => [];
+            var retry = keyLoop.EndSlotCapture(notify: false);
+            Require(retry.Count == 0 && !keyLoop.HotkeysPausedForCapture,
+                "下一次出口必须能重试并成功解除暂停");
+        }
+        finally
+        {
+            host.Hotkeys.RegistrationOverride = _ => [];
+            keyLoop.EndSlotCapture(notify: false);
+            keyLoop.OnShutdown();
+        }
     });
 
     private static void WithRegistry(Action<ToolHost, ToolRegistry> check)

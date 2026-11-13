@@ -57,8 +57,8 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
     public void OnDeactivate()
     {
         // 录制中切走页面也要恢复全局热键，否则热键会一直处于暂停状态。
-        // 切页时没有对话框可挂，恢复失败必须走通知，不能只留一行日志。
-        ReportHotkeyRestoreFailure(EndSlotCapture());
+        // 切页时没有对话框可挂，恢复失败由 EndSlotCapture 走置顶通知，不能只留一行日志。
+        EndSlotCapture();
         SaveSettingsToStorage();
     }
 
@@ -208,22 +208,40 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
         return null;
     }
 
-    /// <summary>结束槽位录制并恢复全局热键；可重复调用。返回恢复过程中的异常，供界面提示。</summary>
-    internal IReadOnlyList<string> EndSlotCapture()
+    /// <summary>
+    /// 结束槽位录制并恢复全局热键；可重复调用。
+    /// 默认在恢复失败时直接通知用户——这样即使调用点漏掉返回值，也不会变成静默失败；
+    /// 需要自己弹对话框的调用方传 <paramref name="notify"/> = false 并消费返回值。
+    /// </summary>
+    internal IReadOnlyList<string> EndSlotCapture(bool notify = true)
     {
         if (_host is null || !_hotkeysPausedForCapture) return [];
-        _hotkeysPausedForCapture = false;
-        var issues = _host.Hotkeys.ReRegister(_host.BuildHotkeyRequests());
+
+        List<string> issues;
+        try
+        {
+            issues = _host.Hotkeys.ReRegister(_host.BuildHotkeyRequests());
+            // 只有把注册流程走完才解除暂停：中途抛异常时保留标志，后续出口还能重试，
+            // 否则标志先被清掉，之后所有恢复路径都成了空操作，热键再也回不来。
+            _hotkeysPausedForCapture = false;
+        }
+        catch (Exception ex)
+        {
+            Diag.Log($"[按键循环] 槽位录制结束但恢复热键抛出异常：{ex.GetType().Name}: {ex.Message}");
+            issues = [$"恢复热键时发生异常：{ex.Message}"];
+        }
+
         Diag.Log(issues.Count == 0
             ? "[按键循环] 槽位录制结束：已恢复全局热键"
             : "[按键循环] 槽位录制结束但恢复异常：" + string.Join(" | ", issues));
+        if (notify) NotifyRestoreFailure(issues);
         return issues;
     }
 
     internal bool HotkeysPausedForCapture => _hotkeysPausedForCapture;
 
     /// <summary>恢复失败必须让用户看见：只写日志会出现“录制结束了，但热键其实没回来”。</summary>
-    internal void ReportHotkeyRestoreFailure(IReadOnlyList<string> issues)
+    private void NotifyRestoreFailure(IReadOnlyList<string> issues)
     {
         if (issues.Count == 0) return;
         _host?.Notification.ShowError("槽位录制结束后恢复热键失败：\n" + string.Join("\n", issues));
