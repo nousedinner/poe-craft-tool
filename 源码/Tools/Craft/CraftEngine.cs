@@ -871,47 +871,34 @@ public sealed class CraftEngine
         _environment.Log($"[引擎] 庄园工艺: 开始, 工艺按钮 ({benchCoord.X},{benchCoord.Y}), " +
                  $"工艺区域 ({areaCoord.X},{areaCoord.Y})");
 
-        string? previousText = null;
-        var identicalResults = 0;
-        while (true)
-        {
-            token.ThrowIfCancellationRequested();
-            await AwaitForegroundAsync(token);
-
-            // 与 Mode1 相同的产品语义：先动手再判定，启动时不预先读一次物品，
-            // 省掉循环里多出的一次「跑到物品区域再跑回来」。
-            await ClickHarvestBenchAsync(benchCoord, token);
-            UseCount++;
-
-            var firstWaitMs = _timing.FirstWaitMs(_delayMs);
-            if (firstWaitMs > 0) await Task.Delay(firstWaitMs, token);
-            var text = await CopyWithRetryAsync("庄园工艺", CraftSlot.HarvestArea, isBaseline: false, token);
-
-            var normalized = CraftStateSync.NormalizeItemText(text.Text);
-            identicalResults = string.Equals(normalized, previousText, StringComparison.Ordinal)
-                ? identicalResults + 1 : 0;
-            previousText = normalized;
-
-            var (result, affixCount) = CheckItem(text);
-            MatchCount = result.TotalHits;
-            var name = text.Parsed.ItemName.Length > 0 ? text.Parsed.ItemName : "(未识别名称)";
-            var status = $"#{UseCount} {name} 主:{result.PrimaryHits} 次:{result.SecondaryHits}";
-            if (result.HasExclude) status += " [排除]";
-            ReportStatus(status);
-            _environment.Log($"[庄园工艺] #{UseCount} rarity={text.Parsed.Rarity}, " +
-                     $"name={name}, affixes={affixCount}, 连续同结果={identicalResults}");
-
-            if (result.MeetsFinalRules(_rules))
+        // 判定骨架在 Core（HarvestLoop），这里只负责“点一下、等一会儿、复制工艺区域”这段 I/O。
+        await HarvestLoop.RunAsync(_rules, _exhaustionThreshold,
+            async workToken =>
             {
-                OnSuccess(token);
-                return;
-            }
+                await AwaitForegroundAsync(workToken);
+                // 与 Mode1 相同的产品语义：先动手再判定，启动时不预先读一次物品。
+                await ClickHarvestBenchAsync(benchCoord, workToken);
+                var firstWaitMs = _timing.FirstWaitMs(_delayMs);
+                if (firstWaitMs > 0) await Task.Delay(firstWaitMs, workToken);
+                // 物品在工艺台界面内，复制的是工艺区域而不是背包里的装备槽位。
+                return await CopyWithRetryAsync("庄园工艺", CraftSlot.HarvestArea, isBaseline: false, workToken);
+            },
+            item => CheckItem(item).Result,
+            step =>
+            {
+                UseCount = step.UseCount;
+                MatchCount = step.Result.TotalHits;
+                var name = step.Item.Parsed.ItemName.Length > 0 ? step.Item.Parsed.ItemName : "(未识别名称)";
+                var status = $"#{step.UseCount} {name} 主:{step.Result.PrimaryHits} 次:{step.Result.SecondaryHits}";
+                if (step.Result.HasExclude) status += " [排除]";
+                ReportStatus(status);
+                _environment.Log($"[庄园工艺] #{step.UseCount} rarity={step.Item.Parsed.Rarity}, " +
+                         $"name={name}, affixes={step.Item.Parsed.ExplicitAffixCount}, " +
+                         $"连续同结果={step.IdenticalResults}");
+            },
+            token);
 
-            if (identicalResults >= Math.Max(1, _exhaustionThreshold))
-                throw new InvalidOperationException(
-                    $"连续 {identicalResults + 1} 次工艺转换得到的物品完全相同；" +
-                    "可能工艺按钮坐标不准或工艺台未打开，已安全停止");
-        }
+        OnSuccess(token);
     }
 
     private async Task ClickHarvestBenchAsync(Point benchCoord, CancellationToken token)

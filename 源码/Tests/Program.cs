@@ -92,6 +92,12 @@ var tests = new (string Name, Action Run)[]
     ("庄园工艺启动要求独立的工艺区域与工艺按钮坐标", HarvestChecks.HarvestCoordinatesRequireBench),
     ("庄园工艺沿用可配置命中数且不显示通货", HarvestChecks.HarvestRulesUseConfiguredHits),
     ("庄园工艺模式可以通过rules.json存储校验", HarvestChecks.HarvestModeRoundTripsThroughStorage),
+    ("庄园工艺命中即停止转换", HarvestLoopChecks.MatchedItemStopsLoop),
+    ("庄园工艺连续同结果达到阈值即停", HarvestLoopChecks.IdenticalResultsStopAtThreshold),
+    ("庄园工艺复制失败立即停止", HarvestLoopChecks.CopyFailureStopsImmediately),
+    ("庄园工艺取消后不再转换", HarvestLoopChecks.CancellationStopsBeforeNextConversion),
+    ("庄园工艺交替结果重置连续计数", HarvestLoopChecks.DifferentResultsResetIdenticalCounter),
+    ("庄园工艺循环复用Core判定并复制工艺区域", HarvestAsyncUsesAreaSlotAndLoop),
     ("括号说明行不参与匹配", ParentheticalNotesAreIgnored),
     ("同一显式词缀在同一池内不重复计数", OneAffixCannotSatisfyTwoRulesInSamePool),
     ("魔法名称与显式正文不会重复计算同一词缀", MagicNameDoesNotDuplicateExplicitAffix),
@@ -1276,6 +1282,22 @@ static void HotkeyRegistrationOverrideStaysTestOnly()
         "生产代码只允许声明与读取各一处，出现赋值即视为测试钩子泄漏");
     True(files.Any(entry => entry.Relative.StartsWith("Tests/", StringComparison.Ordinal)),
         "必须有用例真正使用它，否则这个钩子没有存在价值");
+}
+
+static void HarvestAsyncUsesAreaSlotAndLoop()
+{
+    var root = FindProjectRoot();
+    var engine = File.ReadAllText(Path.Combine(root, "Tools", "Craft", "CraftEngine.cs"));
+    var start = engine.IndexOf("private async Task HarvestAsync", StringComparison.Ordinal);
+    var end = engine.IndexOf("private async Task ClickHarvestBenchAsync", StringComparison.Ordinal);
+    True(start >= 0 && end > start, "必须能定位 HarvestAsync 方法体");
+    var body = engine[start..end];
+    True(body.Contains("HarvestLoop.RunAsync(", StringComparison.Ordinal),
+        "庄园工艺循环必须复用 Core 的判定骨架，否则用例覆盖不到实际执行路径");
+    True(body.Contains("CopyWithRetryAsync(\"庄园工艺\", CraftSlot.HarvestArea", StringComparison.Ordinal),
+        "庄园工艺必须复制工艺区域槽位");
+    False(body.Contains("CraftSlot.Item", StringComparison.Ordinal),
+        "庄园工艺不得复用背包里的装备槽位");
 }
 
 static void SettingsHotkeyCaptureIsSymmetric()
