@@ -109,7 +109,11 @@ try {
 }
 finally { if ($zip) { $zip.Dispose() }; $output.Dispose() }
 
-$outputParent = Assert-ArtifactPath $releaseShareRoot ([IO.Path]::GetDirectoryName($outputDirectory))
+# 默认发布目录直接位于共享根下；此时父目录就是共享根本身，而 Assert-ArtifactPath 只接受严格子路径。
+$outputParent = [IO.Path]::GetDirectoryName($outputDirectory)
+if (-not [string]::Equals($outputParent.TrimEnd('\'), $releaseShareRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+    $outputParent = Assert-ArtifactPath $releaseShareRoot $outputParent
+}
 $null = New-Item -ItemType Directory -Path $outputParent -Force
 if (Test-Path -LiteralPath $outputDirectory) { throw "共享发布版本目录已出现，拒绝覆盖：$outputDirectory" }
 $transferDirectory = Assert-ArtifactPath $debugRoot (Join-Path $debugRoot ('发布传输暂存-' + $version + '-' + [Guid]::NewGuid().ToString('N')))
