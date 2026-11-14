@@ -7,15 +7,16 @@ Set-StrictMode -Version Latest
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'Artifact-Paths.ps1')
 $artifactRoot = Get-ArtifactRoot $projectRoot
-$profileRoot = Assert-ArtifactPath $artifactRoot (Join-Path $artifactRoot '验证记录\启动性能')
-if (Test-Path -LiteralPath $profileRoot) { Assert-GeneratedDirectory $artifactRoot $profileRoot '启动性能' }
-else { $null = New-GeneratedDirectory $artifactRoot $profileRoot '启动性能' }
+$debugRoot = Initialize-DebugRoot $projectRoot
+$profileRoot = Assert-ArtifactPath $debugRoot (Join-Path $debugRoot '验证记录\启动性能')
+if (Test-Path -LiteralPath $profileRoot) { Assert-GeneratedDirectory $debugRoot $profileRoot '启动性能' }
+else { $null = New-GeneratedDirectory $debugRoot $profileRoot '启动性能' }
 $candidate = Assert-ArtifactPath $profileRoot (Join-Path $profileRoot '最终发布')
 $inputDirectory = Assert-ArtifactPath $profileRoot (Join-Path $profileRoot '输入数据')
 $executable = Join-Path $artifactRoot '拾刻.exe'
-$project = [xml](Get-Content -LiteralPath (Join-Path $projectRoot '拾刻.csproj') -Raw -Encoding UTF8)
-$version = [string]$project.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
-if ((Get-Item -LiteralPath $executable).VersionInfo.FileVersion -ne "$version.0") { throw '日常程序版本与当前源码不一致，请先生成发布包' }
+$stableVersion = [Version]::Parse((Get-Item -LiteralPath $executable).VersionInfo.FileVersion)
+if ($stableVersion.Revision -ne 0) { throw '稳定版文件版本格式无效' }
+$version = $stableVersion.ToString(3)
 
 function Get-UserDataSnapshot {
     return @(foreach ($dataRoot in @((Join-Path $projectRoot 'data'), (Join-Path $artifactRoot 'data'))) {
@@ -31,8 +32,8 @@ $running = @(Get-Process -Name '拾刻' -ErrorAction SilentlyContinue | Where-Ob
 })
 if ($running.Count -gt 0) { throw '启动测量副本正在运行，拒绝清理' }
 foreach ($entry in @(@($candidate, '启动性能副本'), @($inputDirectory, '启动测量输入'))) {
-    if (Test-Path -LiteralPath $entry[0]) { Remove-GeneratedDirectory $artifactRoot $entry[0] $entry[1] }
-    $null = New-GeneratedDirectory $artifactRoot $entry[0] $entry[1]
+    if (Test-Path -LiteralPath $entry[0]) { Remove-GeneratedDirectory $debugRoot $entry[0] $entry[1] }
+    $null = New-GeneratedDirectory $debugRoot $entry[0] $entry[1]
 }
 Copy-Item -LiteralPath $executable -Destination (Join-Path $candidate '拾刻.exe')
 Copy-Item -LiteralPath (Join-Path $artifactRoot 'sounds') -Destination (Join-Path $candidate 'sounds') -Recurse

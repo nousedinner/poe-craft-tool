@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([switch]$NoRestore, [switch]$PackageOnly, [string]$ReleaseNotesFile='')
+param([switch]$NoRestore, [switch]$PackageOnly, [switch]$PromoteStable, [string]$OutputDirectory='', [string]$ReleaseNotesFile='')
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -27,11 +27,15 @@ foreach ($resource in $resources) {
     if (-not $trackedNames.Contains($name)) { throw "拒绝打包未入库的个人资源：$name" }
 }
 
-$releaseRoot = Get-ArtifactRoot $projectRoot
-$stage = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '发布暂存')
-$archivePath = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '拾刻-win-x64.zip')
-$temporaryArchive = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '发布暂存.zip')
-$dailyProgram = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot '拾刻.exe')
+$stableRoot = Get-ArtifactRoot $projectRoot
+$debugRoot = Initialize-DebugRoot $projectRoot
+$releaseShareRoot = Get-ReleaseShareRoot $projectRoot
+$dailyProgram = Assert-ArtifactPath $stableRoot (Join-Path $stableRoot '拾刻.exe')
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $releaseShareRoot $version }
+$outputDirectory = Assert-ArtifactPath $releaseShareRoot ([IO.Path]::GetFullPath($OutputDirectory))
+$stage = Assert-ArtifactPath $debugRoot (Join-Path $debugRoot ('发布暂存-' + $version))
+$temporaryArchive = Assert-ArtifactPath $debugRoot (Join-Path $debugRoot ('发布暂存-' + $version + '.zip'))
+$stableArchive = Assert-ArtifactPath $stableRoot (Join-Path $stableRoot '拾刻-win-x64.zip')
 if ($PackageOnly) { $null = Assert-ReleaseNotes $ReleaseNotesFile $version $dailyProgram }
 $allowed = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 $null = $allowed.Add('拾刻.exe')
@@ -39,7 +43,7 @@ $null = $allowed.Add('.shike-output.json')
 foreach ($resource in $resources) { $null = $allowed.Add($resource.FullName.Substring($projectRoot.Length + 1).Replace('\', '/')) }
 
 if (Test-Path -LiteralPath $stage) {
-    Assert-GeneratedDirectory $releaseRoot $stage '发布'
+    Assert-GeneratedDirectory $debugRoot $stage '发布暂存'
     foreach ($file in @(Get-ChildItem -LiteralPath $stage -File -Recurse -Force)) {
         $name = $file.FullName.Substring($stage.Length + 1).Replace('\', '/')
         if (-not $allowed.Contains($name)) { throw '发布暂存含额外文件，已保留原目录' }
@@ -47,12 +51,13 @@ if (Test-Path -LiteralPath $stage) {
 }
 $running = @(Get-Process -Name '拾刻' -ErrorAction SilentlyContinue | Where-Object {
     [string]::Equals($_.Path, (Join-Path $stage '拾刻.exe'), [StringComparison]::OrdinalIgnoreCase) -or
-    (-not $PackageOnly -and [string]::Equals($_.Path, $dailyProgram, [StringComparison]::OrdinalIgnoreCase))
+    ($PromoteStable -and [string]::Equals($_.Path, $dailyProgram, [StringComparison]::OrdinalIgnoreCase))
 })
 if ($running.Count -gt 0) { throw '请先退出正在使用的拾刻，再生成新版' }
 if (Test-Path -LiteralPath $temporaryArchive) { throw '发布暂存 ZIP 已存在，保留原文件' }
-if (Test-Path -LiteralPath $stage) { Remove-GeneratedDirectory $releaseRoot $stage '发布' }
-$null = New-GeneratedDirectory $releaseRoot $stage '发布'
+if (Test-Path -LiteralPath $outputDirectory) { throw "共享发布目录已存在，拒绝覆盖：$outputDirectory" }
+if (Test-Path -LiteralPath $stage) { Remove-GeneratedDirectory $debugRoot $stage '发布暂存' }
+$null = New-GeneratedDirectory $debugRoot $stage '发布暂存'
 
 if ($PackageOnly) {
     # 仅整理包时复用已交付的 EXE，不编译、不替换日常程序或用户资源。
@@ -104,17 +109,35 @@ try {
 }
 finally { if ($zip) { $zip.Dispose() }; $output.Dispose() }
 
-if (-not $PackageOnly) {
-    Copy-Item -LiteralPath $program -Destination $dailyProgram -Force
-    $keepData = Test-Path -LiteralPath (Join-Path $releaseRoot 'data')
-    foreach ($resource in $resources) {
-        $name = $resource.FullName.Substring($projectRoot.Length + 1)
-        if ($keepData -and $name.StartsWith('data\', [StringComparison]::OrdinalIgnoreCase)) { continue }
-        $target = Assert-ArtifactPath $releaseRoot (Join-Path $releaseRoot $name)
-        $null = New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($target)) -Force
-        Copy-Item -LiteralPath (Join-Path $stage $name) -Destination $target -Force
-    }
+$outputParent = Assert-ArtifactPath $releaseShareRoot ([IO.Path]::GetDirectoryName($outputDirectory))
+$null = New-Item -ItemType Directory -Path $outputParent -Force
+if (Test-Path -LiteralPath $outputDirectory) { throw "共享发布版本目录已出现，拒绝覆盖：$outputDirectory" }
+$transferDirectory = Assert-ArtifactPath $debugRoot (Join-Path $debugRoot ('发布传输暂存-' + $version + '-' + [Guid]::NewGuid().ToString('N')))
+$null = New-Item -ItemType Directory -Path $transferDirectory
+$publishedExe = Join-Path $transferDirectory '拾刻.exe'
+$publishedArchive = Join-Path $transferDirectory 'shike-win-x64.zip'
+[IO.File]::Copy($program, $publishedExe, $false)
+[IO.File]::Copy($temporaryArchive, $publishedArchive, $false)
+if (Test-Path -LiteralPath $outputDirectory) { throw "共享发布版本目录已出现，拒绝覆盖：$outputDirectory" }
+[IO.Directory]::Move($transferDirectory, $outputDirectory)
+$archivePath = Join-Path $outputDirectory 'shike-win-x64.zip'
+$publishedExe = Join-Path $outputDirectory '拾刻.exe'
+
+if ($PromoteStable) {
+    # 只有显式要求时才替换自用稳定版；个人 data/ 与 sounds/ 原位保留。
+    Copy-Item -LiteralPath $publishedExe -Destination $dailyProgram -Force
+    Copy-Item -LiteralPath $archivePath -Destination $stableArchive -Force
 }
-Move-Item -LiteralPath $temporaryArchive -Destination $archivePath -Force
-Remove-GeneratedDirectory $releaseRoot $stage '发布'
-[pscustomobject]@{ Version = $version; Program = $dailyProgram; Archive = $archivePath; FileCount = $files.Count; SizeBytes = (Get-Item -LiteralPath $archivePath).Length; PackageOnly = [bool]$PackageOnly } | ConvertTo-Json -Compress
+Remove-Item -LiteralPath $temporaryArchive
+Remove-GeneratedDirectory $debugRoot $stage '发布暂存'
+[pscustomobject]@{
+    Version = $version
+    Program = $publishedExe
+    Archive = $archivePath
+    ReleaseDirectory = $outputDirectory
+    StableProgram = $dailyProgram
+    FileCount = $files.Count
+    SizeBytes = (Get-Item -LiteralPath $archivePath).Length
+    PackageOnly = [bool]$PackageOnly
+    PromotedStable = [bool]$PromoteStable
+} | ConvertTo-Json -Compress

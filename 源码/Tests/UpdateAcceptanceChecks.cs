@@ -377,7 +377,7 @@ internal static class UpdateAcceptanceChecks
             source = source.Parent;
         }
         if (source?.Parent is null) throw new IOException("未找到受控源码目录");
-        var root = Path.Combine(source.Parent.FullName, "bin", "Release", "net10.0-windows");
+        var root = Path.Combine(source.Parent.FullName, "bin", "Release", "net10.0-windows", "调试");
         _outputRoot = Path.Combine(root, "验证记录", "更新补充验收-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(_outputRoot);
         File.WriteAllText(Path.Combine(_outputRoot, ".shike-output.json"), "{\"schemaVersion\":1,\"purpose\":\"更新补充验收\"}");

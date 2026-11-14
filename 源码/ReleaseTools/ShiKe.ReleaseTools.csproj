@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>ShiKe.ReleaseTools</AssemblyName>
+    <BaseOutputPath>..\..\bin\Release\net10.0-windows\调试\发布工具\</BaseOutputPath>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\Services\Updates\UpdateManifest.cs" Link="Protocol\UpdateManifest.cs" />

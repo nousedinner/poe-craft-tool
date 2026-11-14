@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $source=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'Artifact-Paths.ps1')
-$root=Get-ArtifactRoot $source
+$root=Initialize-DebugRoot $source
 $parent=Join-Path $root '验证记录\WPF更新验收'
 if(Test-Path -LiteralPath $parent){Assert-GeneratedDirectory $root $parent 'WPF更新验收根'}else{$null=New-GeneratedDirectory $root $parent 'WPF更新验收根'}
 $batch=New-GeneratedDirectory $root (Join-Path $parent ([Guid]::NewGuid().ToString('N'))) 'WPF更新验收'

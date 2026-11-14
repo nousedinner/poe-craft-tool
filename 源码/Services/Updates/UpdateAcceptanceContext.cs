@@ -67,9 +67,20 @@ internal sealed class UpdateAcceptanceContext
         var caseDirectory = Path.GetDirectoryName(path)!;
         var batch = Directory.GetParent(caseDirectory) ?? throw new InvalidDataException("缺少验收批次");
         if (!Guid.TryParseExact(batch.Name, "N", out _) || batch.Parent?.Name != "WPF更新验收" ||
-            batch.Parent.Parent?.Name != "验证记录" || batch.Parent.Parent.Parent?.Name != "net10.0-windows" ||
-            batch.Parent.Parent.Parent.Parent?.Name != "Release" || batch.Parent.Parent.Parent.Parent.Parent?.Name != "bin")
+            batch.Parent.Parent?.Name != "验证记录" || batch.Parent.Parent.Parent?.Name != "调试" ||
+            batch.Parent.Parent.Parent.Parent?.Name != "net10.0-windows" ||
+            batch.Parent.Parent.Parent.Parent.Parent?.Name != "Release" || batch.Parent.Parent.Parent.Parent.Parent.Parent?.Name != "bin")
             throw new InvalidDataException("验收只能运行在固定输出根的专用副本目录");
+        var debugRoot = batch.Parent.Parent.Parent;
+        var debugMarker = Path.Combine(debugRoot.FullName, ".shike-output.json");
+        UpdateSession.EnsureNoReparsePoints(debugRoot.FullName);
+        UpdateSession.EnsureNoReparsePoints(debugMarker);
+        using (var debugDocument = JsonDocument.Parse(File.ReadAllText(debugMarker)))
+        {
+            if (debugDocument.RootElement.GetProperty("schemaVersion").GetInt32() != 1 ||
+                debugDocument.RootElement.GetProperty("purpose").GetString() != "调试区")
+                throw new InvalidDataException("更新验收必须位于受控调试目录");
+        }
         UpdateSession.EnsureNoReparsePoints(path);
         var marker = Path.Combine(batch.FullName, ".shike-output.json");
         UpdateSession.EnsureNoReparsePoints(marker);

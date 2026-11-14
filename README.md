@@ -102,7 +102,7 @@ git config --local core.hooksPath .githooks
 
 统一入口默认增量恢复依赖，依次编译并执行桌面主套件和独立 CoreTests，任一失败即整体失败；报告分别列出两套结果，不把复用用例相加当作新增覆盖。依赖已准备好时可传 `-NoRestore`。CoreTests 也可通过 `dotnet run --project .\源码\CoreTests\ShiKe.CoreTests.csproj -c Release` 单独执行。
 
-内部用例会短暂显示独立测试窗口，不启动日常程序、不注册实际热键、不发送游戏输入、不访问真实应用服务。依赖恢复按本机 NuGet 配置进行。结果生成在 `bin/Release/net10.0-windows/验证记录/内部用例/`；`Run-ReviewPipelineChecks.ps1` 可独立验证首次恢复和两套失败聚合。
+内部用例会短暂显示独立测试窗口，不启动日常程序、不注册实际热键、不发送游戏输入、不访问真实应用服务。依赖恢复按本机 NuGet 配置进行。调试结果生成在 `bin/Release/net10.0-windows/调试/验证记录/内部用例/`；`Run-ReviewPipelineChecks.ps1` 可独立验证首次恢复和两套失败聚合。
 
 生成发布程序与分享包：
 
@@ -110,7 +110,9 @@ git config --local core.hooksPath .githooks
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\源码\scripts\Build-Release.ps1"
 ```
 
-输出统一在 `bin/Release/net10.0-windows/`。分享包仅包含 EXE、五个内置音效和一个内置预设；个人配置和自定义资源不进入包。已有日常程序运行时，发布入口会要求先退出。
+个人稳定版位于 `bin/Release/net10.0-windows/`，`data/` 与 `sounds/` 保留自用配置和资源。构建、用例、验证记录和调试候选集中在 `bin/Release/net10.0-windows/调试/`。
+
+发布材料直接按版本号放入 VPS 可访问的 `D:\HermesShare\shike-releases\<版本号>\`。不要另建 incoming/archive 中转层。默认构建不会替换个人稳定版；只有显式传入 `-PromoteStable` 才更新根目录 EXE 和 ZIP，个人 `data/`、`sounds/` 保持不动。分享包只包含 EXE、五个内置音效和一个内置预设。
 
 已验证的 EXE 可用同一入口的 `-PackageOnly` 参数重新整理分享包。`Run-StartupChecks.ps1` 用于发布后的隔离启动与关闭验证，`Measure-Startup.ps1` 是它使用的测量脚本。
 

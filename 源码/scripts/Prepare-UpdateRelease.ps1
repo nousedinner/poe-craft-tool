@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory=$true)][string]$ZipPath,
     [Parameter(Mandatory=$true)][string]$ExePath,
     [Parameter(Mandatory=$true)][string]$KeyPath,
-    [Parameter(Mandatory=$true)][string]$OutputDirectory,
+    [string]$OutputDirectory='',
     [ValidateSet('exe-only','files')][string]$Mode='exe-only',
     [string]$ManagedFiles,
     [string]$BasePackages,
@@ -20,6 +20,9 @@ Set-StrictMode -Version Latest
 $source = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $project = [xml](Get-Content -LiteralPath (Join-Path $source '拾刻.csproj') -Raw -Encoding UTF8)
 $version = [string]$project.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
+. (Join-Path $PSScriptRoot 'Artifact-Paths.ps1')
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path (Get-ReleaseShareRoot $source) $version }
+$OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 . (Join-Path $PSScriptRoot 'ReleaseNotes-Validation.ps1')
 if (-not $ReleaseNotesFile) { $ReleaseNotesFile=Join-Path $source 'ReleaseNotes.txt' }
 $ReleaseNotesFile=[IO.Path]::GetFullPath($ReleaseNotesFile)

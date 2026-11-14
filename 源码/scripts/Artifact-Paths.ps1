@@ -1,8 +1,28 @@
 ﻿# 开发/验收入口共用；生成物统一到用户指定的目录，不操作日常 data。
 function Get-ArtifactRoot([string]$ProjectRoot) {
-    # 项目已集中到 源码；交付入口仍在仓库根的固定 bin 目录。
+    # 个人稳定版固定在仓库根 bin 目录。
     $workspaceRoot = [IO.Path]::GetFullPath((Join-Path $ProjectRoot '..'))
     return [IO.Path]::GetFullPath((Join-Path $workspaceRoot 'bin\Release\net10.0-windows'))
+}
+
+function Get-DebugRoot([string]$ProjectRoot) {
+    return [IO.Path]::GetFullPath((Join-Path (Get-ArtifactRoot $ProjectRoot) '调试'))
+}
+
+function Initialize-DebugRoot([string]$ProjectRoot) {
+    $stableRoot = Get-ArtifactRoot $ProjectRoot
+    $debugRoot = Get-DebugRoot $ProjectRoot
+    if (Test-Path -LiteralPath $debugRoot) { Assert-GeneratedDirectory $stableRoot $debugRoot '调试区' }
+    else { $null = New-GeneratedDirectory $stableRoot $debugRoot '调试区' }
+    return $debugRoot
+}
+
+function Get-ReleaseShareRoot([string]$ProjectRoot) {
+    $releaseRoot = [IO.Path]::GetFullPath('D:\HermesShare\shike-releases')
+    if (-not (Test-Path -LiteralPath $releaseRoot -PathType Container)) {
+        throw "VPS 共享发布目录不可用：$releaseRoot"
+    }
+    return $releaseRoot
 }
 
 function Assert-ArtifactPath([string]$Root, [string]$Path) {

@@ -4,7 +4,7 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $source=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'Artifact-Paths.ps1')
-$root=Get-ArtifactRoot $source
+$root=Initialize-DebugRoot $source
 $parent=Join-Path $root '验证记录\流水线校验'
 if(Test-Path -LiteralPath $parent){Assert-GeneratedDirectory $root $parent '流水线校验根'}else{$null=New-GeneratedDirectory $root $parent '流水线校验根'}
 $batch=New-GeneratedDirectory $root (Join-Path $parent ([Guid]::NewGuid().ToString('N'))) '流水线校验'
@@ -18,11 +18,11 @@ function Require([bool]$Value,[string]$Message){if(-not $Value){throw $Message}}
 
 # 真实调用统一脚本，只将两个产品测试程序集替换为本案极小、无UI且无外部输入的夹具。
 Write-Text '拾刻.csproj' @'
-<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><Version>1.0.53</Version><BaseOutputPath>..\bin\Release\net10.0-windows\构建\</BaseOutputPath></PropertyGroup><ItemGroup><Compile Remove="Tests\**\*.cs"/><Compile Remove="CoreTests\**\*.cs"/></ItemGroup></Project>
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><Version>1.0.53</Version><BaseOutputPath>..\bin\Release\net10.0-windows\调试\构建\</BaseOutputPath></PropertyGroup><ItemGroup><Compile Remove="Tests\**\*.cs"/><Compile Remove="CoreTests\**\*.cs"/></ItemGroup></Project>
 '@
 Write-Text 'Probe.cs' 'public sealed class ProductProbe { }'
 Write-Text 'Tests\ShiKe.InternalTests.csproj' @'
-<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0-windows</TargetFramework><OutputType>Exe</OutputType><ImplicitUsings>enable</ImplicitUsings><BaseOutputPath>..\..\bin\Release\net10.0-windows\内部用例\</BaseOutputPath></PropertyGroup><ItemGroup><ProjectReference Include="..\拾刻.csproj"/></ItemGroup></Project>
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0-windows</TargetFramework><OutputType>Exe</OutputType><ImplicitUsings>enable</ImplicitUsings><BaseOutputPath>..\..\bin\Release\net10.0-windows\调试\内部用例\</BaseOutputPath></PropertyGroup><ItemGroup><ProjectReference Include="..\拾刻.csproj"/></ItemGroup></Project>
 '@
 Write-Text 'Tests\Program.cs' @'
 var tests = new (string Name, Action Run)[]
@@ -34,7 +34,7 @@ Console.WriteLine($"RESULT total=1, passed={1-failed}, failed={failed}");
 return failed;
 '@
 Write-Text 'CoreTests\ShiKe.CoreTests.csproj' @'
-<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType><ImplicitUsings>enable</ImplicitUsings><BaseOutputPath>..\..\bin\Release\net10.0-windows\核心用例\</BaseOutputPath></PropertyGroup></Project>
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType><ImplicitUsings>enable</ImplicitUsings><BaseOutputPath>..\..\bin\Release\net10.0-windows\调试\核心用例\</BaseOutputPath></PropertyGroup></Project>
 '@
 Write-Text 'CoreTests\Program.cs' @'
 var suites = new[] { typeof(ProbeChecks) };
@@ -44,7 +44,7 @@ return failed;
 '@
 Write-Text 'CoreTests\ProbeChecks.cs' 'public static class ProbeChecks { public static void Check() { } }'
 
-$resultRoot=Join-Path $fixture 'bin\Release\net10.0-windows\验证记录\内部用例'
+$resultRoot=Join-Path $fixture 'bin\Release\net10.0-windows\调试\验证记录\内部用例'
 $cases=@()
 foreach($case in @(
     @{name='fresh-no-restore';noRestore=$true;mainFailure=$false;coreFailure=$false;main='failed';core='failed';exit=1},

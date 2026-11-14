@@ -5,7 +5,7 @@ Set-StrictMode -Version Latest
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $source=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'Artifact-Paths.ps1')
-$root=Get-ArtifactRoot $source
+$root=Initialize-DebugRoot $source
 $directory=Join-Path $root ('验证记录\更新进程-' + [DateTime]::Now.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
 $null=New-GeneratedDirectory $root $directory '更新进程验证'
 $project=Join-Path $source 'Tests\UpdateProcessProbe\UpdateProcessProbe.csproj'

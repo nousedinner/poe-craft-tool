@@ -7,8 +7,8 @@ Set-StrictMode -Version Latest
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'Artifact-Paths.ps1')
-$artifactRoot = Get-ArtifactRoot $projectRoot
-$resultDirectory = New-CheckResultDirectory $artifactRoot '内部用例' @('build.log', 'tests.log', 'core-build.log', 'core-tests.log', 'result.json')
+$debugRoot = Initialize-DebugRoot $projectRoot
+$resultDirectory = New-CheckResultDirectory $debugRoot '内部用例' @('build.log', 'tests.log', 'core-build.log', 'core-tests.log', 'result.json')
 $encoding = [Text.UTF8Encoding]::new($true)
 $report = [ordered]@{
     schemaVersion = 1
@@ -98,7 +98,7 @@ try {
     $report.buildExitCode = $build.ExitCode
     if ($build.ExitCode -ne 0) { throw '主套件编译失败，请查看 build.log；需要 .NET 10 SDK，-NoRestore 模式需事先恢复依赖' }
 
-    $testOutput = Join-Path $artifactRoot '内部用例\Release\net10.0-windows'
+    $testOutput = Join-Path $debugRoot '内部用例\Release\net10.0-windows'
     $programDll = Join-Path $testOutput '拾刻.dll'
     $testsDll = Join-Path $testOutput 'ShiKe.InternalTests.dll'
     if ((Get-Item -LiteralPath $programDll).VersionInfo.FileVersion -ne "$($report.programVersion).0") { throw '测试目录中的程序版本与当前源码不一致' }
@@ -140,7 +140,7 @@ try {
         $report.coreSuite.buildExitCode = $coreBuild.ExitCode
         if ($coreBuild.ExitCode -ne 0) { throw '独立核心套件编译失败，请查看 core-build.log' }
         $report.coreSuite.status = 'running'
-        $coreDll = Join-Path $artifactRoot '核心用例\Release\net10.0\ShiKe.CoreTests.dll'
+        $coreDll = Join-Path $debugRoot '核心用例\Release\net10.0\ShiKe.CoreTests.dll'
         $coreRun = Invoke-LoggedDotnet ('"{0}"' -f $coreDll) 'core-tests.log'
         $report.coreSuite.testExitCode = $coreRun.ExitCode
         $coreSummaries = [regex]::Matches($coreRun.Stdout, '(?m)^RESULT total=(\d+), passed=(\d+), failed=(\d+)\r?$')

@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)][string]$ReleaseDirectory,
+    [string]$ReleaseDirectory='',
     [string]$SshHost='myserver',
     [string]$RemoteRoot='/var/www/poead',
     [ValidateSet('headers','cloudflare')][string]$CacheStrategy='headers',
@@ -16,7 +16,13 @@ Set-StrictMode -Version Latest
 # headers默认仅依赖生效的响应头及普通公网GET验真；不读取CF凭据、不调用CF API。
 # 首次变更固定入口策略仍须清理历史CDN缓存或等待其已知寿命，浏览器缓存另行处理。
 # cloudflare策略的token只从指定环境变量读取，不出现在命令行、日志、清单或VPS上。
-$project = Join-Path $PSScriptRoot '..\ReleaseTools\ShiKe.ReleaseTools.csproj'
+$source = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$project = Join-Path $source 'ReleaseTools\ShiKe.ReleaseTools.csproj'
+$projectXml = [xml](Get-Content -LiteralPath (Join-Path $source '拾刻.csproj') -Raw -Encoding UTF8)
+$version = [string]$projectXml.SelectSingleNode('/Project/PropertyGroup/Version').InnerText
+. (Join-Path $PSScriptRoot 'Artifact-Paths.ps1')
+if (-not $ReleaseDirectory) { $ReleaseDirectory = Join-Path (Get-ReleaseShareRoot $source) $version }
+$ReleaseDirectory = [IO.Path]::GetFullPath($ReleaseDirectory)
 $operation = if ($Rollback) { 'rollback' } else { 'publish' }
 $arguments = @('run','--project',$project,'-c','Release','--',$operation,
     '--manifest',(Join-Path $ReleaseDirectory 'version.json'),

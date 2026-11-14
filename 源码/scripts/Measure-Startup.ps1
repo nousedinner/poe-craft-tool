@@ -11,13 +11,13 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'Artifact-Paths.ps1')
-$artifactRoot = Get-ArtifactRoot $projectRoot
-$profileRoot = Assert-ArtifactPath $artifactRoot (Join-Path $artifactRoot '验证记录\启动性能')
-Assert-GeneratedDirectory $artifactRoot $profileRoot '启动性能'
+$debugRoot = Initialize-DebugRoot $projectRoot
+$profileRoot = Assert-ArtifactPath $debugRoot (Join-Path $debugRoot '验证记录\启动性能')
+Assert-GeneratedDirectory $debugRoot $profileRoot '启动性能'
 $candidate = Assert-ArtifactPath $profileRoot (Join-Path $profileRoot $Name)
-Assert-GeneratedDirectory $artifactRoot $candidate '启动性能副本'
+Assert-GeneratedDirectory $debugRoot $candidate '启动性能副本'
 $inputDirectory = Assert-ArtifactPath $profileRoot (Join-Path $profileRoot '输入数据')
-Assert-GeneratedDirectory $artifactRoot $inputDirectory '启动测量输入'
+Assert-GeneratedDirectory $debugRoot $inputDirectory '启动测量输入'
 $sourceData = Join-Path $inputDirectory 'data'
 $executable = Join-Path $candidate '拾刻.exe'
 $resultSuffix = if ($CheckLifecycle) { '-lifecycle-results.json' } else { '-results.json' }
@@ -31,7 +31,7 @@ for ($iteration = 1; $iteration -le $Count; $iteration++) {
     })
     if ($existing.Count -gt 0) { throw '测量副本仍在运行，已保留原目录' }
     $dataDirectory = Assert-ArtifactPath $candidate (Join-Path $candidate 'data')
-    Assert-GeneratedDirectory $artifactRoot $candidate '启动性能副本'
+    Assert-GeneratedDirectory $debugRoot $candidate '启动性能副本'
     if (Test-Path -LiteralPath $dataDirectory) { Remove-Item -LiteralPath $dataDirectory -Recurse -Force }
     Copy-Item -LiteralPath $sourceData -Destination $dataDirectory -Recurse
     $beforeRulesHash = $null
