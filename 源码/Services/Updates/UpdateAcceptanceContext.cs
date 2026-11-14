@@ -66,12 +66,17 @@ internal sealed class UpdateAcceptanceContext
         path = Path.GetFullPath(path);
         var caseDirectory = Path.GetDirectoryName(path)!;
         var batch = Directory.GetParent(caseDirectory) ?? throw new InvalidDataException("缺少验收批次");
-        if (!Guid.TryParseExact(batch.Name, "N", out _) || batch.Parent?.Name != "WPF更新验收" ||
-            batch.Parent.Parent?.Name != "验证记录" || batch.Parent.Parent.Parent?.Name != "调试" ||
-            batch.Parent.Parent.Parent.Parent?.Name != "net10.0-windows" ||
-            batch.Parent.Parent.Parent.Parent.Parent?.Name != "Release" || batch.Parent.Parent.Parent.Parent.Parent.Parent?.Name != "bin")
+        if (!Guid.TryParseExact(batch.Name, "N", out _))
             throw new InvalidDataException("验收只能运行在固定输出根的专用副本目录");
-        var debugRoot = batch.Parent.Parent.Parent;
+        var ancestor = batch.Parent;
+        foreach (var expected in new[] { "WPF更新验收", "验证记录", "调试", "net10.0-windows", "Release", "bin" })
+        {
+            if (ancestor?.Name != expected)
+                throw new InvalidDataException("验收只能运行在固定输出根的专用副本目录");
+            ancestor = ancestor.Parent;
+        }
+        // 上面的祖先链表已校验过，这里可以直接取到固定输出根下的「调试」目录。
+        var debugRoot = batch.Parent!.Parent!.Parent!;
         var debugMarker = Path.Combine(debugRoot.FullName, ".shike-output.json");
         UpdateSession.EnsureNoReparsePoints(debugRoot.FullName);
         UpdateSession.EnsureNoReparsePoints(debugMarker);
