@@ -480,7 +480,7 @@ public partial class SettingsPage : UserControl
         ResultPanel.Visibility = Visibility.Visible;
         ResultPanel.Background = new SolidColorBrush(Color.FromRgb(0xEA, 0xF3, 0xFA));
         ResultPanel.BorderBrush = new SolidColorBrush(Color.FromRgb(0xD4, 0xE4, 0xF0));
-        ResultText.Text = "正在捕获热键：键盘键或鼠标侧键（4/5）；录制时暂时关闭此页输入法处理；Esc 取消";
+        ResultText.Text = "正在捕获热键：键盘键或鼠标侧键（4/5）；更多侧键请在驱动映射为 F13～F24；录制时暂时关闭此页输入法处理；Esc 取消";
         ResultText.Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x6B, 0x2D));
     }
 

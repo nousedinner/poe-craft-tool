@@ -90,6 +90,7 @@ internal static class AppearanceChecks
             Require(Find<Slider>(window, "GradientSpeed").Value == 3, "窗口首次显示必须恢复保存的速度");
             Require(File.ReadAllBytes(Path.Combine(host.Storage.DataDir, "settings.json")).SequenceEqual(settingsBeforeShow), "初始化外观不应额外写盘");
             var nav = Find<ListBox>(window, "ToolList");
+            CheckNavigationSelectionDoesNotChangeMeasure(window, nav);
             var content = Find<ContentPresenter>(window, "ToolContent");
             var page = (CraftPage)content.Content;
             var expectedBody = Bounds(Find<FrameworkElement>(page, "PageBody"), window);
@@ -567,6 +568,62 @@ internal static class AppearanceChecks
 
     private static Rect Bounds(FrameworkElement element, Window window)
         => new(element.TranslatePoint(new Point(), window), new Size(element.ActualWidth, element.ActualHeight));
+
+    private static void CheckNavigationSelectionDoesNotChangeMeasure(Window window, ListBox navigation)
+    {
+        window.UpdateLayout();
+        var root = (Grid)window.Content;
+        var navPanel = root.Children.OfType<Border>().Single(border => Grid.GetRow(border) == 0);
+        var firstItem = navigation.ItemContainerGenerator.ContainerFromIndex(0) as ListBoxItem
+            ?? throw new InvalidOperationException("首个导航容器尚未生成");
+        var surface = firstItem.Template.FindName("Surface", firstItem) as Border
+            ?? throw new InvalidOperationException("导航项缺少可见边框");
+        Require(surface.BorderThickness == new Thickness(1), "导航焦点边框必须预留固定占位");
+        CheckTemplateStatesDoNotChangeMeasure(firstItem.Template, "导航项");
+
+        var choiceStyle = (Style)Application.Current.FindResource("ChoiceButtonStyle");
+        CheckStyleStatesDoNotChangeMeasure(choiceStyle, "选项单选按钮");
+        var comboItemStyle = (Style)Application.Current.FindResource(typeof(ComboBoxItem));
+        CheckStyleStatesDoNotChangeMeasure(comboItemStyle, "下拉选项");
+
+        var windowSize = new Size(window.ActualWidth, window.ActualHeight);
+        var navHeight = navPanel.ActualHeight;
+        var selectedItemSize = new Size(firstItem.ActualWidth, firstItem.ActualHeight);
+        navigation.SelectedIndex = 1;
+        Pump();
+        window.UpdateLayout();
+        Require(new Size(window.ActualWidth, window.ActualHeight) == windowSize,
+            "切换导航选中态不得改变窗口尺寸");
+        Require(Math.Abs(navPanel.ActualHeight - navHeight) < .5,
+            "切换导航选中态不得改变自适应顶部栏高度");
+        navigation.SelectedIndex = 0;
+        Pump();
+        window.UpdateLayout();
+        Require(Math.Abs(firstItem.ActualWidth - selectedItemSize.Width) < .5 &&
+                Math.Abs(firstItem.ActualHeight - selectedItemSize.Height) < .5,
+            "导航项选中与未选中不得改变其测量尺寸");
+        navigation.SelectedIndex = 0;
+    }
+
+    private static void CheckStyleStatesDoNotChangeMeasure(Style style, string name)
+    {
+        var template = style.Setters.OfType<Setter>().Single(setter => setter.Property == Control.TemplateProperty).Value as ControlTemplate
+            ?? throw new InvalidOperationException($"{name} 缺少控件模板");
+        CheckTemplateStatesDoNotChangeMeasure(template, name);
+    }
+
+    private static void CheckTemplateStatesDoNotChangeMeasure(ControlTemplate template, string name)
+    {
+        string[] measureProperties = ["Width", "Height", "MinWidth", "MinHeight", "Margin", "Padding",
+            "BorderThickness", "FontSize", "FontWeight", "LayoutTransform"];
+        foreach (var trigger in template.Triggers.OfType<Trigger>())
+        {
+            var change = trigger.Setters.OfType<Setter>().FirstOrDefault(setter => measureProperties.Contains(setter.Property.Name,
+                StringComparer.Ordinal));
+            Require(change is null,
+                $"{name} 的 {trigger.Property.Name} 状态不能动态修改 {change?.Property.Name}");
+        }
+    }
 
     private static void CheckPageFrame(FrameworkElement page, Window window, Rect expectedBody, Rect expectedHeader, Rect expectedTrack)
     {

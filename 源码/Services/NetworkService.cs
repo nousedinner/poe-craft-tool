@@ -30,11 +30,13 @@ public sealed record VersionCheckResult(string Latest, string DownloadUrl)
 ///   {type:"event", payload:{website,url,hostname:"拾刻",language, screen:"1920x1080", title:"拾刻启动", event:"pageview"}}
 ///   ⚠️ 勿改成 ARCHITECTURE 早期写的 Umami 平铺格式（文档错误，以源码为准）
 /// - 广告拉取：GET ads.json → {ads:[{location,type,text,style,link}]}
-/// 全部 5s 超时 + 静默失败，不影响启动。
+/// 版本检查 10s、签到和广告 5s 超时；失败静默处理，不阻塞窗口首帧。
 /// </summary>
 public sealed class NetworkService : IDisposable
 {
     private static readonly Uri BaseUri = new("https://open.cancanneed.top");
+    private static readonly TimeSpan VersionCheckTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan NetworkRequestTimeout = TimeSpan.FromSeconds(5);
     internal const int MaxResponseBytes = 1024 * 1024;
     private readonly HttpClient _http;
     private readonly Action<string> _log;
@@ -47,7 +49,8 @@ public sealed class NetworkService : IDisposable
     {
         ArgumentNullException.ThrowIfNull(handler);
         ArgumentNullException.ThrowIfNull(log);
-        _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        // 所有请求在调用点设置可区分的期限，JSON 响应体读取也包含在内。
+        _http = new HttpClient(handler) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd($"Mozilla/5.0 poe-craft-tool/{CurrentVersion.ToString(3)}");
         _log = log;
     }
@@ -60,7 +63,7 @@ public sealed class NetworkService : IDisposable
     {
         try
         {
-            using var doc = JsonDocument.Parse(await ReadJsonTextAsync("/version.json", cancellationToken).ConfigureAwait(false));
+            using var doc = JsonDocument.Parse(await ReadJsonTextAsync("/version.json", cancellationToken, VersionCheckTimeout).ConfigureAwait(false));
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
                 throw new InvalidDataException("版本数据顶层必须是对象");
             // 出现签名封套时，必须先验签和绑定字段；未验证的根latest不能决定是否跳过验证。
@@ -75,7 +78,7 @@ public sealed class NetworkService : IDisposable
                 }
                 catch (Exception error) when (error is InvalidDataException or System.Security.Cryptography.CryptographicException)
                 {
-                    LogFailure("新版清单验证", error);
+                    LogFailure("新版清单验证", error, VersionCheckTimeout);
                     return new VersionCheckResult("未验证", UpdateManifest.OfficialManualUrl)
                         { VerificationError = "更新清单验证失败，已禁止下载和替换。请稍后重试或联系维护者。" };
                 }
@@ -95,7 +98,7 @@ public sealed class NetworkService : IDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            LogFailure("版本检查", ex);
+            LogFailure("版本检查", ex, VersionCheckTimeout);
             return null; // 网络失败静默跳过（Python 行为）
         }
     }
@@ -107,15 +110,17 @@ public sealed class NetworkService : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             ObjectDisposedException.ThrowIf(_disposed, this);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(NetworkRequestTimeout);
             using var content = new StringContent(CreatePingPayload().ToJsonString(), Encoding.UTF8, "application/json");
             using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(BaseUri, "/api/send")) { Content = content };
-            using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            using var resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
             resp.EnsureSuccessStatusCode();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            LogFailure("启动统计", ex); // 不弹窗，不增加任何上报字段。
+            LogFailure("启动统计", ex, NetworkRequestTimeout); // 不弹窗，不增加任何上报字段。
         }
     }
 
@@ -143,7 +148,7 @@ public sealed class NetworkService : IDisposable
     {
         try
         {
-            using var doc = JsonDocument.Parse(await ReadJsonTextAsync("/ads.json", cancellationToken).ConfigureAwait(false));
+            using var doc = JsonDocument.Parse(await ReadJsonTextAsync("/ads.json", cancellationToken, NetworkRequestTimeout).ConfigureAwait(false));
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
                 throw new InvalidDataException("广告数据顶层必须是对象");
             var ads = new List<AdItem>();
@@ -180,7 +185,7 @@ public sealed class NetworkService : IDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            LogFailure("广告获取", ex);
+            LogFailure("广告获取", ex, NetworkRequestTimeout);
             return [];
         }
     }
@@ -188,13 +193,13 @@ public sealed class NetworkService : IDisposable
     private static string? ReadString(JsonElement obj, string key)
         => obj.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    private async Task<string> ReadJsonTextAsync(string path, CancellationToken cancellationToken)
+    private async Task<string> ReadJsonTextAsync(string path, CancellationToken cancellationToken, TimeSpan requestTimeout)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(_disposed, this);
-        // ResponseHeadersRead 不包含后续读取的 HttpClient 超时；将 5 秒期限覆盖整个响应。
+        // ResponseHeadersRead 不覆盖后续读取；同一期限须覆盖响应头和完整响应体。
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        timeout.CancelAfter(requestTimeout);
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(BaseUri, path));
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
@@ -215,9 +220,11 @@ public sealed class NetworkService : IDisposable
         return reader.ReadToEnd();
     }
 
-    private void LogFailure(string operation, Exception error)
+    private void LogFailure(string operation, Exception error, TimeSpan requestTimeout)
     {
-        var reason = error is OperationCanceledException ? "请求超过 5 秒，已跳过" : error.Message;
+        var reason = error is OperationCanceledException
+            ? $"请求超过 {requestTimeout.TotalSeconds:0} 秒，已跳过"
+            : error.Message;
         _log($"[网络] {operation}失败: {error.GetType().Name}: {reason}");
     }
 

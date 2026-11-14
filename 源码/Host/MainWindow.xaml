@@ -99,13 +99,15 @@
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-                            <Setter Property="Padding" Value="14,9"/>
+                            <!-- 边框占位固定；焦点变化不得改变自适应导航行的高度。 -->
+                            <Setter Property="Padding" Value="13,8"/>
                             <Setter Property="Margin" Value="2,0"/>
                             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="ListBoxItem">
-                                        <Border x:Name="Surface" Background="Transparent" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                                        <Border x:Name="Surface" Background="Transparent" BorderBrush="Transparent"
+                                                BorderThickness="1" CornerRadius="8" Padding="{TemplateBinding Padding}">
                                             <ContentPresenter VerticalAlignment="Center"/>
                                         </Border>
                                         <ControlTemplate.Triggers>
@@ -113,9 +115,8 @@
                                             <Trigger Property="IsSelected" Value="True">
                                                 <Setter TargetName="Surface" Property="Background" Value="{StaticResource AccentBrush}"/>
                                                 <Setter Property="Foreground" Value="White"/>
-                                                <Setter Property="FontWeight" Value="SemiBold"/>
                                             </Trigger>
-                                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource AccentBrush}"/><Setter TargetName="Surface" Property="BorderThickness" Value="1"/></Trigger>
+                                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
                                 </Setter.Value>
