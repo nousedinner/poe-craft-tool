@@ -23,6 +23,7 @@ public sealed class PotionTool : ITool, IEnableableTool, IToolRuntime,
     private string _hotkey = SettingsDefaults.PotionHotkey;
     private bool _running;
     private CancellationTokenSource? _runCts;
+    private Task? _runTask;
     private bool _hotkeysPausedForCapture;
 
     public string Id => "potion";
@@ -37,7 +38,7 @@ public sealed class PotionTool : ITool, IEnableableTool, IToolRuntime,
     bool IHotkeySlotConflictProvider.IsCapturingHotkeySlot => _hotkeysPausedForCapture;
     IReadOnlyList<(string Name, string Key)> IHotkeySlotConflictProvider.GetEnabledHotkeySlots()
         => GetSelectedSlots();
-    void IEditableHotkeyProvider.RefreshSettingsPresentation() => _page?.RefreshHotkeyPresentation();
+    void IEditableHotkeyProvider.RefreshSettingsPresentation() => _page?.RefreshSettingsPresentation();
 
     public void Initialize(ToolHost host) => _host = host;
 
@@ -45,7 +46,12 @@ public sealed class PotionTool : ITool, IEnableableTool, IToolRuntime,
 
     public void OnActivate() { }
     public void OnDeactivate() => _page?.CancelCapture(interactive: false);
-    public void OnShutdown() => Stop();
+    public void OnShutdown()
+    {
+        Stop();
+        if (_runTask is { } run && !run.Wait(TimeSpan.FromSeconds(1)))
+            Diag.Log("[一键吃药] 退出时未能在 1 秒内完成输入清理");
+    }
 
     public IReadOnlyList<HotkeyRequest> GetHotkeyRequests() =>
     [
@@ -84,10 +90,13 @@ public sealed class PotionTool : ITool, IEnableableTool, IToolRuntime,
         if (IsRunning) throw new InvalidOperationException("一键吃药运行期间不能修改药剂槽位");
         var nextEnabled = enabled ?? _enabledSlots[index];
         var nextKey = key is null ? _slotKeys[index] : key.Trim();
-        if (nextEnabled && string.IsNullOrWhiteSpace(nextKey))
-            throw new InvalidOperationException($"药剂槽 {index + 1} 已启用，但尚未设置按键。");
-        if (!string.IsNullOrWhiteSpace(nextKey) && KeyCode.Parse(nextKey) == 0 && !MouseButtonKey.TryParse(nextKey, out _))
-            throw new InvalidOperationException($"药剂槽 {index + 1} 的按键“{nextKey}”无法识别。");
+        if (nextEnabled || key is not null)
+        {
+            if (string.IsNullOrWhiteSpace(nextKey))
+                throw new InvalidOperationException($"请先设置药剂槽 {index + 1} 的按键。");
+            if (KeyCode.Parse(nextKey) == 0 && !MouseButtonKey.TryParse(nextKey, out _))
+                throw new InvalidOperationException($"药剂槽 {index + 1} 的按键“{nextKey}”无法识别。");
+        }
         if (_enabledSlots[index] == nextEnabled && string.Equals(_slotKeys[index], nextKey, StringComparison.Ordinal)) return;
 
         var previousEnabled = _enabledSlots[index];
@@ -98,18 +107,16 @@ public sealed class PotionTool : ITool, IEnableableTool, IToolRuntime,
         {
             if (_host is { } host)
             {
-                var providers = host.RegisteredTools.OfType<IHotkeySlotConflictProvider>().ToArray();
-                if (providers.Any(provider => !ReferenceEquals(provider, this) && provider.IsCapturingHotkeySlot))
+                if (host.RegisteredTools.OfType<IHotkeySlotConflictProvider>()
+                    .Any(provider => !ReferenceEquals(provider, this) && provider.IsCapturingHotkeySlot))
                     throw new InvalidOperationException("正在录制输入按键，请先完成或取消录制后再修改一键吃药设置。");
-                if (_enabled && ValidateSelectedSlotValues() is { } slotError)
-                    throw new InvalidOperationException(slotError);
-                if (_enabled && ValidateActiveSlotBindings(host) is { } activeConflict)
-                    throw new InvalidOperationException(activeConflict);
-                if (key is not null && (!_enabled || !nextEnabled) && !string.IsNullOrWhiteSpace(nextKey) &&
-                    ValidateSlotKey(index, nextKey) is { } candidateConflict)
+                if (_enabled && nextEnabled)
                 {
-                    throw new InvalidOperationException(candidateConflict);
+                    if ((ValidateSelectedSlotValues() ?? ValidateActiveSlotBindings(host)) is { } conflict)
+                        throw new InvalidOperationException(conflict);
                 }
+                else if ((nextEnabled || key is not null) && ValidateSlotKey(index, nextKey) is { } conflict)
+                    throw new InvalidOperationException(conflict);
             }
             SaveSettingsToStorage();
         }
@@ -254,8 +261,9 @@ public sealed class PotionTool : ITool, IEnableableTool, IToolRuntime,
             if (!string.IsNullOrWhiteSpace(slotKey)) slots.Add(($"药剂槽 {slotIndex + 1}", slotKey));
         }
 
-        var hotkeys = _host.BuildHotkeyRequests()
-            .Where(request => !string.IsNullOrWhiteSpace(request.Key))
+        IEnumerable<HotkeyRequest> requests = _host.BuildHotkeyRequests();
+        if (!_enabled) requests = requests.Concat(GetHotkeyRequests());
+        var hotkeys = requests
             .Select(request => (request.DisplayName, request.Key, request.Mode))
             .ToArray();
         return HotkeyConflictRules.ValidateSlotKeyConflicts(hotkeys, slots).FirstOrDefault();
@@ -263,7 +271,6 @@ public sealed class PotionTool : ITool, IEnableableTool, IToolRuntime,
 
     private string? ValidateSelectedSlotValues()
     {
-        if (!_enabledSlots.Any(slot => slot)) return "请至少选择一个药剂槽位";
         for (var index = 0; index < SlotCount; index++)
         {
             if (!_enabledSlots[index]) continue;
@@ -300,6 +307,11 @@ public sealed class PotionTool : ITool, IEnableableTool, IToolRuntime,
             return;
         }
         var keys = GetSelectedSlots().Select(slot => slot.Key).ToArray();
+        if (keys.Length == 0)
+        {
+            host.Notification.Show("请先启用一个药剂槽");
+            return;
+        }
         if (ValidateActiveSlotBindings(host) is { } conflict)
         {
             Diag.Log($"[一键吃药] 启动被拒绝：{conflict}");
@@ -322,8 +334,8 @@ public sealed class PotionTool : ITool, IEnableableTool, IToolRuntime,
             _runCts = runCts;
         }
 
-        _page?.RefreshRunningPresentation();
-        _ = RunSequenceAsync(host, keys, runCts);
+        _page?.RefreshEnabledPresentation();
+        _runTask = RunSequenceAsync(host, keys, runCts);
     }
 
     private async Task RunSequenceAsync(ToolHost host, string[] keys, CancellationTokenSource runCts)
@@ -334,16 +346,16 @@ public sealed class PotionTool : ITool, IEnableableTool, IToolRuntime,
             for (var index = 0; index < keys.Length; index++)
             {
                 runCts.Token.ThrowIfCancellationRequested();
-                if (!host.Foreground.IsTargetForeground())
+                if (!await host.Input.PressAndReleaseAsync(keys[index], waitForForeground: false, runCts.Token).ConfigureAwait(false))
                 {
+                    Diag.Log($"[一键吃药] 游戏失去前台，已停止：已发送 {sent}/{keys.Length} 个药剂键");
                     host.Notification.Show("游戏失去前台，一键吃药已停止");
-                    break;
+                    return;
                 }
 
-                await host.Input.PressAndReleaseAsync(keys[index], runCts.Token);
                 sent++;
                 if (index < keys.Length - 1)
-                    await Task.Delay(InterKeyDelayMs, runCts.Token);
+                    await Task.Delay(InterKeyDelayMs, runCts.Token).ConfigureAwait(false);
             }
             Diag.Log($"[一键吃药] 本次完成：已发送 {sent}/{keys.Length} 个药剂键");
         }
@@ -367,7 +379,7 @@ public sealed class PotionTool : ITool, IEnableableTool, IToolRuntime,
                 }
             }
             runCts.Dispose();
-            _page?.RefreshRunningPresentation();
+            _page?.RefreshEnabledPresentation();
         }
     }
 

@@ -150,6 +150,7 @@ var tests = new (string Name, Action Run)[]
     ("洗装等待后失焦不得发送点击或复制", InputAuditFixChecks.CraftSendBoundaryRejectsForegroundLossAfterWaiting),
     ("洗装等待后取消不得发送点击或复制", InputAuditFixChecks.CraftSendBoundaryRejectsCancellationAfterWaiting),
     ("洗装发送门禁保留准备与发送顺序", InputAuditFixChecks.CraftSendBoundaryPreservesPreparationAndSendOrder),
+    ("一次性按键失去目标前台直接停止", InputAuditFixChecks.OneShotTapsReturnWhenTargetIsNotForeground),
     ("扫描码保留普通键与小键盘键", InputAuditFixChecks.KeyboardScanDescriptionsPreserveOrdinaryAndNumpadKeys),
     ("方向导航和Win键保留扩展扫描码身份", InputAuditFixChecks.KeyboardScanDescriptionsDistinguishExtendedKeys),
     ("鼠标侧键解析不污染键盘键语义", MouseHotkeyChecks.MouseKeysParseWithoutPollutingKeyboardKeys),

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using ShiKe.Services;
 
@@ -7,13 +8,13 @@ namespace ShiKe.Tools.Potion;
 
 public partial class PotionPage : UserControl
 {
+    private const string RecordingHint = "Esc 取消 · 全局热键已暂停";
+
     private readonly PotionTool _tool;
-    private readonly CheckBox[] _slotChecks;
+    private readonly ToggleButton[] _slotSwitches;
     private readonly Button[] _keyButtons;
-    private readonly Button[] _clearButtons;
     private int? _captureIndex;
     private bool _loading = true;
-    private bool _inputMethodStateSaved;
     private bool _inputMethodWasEnabled;
     private Button? _inputMethodTarget;
     private Window? _ownerWindow;
@@ -22,26 +23,20 @@ public partial class PotionPage : UserControl
     {
         _tool = tool;
         InitializeComponent();
-        _slotChecks = [Slot1Check, Slot2Check, Slot3Check, Slot4Check, Slot5Check];
+        _slotSwitches = [Slot1Switch, Slot2Switch, Slot3Switch, Slot4Switch, Slot5Switch];
         _keyButtons = [Slot1KeyButton, Slot2KeyButton, Slot3KeyButton, Slot4KeyButton, Slot5KeyButton];
-        _clearButtons = [Slot1ClearButton, Slot2ClearButton, Slot3ClearButton, Slot4ClearButton, Slot5ClearButton];
-        RefreshHotkeyPresentation();
+        RefreshSettingsPresentation();
         RefreshEnabledPresentation();
-        _loading = false;
         Loaded += Page_Loaded;
         Unloaded += Page_Unloaded;
     }
 
-    internal void RefreshHotkeyPresentation()
+    internal void RefreshSettingsPresentation()
     {
-        if (!Dispatcher.CheckAccess())
-        {
-            Dispatcher.BeginInvoke(() => RefreshHotkeyPresentation());
-            return;
-        }
-        HotkeyHint.Text = string.IsNullOrWhiteSpace(_tool.Hotkey)
+        var hotkey = _tool.Hotkey;
+        HotkeyHint.Text = string.IsNullOrWhiteSpace(hotkey)
             ? "尚未设置快捷键"
-            : $"{HotkeySetting.Display(_tool.Hotkey)} 一次触发所选药剂槽";
+            : $"{HotkeySetting.Display(hotkey)} 触发已启用的药剂槽";
     }
 
     internal void RefreshEnabledPresentation()
@@ -55,24 +50,22 @@ public partial class PotionPage : UserControl
         _loading = true;
         try
         {
+            var capturing = _captureIndex is not null;
+            var canEditSlots = !_tool.IsRunning;
             EnableToolSwitch.IsChecked = _tool.IsEnabled;
-            EnableToolSwitch.IsEnabled = _captureIndex is null;
-            for (var index = 0; index < _slotChecks.Length; index++)
+            EnableToolSwitch.IsEnabled = !capturing;
+            for (var index = 0; index < _slotSwitches.Length; index++)
             {
-                _slotChecks[index].IsChecked = _tool.IsSlotEnabled(index);
-                _keyButtons[index].Content = _captureIndex == index
-                    ? "请按键或侧键（Esc取消）"
-                    : string.IsNullOrWhiteSpace(_tool.SlotKey(index))
-                        ? "点击设置"
-                        : HotkeySetting.Display(_tool.SlotKey(index));
-                _slotChecks[index].IsEnabled = !_tool.IsRunning && _captureIndex is null;
-                _keyButtons[index].IsEnabled = !_tool.IsRunning && (_captureIndex is null || _captureIndex == index);
-                _clearButtons[index].IsEnabled = !_tool.IsRunning && _captureIndex is null;
+                var key = _tool.SlotKey(index);
+                var recording = _captureIndex == index;
+                _slotSwitches[index].IsChecked = _tool.IsSlotEnabled(index);
+                _slotSwitches[index].IsEnabled = canEditSlots && !capturing;
+                _keyButtons[index].Content = recording ? "按一个键或鼠标侧键…"
+                    : string.IsNullOrWhiteSpace(key) ? "点击设置" : HotkeySetting.Display(key);
+                _keyButtons[index].IsEnabled = canEditSlots && (!capturing || recording);
             }
-            StatusText.Text = _captureIndex is { } capture
-                ? $"正在录制药剂槽 {capture + 1} 按键：Esc 取消；全局热键已暂停"
-                : _tool.IsRunning ? "一键吃药执行中…"
-                : _tool.IsEnabled ? "一键吃药已启用" : "一键吃药已停用";
+            CaptureHint.Text = capturing ? RecordingHint : string.Empty;
+            CaptureHint.Visibility = capturing ? Visibility.Visible : Visibility.Collapsed;
         }
         finally
         {
@@ -80,14 +73,10 @@ public partial class PotionPage : UserControl
         }
     }
 
-    internal void RefreshRunningPresentation() => RefreshEnabledPresentation();
-
     internal void CancelCapture(bool interactive)
     {
-        var index = _captureIndex;
         _captureIndex = null;
         RestoreInputMethodAfterCapture();
-        if (index is { } captured) RefreshKeyButton(captured);
         var issues = _tool.EndSlotCapture(notify: !interactive);
         RefreshEnabledPresentation();
         if (interactive && issues.Count > 0)
@@ -98,17 +87,18 @@ public partial class PotionPage : UserControl
     {
         if (_loading) return;
         var result = _tool.SetEnabled(EnableToolSwitch.IsChecked == true);
+        if (result.Success) return;
         RefreshEnabledPresentation();
-        if (!result.Success) ShowFailure(result.Message);
+        ShowFailure(result.Message);
     }
 
-    private void SlotCheck_Changed(object sender, RoutedEventArgs e)
+    private void SlotSwitch_Changed(object sender, RoutedEventArgs e)
     {
-        if (_loading || sender is not CheckBox check || check.Tag is not string rawIndex ||
+        if (_loading || sender is not ToggleButton slot || slot.Tag is not string rawIndex ||
             !int.TryParse(rawIndex, out var index)) return;
         try
         {
-            _tool.SetSlotEnabled(index, check.IsChecked == true);
+            _tool.SetSlotEnabled(index, slot.IsChecked == true);
         }
         catch (Exception error) when (error is StorageException or InvalidOperationException)
         {
@@ -121,7 +111,11 @@ public partial class PotionPage : UserControl
     {
         if (sender is not Button button || button.Tag is not string rawIndex ||
             !int.TryParse(rawIndex, out var index)) return;
-        CancelCapture(interactive: true);
+        if (_captureIndex is not null)
+        {
+            CancelCapture(interactive: true);
+            return;
+        }
         if (_tool.TryBeginSlotCapture() is { } refusal)
         {
             ShowFailure(refusal);
@@ -131,29 +125,9 @@ public partial class PotionPage : UserControl
         _captureIndex = index;
         _inputMethodTarget = button;
         _inputMethodWasEnabled = InputMethod.GetIsInputMethodEnabled(button);
-        _inputMethodStateSaved = true;
         InputMethod.SetIsInputMethodEnabled(button, false);
-        button.Content = "请按键或侧键（Esc取消）";
-        button.Focus();
-        RefreshEnabledPresentation();
-        button.Focus();
-    }
-
-    private void ClearKey_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button button || button.Tag is not string rawIndex ||
-            !int.TryParse(rawIndex, out var index)) return;
-        CancelCapture(interactive: false);
-        try
-        {
-            _tool.SetSlotKey(index, string.Empty);
-            RefreshEnabledPresentation();
-        }
-        catch (Exception error) when (error is StorageException or InvalidOperationException)
-        {
-            RefreshEnabledPresentation();
-            ShowFailure(error.Message);
-        }
+        if (button.Focus()) RefreshEnabledPresentation();
+        else CancelCapture(interactive: true);
     }
 
     private void Page_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -169,13 +143,13 @@ public partial class PotionPage : UserControl
         if (key == Key.None)
         {
             Diag.Log($"[一键吃药] 槽位按键捕获未解析：raw={e.Key}, ime={e.ImeProcessedKey}, dead={e.DeadCharProcessedKey}");
-            StatusText.Text = "输入法仍拦截了此键，请切换英文输入模式后重试";
+            CaptureHint.Text = $"请切换英文输入模式后重试 · {RecordingHint}";
             return;
         }
 
         if (KeyboardKeyName.FromKey(key) is not { } name)
         {
-            ShowFailure($"暂不支持录制此按键：{key}（VK 0x{KeyInterop.VirtualKeyFromKey(key):X2}）");
+            CaptureHint.Text = $"暂不支持 {key}，请换一个键 · {RecordingHint}";
             return;
         }
         CommitCapturedKey(index, name);
@@ -224,16 +198,15 @@ public partial class PotionPage : UserControl
 
     private void Page_Unloaded(object sender, RoutedEventArgs e) => CancelCapture(interactive: false);
 
-    private void RefreshKeyButton(int index)
-        => _keyButtons[index].Content = string.IsNullOrWhiteSpace(_tool.SlotKey(index))
-            ? "点击设置"
-            : HotkeySetting.Display(_tool.SlotKey(index));
+    private void Page_IsKeyboardFocusWithinChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is false && _captureIndex is not null) CancelCapture(interactive: false);
+    }
 
     private void RestoreInputMethodAfterCapture()
     {
-        if (!_inputMethodStateSaved || _inputMethodTarget is null) return;
+        if (_inputMethodTarget is null) return;
         InputMethod.SetIsInputMethodEnabled(_inputMethodTarget, _inputMethodWasEnabled);
-        _inputMethodStateSaved = false;
         _inputMethodTarget = null;
     }
 
@@ -241,8 +214,8 @@ public partial class PotionPage : UserControl
     {
         var owner = Window.GetWindow(this);
         if (owner is null)
-            ThemedMessageBox.Show(message, "一键吃药未生效", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(message, "一键吃药设置", MessageBoxButton.OK, MessageBoxImage.Warning);
         else
-            ThemedMessageBox.Show(owner, message, "一键吃药未生效", MessageBoxButton.OK, MessageBoxImage.Warning);
+            ThemedMessageBox.Show(owner, message, "一键吃药设置", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 }

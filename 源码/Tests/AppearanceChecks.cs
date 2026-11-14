@@ -14,6 +14,7 @@ using ShiKe.Tools.Clicker;
 using ShiKe.Tools.Craft;
 using ShiKe.Tools.Hideout;
 using ShiKe.Tools.KeyLoop;
+using ShiKe.Tools.Potion;
 using ShiKe.Tools.Settings;
 
 // 实际创建 WPF 页面并走原选择/编辑/切页事件；不注册热键、不联网、不发送输入。
@@ -53,9 +54,10 @@ internal static class AppearanceChecks
         var craft = new CraftTool();
         var clicker = new ClickerTool();
         var keyLoop = new KeyLoopTool();
+        var potion = new PotionTool();
         var hideout = new HideoutTool();
         var settings = new SettingsTool(craft, clicker, keyLoop, hideout);
-        ITool[] tools = [craft, clicker, keyLoop, hideout, settings];
+        ITool[] tools = [craft, clicker, keyLoop, potion, hideout, settings];
         try
         {
             host.Storage.SaveSettings(new JsonObject { ["host"] = new JsonObject { ["gradient_speed"] = 3 } });
@@ -82,6 +84,7 @@ internal static class AppearanceChecks
             foreach (var tool in tools) { registry.Register(tool); tool.Initialize(host); }
             settings.LoadSettings(JsonSerializer.SerializeToElement(host.Storage.LoadSettings()["host"]));
             hideout.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true }));
+            potion.LoadSettings(JsonSerializer.SerializeToElement(new { enabled = true }));
             keyLoop.Slots[0].Enabled = true;
             window = new MainWindow(registry, host) { ShowActivated = false, ShowInTaskbar = false };
             var settingsBeforeShow = File.ReadAllBytes(Path.Combine(host.Storage.DataDir, "settings.json"));
@@ -243,13 +246,13 @@ internal static class AppearanceChecks
                 CheckFirstFrameSwitches(window, () => nav.SelectedIndex = index);
                 Require(content.Content == tools[index].CreatePage(), "工具页面应复用原缓存");
                 CheckPageFrame((FrameworkElement)content.Content, window, expectedBody, expectedHeader, expectedTrack);
-                if (index == 4)
+                if (tools[index] == settings)
                 {
                     var settingsPage = (FrameworkElement)content.Content;
                     CheckSettingsSwitches(settingsPage);
                     CheckSettingsPanels(settingsPage, window);
                 }
-                if (index == 2)
+                if (tools[index] == keyLoop)
                 {
                     var loopPage = (FrameworkElement)content.Content;
                     UiAuditFixChecks.InvalidDelayEditKeepsPrevious((KeyLoopPage)loopPage, keyLoop, host.Storage);
@@ -262,6 +265,8 @@ internal static class AppearanceChecks
                     Require(more.TranslatePoint(new Point(0, more.ActualHeight), loopViewport).Y <= loopViewport.ActualHeight + 1,
                             "默认尺寸展开十槽后，收起按钮仍须完整可见");
                 }
+                if (content.Content is PotionPage potionPage)
+                    CheckPotionPage(window, potionPage, potion, host);
                 Snapshot(window, $"T11-WPF-{tools[index].Id}.png");
             }
             CheckFirstFrameSwitches(window, () => nav.SelectedIndex = 0);
@@ -303,7 +308,7 @@ internal static class AppearanceChecks
                 nav.SelectedIndex = index;
                 Pump();
                 var smallPage = (FrameworkElement)content.Content;
-                if (index == 4)
+                if (tools[index] == settings)
                 {
                     CheckSettingsPanels(smallPage, window);
                     CheckSettingsSwitches(smallPage);
@@ -313,6 +318,18 @@ internal static class AppearanceChecks
                     Require(Find<ToggleButton>(smallPage, "KeyLoopNotificationCheck").IsVisible,
                             "最小窗口仍须能滚动访问右栏最后一个开关");
                     Snapshot(window, "T11-WPF-Settings-minimum.png");
+                }
+                else if (smallPage is PotionPage)
+                {
+                    CheckHeaderHint(smallPage, window);
+                    var scroll = Descendants(smallPage).OfType<ScrollViewer>().First();
+                    var potionViewport = Descendants(scroll).OfType<ScrollContentPresenter>().First();
+                    var lastKey = Find<Button>(smallPage, "Slot5KeyButton");
+                    scroll.ScrollToBottom();
+                    Pump();
+                    Require(lastKey.TranslatePoint(new Point(0, lastKey.ActualHeight), potionViewport).Y <= potionViewport.ActualHeight + 1,
+                            "最小尺寸下应能访问第五个药剂槽");
+                    Snapshot(window, "T11-WPF-potion-minimum.png");
                 }
                 else CheckHeaderHint(smallPage, window);
             }
@@ -639,8 +656,94 @@ internal static class AppearanceChecks
         if (enable is null) return; // 设置页不提供工具启用开关。
         var track = Bounds((Border)enable.Template.FindName("Track", enable), window);
         Require(Math.Abs(track.Right - expectedTrack.Right) < 1 && Math.Abs(track.Y - expectedTrack.Y) < 1,
-                "四个工具的启用开关必须对齐到同一位置");
+                "各工具的启用开关必须对齐到同一位置");
         CheckHeaderHint(page, window);
+    }
+
+    private static void CheckPotionPage(Window window, PotionPage page, PotionTool tool, ToolHost host)
+    {
+        var body = Find<Border>(page, "PageBody");
+        var hint = Find<TextBlock>(page, "CaptureHint");
+        var hotkeyHint = Find<TextBlock>(page, "HotkeyHint");
+        Require(hotkeyHint.Text == "F10 触发已启用的药剂槽", "首次显示应提示默认触发键及用途");
+
+        IEditableHotkeyProvider hotkeys = tool;
+        var binding = hotkeys.GetEditableHotkeys().Single();
+        binding.Apply("Mouse4");
+        hotkeys.RefreshSettingsPresentation();
+        Require(hotkeyHint.Text == "鼠标4 触发已启用的药剂槽", "修改后应显示当前触发键的可读名称");
+        binding.Apply(string.Empty);
+        hotkeys.RefreshSettingsPresentation();
+        Require(hotkeyHint.Text == "尚未设置快捷键", "清空触发键后应提示未绑定");
+        binding.Apply(binding.DefaultKey);
+        hotkeys.RefreshSettingsPresentation();
+
+        Require(hint.Visibility == Visibility.Collapsed && !Descendants(body).OfType<TextBlock>().Any(text =>
+                    text.Text.Contains("30 ms", StringComparison.Ordinal) || text.Text.Contains("点击可录制", StringComparison.Ordinal)),
+                "闲时页脚与槽位上方不应显示说明");
+        var switches = Descendants(body).OfType<ToggleButton>().ToArray();
+        var keys = Descendants(body).OfType<Button>().ToArray();
+        var switchStyle = page.FindResource("ModernSwitchStyle");
+        Require(switches.Length == PotionTool.SlotCount && switches.All(slot => ReferenceEquals(slot.Style, switchStyle)) &&
+                keys.Length == PotionTool.SlotCount, "每个药剂槽只应提供一个统一滑块和一个按键按钮");
+
+        foreach (var slot in switches) slot.IsChecked = false;
+        var saved = host.Storage.LoadSettings()[tool.Id]!["slots"]!.AsArray();
+        Require(tool.IsEnabled && saved.Count == PotionTool.SlotCount, "总开关打开时也可以关闭所有槽位");
+        for (var index = 0; index < PotionTool.SlotCount; index++)
+        {
+            var key = (index + 1).ToString();
+            Require(!tool.IsSlotEnabled(index) && saved[index]!["enabled"]!.GetValue<bool>() == false &&
+                    saved[index]!["key"]!.GetValue<string>() == key && (string?)keys[index].Content == key,
+                    "关闭槽位必须保存开关，且保留已有键位");
+        }
+        foreach (var slot in switches) slot.IsChecked = true;
+        Require(Enumerable.Range(0, PotionTool.SlotCount).All(tool.IsSlotEnabled), "槽位应能用原键位重新开启");
+
+        var inputMethodWasEnabled = InputMethod.GetIsInputMethodEnabled(keys[0]);
+        var registrations = 0;
+        host.Hotkeys.RegistrationOverride = _ => { registrations++; return []; };
+        try
+        {
+            keys[0].RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Require(hint.IsVisible && hint.Text.Contains("全局热键已暂停", StringComparison.Ordinal) &&
+                    !InputMethod.GetIsInputMethodEnabled(keys[0]) && !switches[0].IsEnabled,
+                    "录制期间应显示暂停提示并抑制输入法");
+            keys[0].RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Require(registrations == 1 && hint.Visibility == Visibility.Collapsed &&
+                    InputMethod.GetIsInputMethodEnabled(keys[0]) == inputMethodWasEnabled && tool.SlotKey(0) == "1",
+                    "再次点击录制按钮应取消，恢复热键和输入法并保留原键位");
+
+            keys[0].RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Find<ListBox>(window, "ToolList").Focus();
+            Require(registrations == 2 && hint.Visibility == Visibility.Collapsed,
+                    "焦点离开页面时应结束录制并恢复热键");
+
+            keys[0].RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            var source = PresentationSource.FromVisual(keys[0])!;
+            keys[0].RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, Key.Escape)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent,
+            });
+            Require(registrations == 3 && hint.Visibility == Visibility.Collapsed && tool.SlotKey(0) == "1",
+                    "Esc 应恢复热键并保留原键位");
+
+            keys[0].RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            keys[0].RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, Key.Oem3)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent,
+            });
+            var savedKey = host.Storage.LoadSettings()[tool.Id]!["slots"]![0]!["key"]!.GetValue<string>();
+            Require(registrations == 4 && hint.Visibility == Visibility.Collapsed && tool.SlotKey(0) == "Oem3" && savedKey == "Oem3",
+                    "录制成功应保存新键位并恢复热键");
+            tool.SetSlotKey(0, "1");
+            page.RefreshEnabledPresentation();
+        }
+        finally
+        {
+            page.CancelCapture(interactive: false);
+            host.Hotkeys.RegistrationOverride = null;
+        }
     }
 
     private static void CheckHeaderHint(FrameworkElement page, Window window)

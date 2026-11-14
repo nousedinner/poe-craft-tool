@@ -246,6 +246,19 @@ internal static class InputAuditFixChecks
         }
     }
 
+    public static void OneShotTapsReturnWhenTargetIsNotForeground()
+    {
+        using var emergency = new CancellationTokenSource();
+        using var foreground = new ForegroundDetector();
+        var input = new InputSimulator(() => emergency, foreground);
+        foreach (var key in new[] { "1", "Mouse4" })
+        {
+            var sent = input.PressAndReleaseAsync(key, waitForForeground: false, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Require(!sent, "一次性输入在目标不在前台时应直接返回，键盘和侧键均不应补发");
+        }
+    }
+
     public static void KeyboardScanDescriptionsPreserveOrdinaryAndNumpadKeys()
     {
         foreach (var vk in new ushort[] { 0x10, 0x11, 0x12, 0x0D, 0x1B, 0x20, 0x31, 0x41, 0x43,

@@ -3,7 +3,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:theme="clr-namespace:ShiKe.Themes"
              Focusable="True" FocusVisualStyle="{x:Null}"
-             PreviewKeyDown="Page_PreviewKeyDown" PreviewMouseDown="Page_PreviewMouseDown">
+             PreviewKeyDown="Page_PreviewKeyDown" PreviewMouseDown="Page_PreviewMouseDown"
+             IsKeyboardFocusWithinChanged="Page_IsKeyboardFocusWithinChanged">
     <UserControl.Resources>
         <Style x:Key="PotionKeyButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Width" Value="154"/>
@@ -22,57 +23,41 @@
                           Style="{StaticResource ModernSwitchStyle}" VerticalAlignment="Center" FontWeight="SemiBold"
                           Checked="EnableToolSwitch_Changed" Unchecked="EnableToolSwitch_Changed"/>
         </Grid>
-        <Border Grid.Row="1" Style="{StaticResource PanelStyle}"
+        <Border x:Name="PageBody" Grid.Row="1" Style="{StaticResource PanelStyle}"
                 Background="{StaticResource ModePanelBackground}" theme:FlowingGradient.Flow="True">
             <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel>
-                    <Border Style="{StaticResource PanelStyle}">
-                        <StackPanel>
-                            <TextBlock Text="药剂按键" Style="{StaticResource SectionTitle}"/>
-                            <TextBlock Text="每次按快捷键，按槽位顺序轻点已选按键一次；按键间隔 30 ms，只执行一轮，不会定时刷新。仅在设置的目标进程位于前台时生效。"
-                                       Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,14"/>
-                            <Grid Margin="0,0,0,4">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="药剂槽位" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1" Text="触发按键（点击可录制）" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
-                            </Grid>
-                            <Grid Margin="0,0,0,4">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <CheckBox x:Name="Slot1Check" Tag="0" Content="药剂槽 1" VerticalAlignment="Center" Checked="SlotCheck_Changed" Unchecked="SlotCheck_Changed"/>
-                                <Button x:Name="Slot1KeyButton" Grid.Column="1" Tag="0" Content="点击设置" Style="{StaticResource PotionKeyButton}" HorizontalAlignment="Left" Click="CaptureKey_Click"/>
-                                <Button x:Name="Slot1ClearButton" Grid.Column="2" Tag="0" Content="清除" Width="48" Height="27" Margin="8,0,0,0" Click="ClearKey_Click"/>
-                            </Grid>
-                            <Grid Margin="0,0,0,4">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <CheckBox x:Name="Slot2Check" Tag="1" Content="药剂槽 2" VerticalAlignment="Center" Checked="SlotCheck_Changed" Unchecked="SlotCheck_Changed"/>
-                                <Button x:Name="Slot2KeyButton" Grid.Column="1" Tag="1" Content="点击设置" Style="{StaticResource PotionKeyButton}" HorizontalAlignment="Left" Click="CaptureKey_Click"/>
-                                <Button x:Name="Slot2ClearButton" Grid.Column="2" Tag="1" Content="清除" Width="48" Height="27" Margin="8,0,0,0" Click="ClearKey_Click"/>
-                            </Grid>
-                            <Grid Margin="0,0,0,4">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <CheckBox x:Name="Slot3Check" Tag="2" Content="药剂槽 3" VerticalAlignment="Center" Checked="SlotCheck_Changed" Unchecked="SlotCheck_Changed"/>
-                                <Button x:Name="Slot3KeyButton" Grid.Column="1" Tag="2" Content="点击设置" Style="{StaticResource PotionKeyButton}" HorizontalAlignment="Left" Click="CaptureKey_Click"/>
-                                <Button x:Name="Slot3ClearButton" Grid.Column="2" Tag="2" Content="清除" Width="48" Height="27" Margin="8,0,0,0" Click="ClearKey_Click"/>
-                            </Grid>
-                            <Grid Margin="0,0,0,4">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <CheckBox x:Name="Slot4Check" Tag="3" Content="药剂槽 4" VerticalAlignment="Center" Checked="SlotCheck_Changed" Unchecked="SlotCheck_Changed"/>
-                                <Button x:Name="Slot4KeyButton" Grid.Column="1" Tag="3" Content="点击设置" Style="{StaticResource PotionKeyButton}" HorizontalAlignment="Left" Click="CaptureKey_Click"/>
-                                <Button x:Name="Slot4ClearButton" Grid.Column="2" Tag="3" Content="清除" Width="48" Height="27" Margin="8,0,0,0" Click="ClearKey_Click"/>
-                            </Grid>
-                            <Grid>
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="150"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                <CheckBox x:Name="Slot5Check" Tag="4" Content="药剂槽 5" VerticalAlignment="Center" Checked="SlotCheck_Changed" Unchecked="SlotCheck_Changed"/>
-                                <Button x:Name="Slot5KeyButton" Grid.Column="1" Tag="4" Content="点击设置" Style="{StaticResource PotionKeyButton}" HorizontalAlignment="Left" Click="CaptureKey_Click"/>
-                                <Button x:Name="Slot5ClearButton" Grid.Column="2" Tag="4" Content="清除" Width="48" Height="27" Margin="8,0,0,0" Click="ClearKey_Click"/>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
-                </StackPanel>
+                <Border Style="{StaticResource PanelStyle}" VerticalAlignment="Top">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="142"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="36"/>
+                            <RowDefinition Height="36"/>
+                            <RowDefinition Height="36"/>
+                            <RowDefinition Height="36"/>
+                            <RowDefinition Height="36"/>
+                        </Grid.RowDefinitions>
+                        <ToggleButton x:Name="Slot1Switch" Tag="0" Content="药剂槽 1" Style="{StaticResource ModernSwitchStyle}"
+                                      VerticalAlignment="Center" Checked="SlotSwitch_Changed" Unchecked="SlotSwitch_Changed"/>
+                        <Button x:Name="Slot1KeyButton" Grid.Column="1" Tag="0" Style="{StaticResource PotionKeyButton}" Click="CaptureKey_Click"/>
+                        <ToggleButton x:Name="Slot2Switch" Grid.Row="1" Tag="1" Content="药剂槽 2" Style="{StaticResource ModernSwitchStyle}"
+                                      VerticalAlignment="Center" Checked="SlotSwitch_Changed" Unchecked="SlotSwitch_Changed"/>
+                        <Button x:Name="Slot2KeyButton" Grid.Row="1" Grid.Column="1" Tag="1" Style="{StaticResource PotionKeyButton}" Click="CaptureKey_Click"/>
+                        <ToggleButton x:Name="Slot3Switch" Grid.Row="2" Tag="2" Content="药剂槽 3" Style="{StaticResource ModernSwitchStyle}"
+                                      VerticalAlignment="Center" Checked="SlotSwitch_Changed" Unchecked="SlotSwitch_Changed"/>
+                        <Button x:Name="Slot3KeyButton" Grid.Row="2" Grid.Column="1" Tag="2" Style="{StaticResource PotionKeyButton}" Click="CaptureKey_Click"/>
+                        <ToggleButton x:Name="Slot4Switch" Grid.Row="3" Tag="3" Content="药剂槽 4" Style="{StaticResource ModernSwitchStyle}"
+                                      VerticalAlignment="Center" Checked="SlotSwitch_Changed" Unchecked="SlotSwitch_Changed"/>
+                        <Button x:Name="Slot4KeyButton" Grid.Row="3" Grid.Column="1" Tag="3" Style="{StaticResource PotionKeyButton}" Click="CaptureKey_Click"/>
+                        <ToggleButton x:Name="Slot5Switch" Grid.Row="4" Tag="4" Content="药剂槽 5" Style="{StaticResource ModernSwitchStyle}"
+                                      VerticalAlignment="Center" Checked="SlotSwitch_Changed" Unchecked="SlotSwitch_Changed"/>
+                        <Button x:Name="Slot5KeyButton" Grid.Row="4" Grid.Column="1" Tag="4" Style="{StaticResource PotionKeyButton}" Click="CaptureKey_Click"/>
+                    </Grid>
+                </Border>
             </ScrollViewer>
         </Border>
         <Grid Grid.Row="2" Style="{StaticResource ToolPageFooter}">
-            <TextBlock x:Name="StatusText" Text="一键吃药就绪" Foreground="{StaticResource TextSecondary}"/>
+            <TextBlock x:Name="CaptureHint" Visibility="Collapsed" VerticalAlignment="Center"
+                       Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"/>
         </Grid>
     </Grid>
 </UserControl>

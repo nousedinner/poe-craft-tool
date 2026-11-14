@@ -545,49 +545,38 @@ public sealed class InputSimulator
     /// 异步按下并释放一个键。发送前检查游戏前台和左上角紧急停止；
     /// down/up 之间不可取消，保证停止或退出发生在中途时仍会释放按键。
     /// </summary>
-    public async Task PressAndReleaseAsync(string key, CancellationToken token)
+    public Task PressAndReleaseAsync(string key, CancellationToken token)
+        => PressAndReleaseAsync(key, waitForForeground: true, token);
+
+    /// <summary>一次性操作失焦时返回 false，调用方结束本轮。</summary>
+    internal async Task<bool> PressAndReleaseAsync(string key, bool waitForForeground, CancellationToken token)
     {
-        // 鼠标侧键走独立的鼠标发送路径；KeyCode 仍只表示键盘键，不参与鼠标键解析。
-        if (MouseButtonKey.TryParse(key, out var mouseVk))
+        var mouseButton = MouseButtonKey.TryParse(key, out var vk);
+        if (!mouseButton)
         {
-            await PressAndReleaseMouseButtonAsync(mouseVk, key, token);
-            return;
+            vk = KeyCode.Parse(key);
+            if (vk == 0) throw new InputSimulationException($"无法识别按键“{key}”");
         }
 
-        var vk = KeyCode.Parse(key);
-        if (vk == 0) throw new InputSimulationException($"无法识别按键“{key}”");
-
-        await EnsureForegroundForInputAsync(token);
+        token.ThrowIfCancellationRequested();
+        if (waitForForeground) await EnsureForegroundForInputAsync(token);
+        else if (!_foreground.IsTargetForeground()) return false;
         CheckEmergencyStop();
-        PressKeyOrThrow(vk, $"按下 {key}");
+        token.ThrowIfCancellationRequested();
+
+        var mouseData = mouseButton ? MouseButtonKey.ToInputMouseData(vk) : 0;
+        if (mouseButton) SendMouseOrThrow(MOUSEEVENTF_XDOWN, mouseData, $"按下 {key}");
+        else PressKeyOrThrow(vk, $"按下 {key}");
         try
         {
-            await Task.Delay(PressHoldMs, CancellationToken.None);
+            await Task.Delay(PressHoldMs, CancellationToken.None).ConfigureAwait(false);
         }
         finally
         {
-            ReleaseKeyOrThrow(vk, $"释放 {key}");
+            if (mouseButton) SendMouseOrThrow(MOUSEEVENTF_XUP, mouseData, $"释放 {key}");
+            else ReleaseKeyOrThrow(vk, $"释放 {key}");
         }
-    }
-
-    /// <summary>
-    /// 按下并释放鼠标侧键（按键循环槽位使用）。按下与抬起之间不可取消，
-    /// 保证停止或退出发生在中途时仍会释放，与键盘路径一致。
-    /// </summary>
-    private async Task PressAndReleaseMouseButtonAsync(ushort vk, string key, CancellationToken token)
-    {
-        await EnsureForegroundForInputAsync(token);
-        CheckEmergencyStop();
-        var mouseData = MouseButtonKey.ToInputMouseData(vk);
-        SendMouseOrThrow(MOUSEEVENTF_XDOWN, mouseData, $"按下 {key}");
-        try
-        {
-            await Task.Delay(PressHoldMs, CancellationToken.None);
-        }
-        finally
-        {
-            SendMouseOrThrow(MOUSEEVENTF_XUP, mouseData, $"释放 {key}");
-        }
+        return true;
     }
 
     /// <summary>每次 Craft 任务启动时清除上次运行的点击节拍。</summary>
