@@ -396,47 +396,7 @@ public partial class KeyLoopPage : UserControl
             double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out seconds)) &&
            double.IsFinite(seconds);
 
-    internal static string? KeyToName(Key key)
-    {
-        if (key is >= Key.A and <= Key.Z) return key.ToString().ToLowerInvariant();
-        if (key is >= Key.D0 and <= Key.D9) return ((int)key - (int)Key.D0).ToString();
-        if (key is >= Key.NumPad0 and <= Key.NumPad9) return key.ToString();
-        if (key is >= Key.F1 and <= Key.F24) return key.ToString().ToUpperInvariant();
-        return key switch
-        {
-            Key.LeftCtrl or Key.RightCtrl => "ctrl",
-            Key.LeftAlt or Key.RightAlt => "alt",
-            Key.LeftShift or Key.RightShift => "shift",
-            Key.LWin or Key.RWin => "win",
-            Key.Enter or Key.Return => "enter",
-            Key.Space => "space",
-            Key.Tab => "tab",
-            Key.Escape => "esc",
-            Key.Back => "backspace",
-            Key.Delete => "delete",
-            Key.Insert => "insert",
-            Key.Home => "home",
-            Key.End => "end",
-            Key.PageUp => "pageup",
-            Key.PageDown => "pagedown",
-            Key.Up => "up",
-            Key.Down => "down",
-            Key.Left => "left",
-            Key.Right => "right",
-            Key.Oem3 => "`",
-            Key.OemMinus => "-",
-            Key.OemPlus => "=",
-            Key.OemOpenBrackets => "[",
-            Key.Oem6 => "]",
-            Key.Oem5 => "\\",
-            Key.Oem1 => ";",
-            Key.OemQuotes => "'",
-            Key.OemComma => ",",
-            Key.OemPeriod => ".",
-            Key.Oem2 => "/",
-            _ => null,
-        };
-    }
+    internal static string? KeyToName(Key key) => KeyboardKeyName.FromKey(key, lowercase: true);
 
     private void MoreButton_Click(object sender, RoutedEventArgs e)
     {

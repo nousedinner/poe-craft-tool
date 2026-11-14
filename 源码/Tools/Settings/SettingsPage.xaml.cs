@@ -23,6 +23,8 @@ public partial class SettingsPage : UserControl
     private bool _refreshing;
     private Window? _ownerWindow;
     private bool _hasActivated;
+    private bool _captureInputMethodStateSaved;
+    private bool _inputMethodWasEnabled;
 
     private sealed record NamedOption(string Label, string Value)
     {
@@ -187,6 +189,9 @@ public partial class SettingsPage : UserControl
         }
         _capturing = id;
         _capturedMainKey = false;
+        _inputMethodWasEnabled = InputMethod.GetIsInputMethodEnabled(this);
+        _captureInputMethodStateSaved = true;
+        InputMethod.SetIsInputMethodEnabled(this, false);
         button.Content = "请按新热键…";
         button.BorderBrush = Brushes.Orange;
         ShowCaptureStatus();
@@ -214,10 +219,26 @@ public partial class SettingsPage : UserControl
             return;
         }
 
+        if (key == Key.None)
+        {
+            Diag.Log($"[设置] 按键捕获未解析: raw={e.Key}, ime={e.ImeProcessedKey}, dead={e.DeadCharProcessedKey}, " +
+                     $"system={e.SystemKey}, modifiers={Keyboard.Modifiers}");
+            ShowResult("输入法仍拦截了这个按键，请切换到英文输入模式后再录制", success: false);
+            e.Handled = true;
+            return;
+        }
+
         var value = FormatHotkey(key, Keyboard.Modifiers);
+        if (key == Key.Oem3 || value is null || e.Key is Key.ImeProcessed or Key.DeadCharProcessed)
+        {
+            var virtualKey = KeyInterop.VirtualKeyFromKey(key);
+            Diag.Log($"[设置] 按键诊断: raw={e.Key}, resolved={key}, vk=0x{virtualKey:X2}, ime={e.ImeProcessedKey}, " +
+                     $"modifiers={Keyboard.Modifiers}, system={e.SystemKey}, dead={e.DeadCharProcessedKey}, result={value ?? "(unsupported)"}");
+        }
         if (value is null)
         {
-            ShowResult("这个按键暂不支持，请换一个按键", success: false);
+            var virtualKey = KeyInterop.VirtualKeyFromKey(key);
+            ShowResult($"这个按键暂不支持：{key}（VK 0x{virtualKey:X2}），请换一个按键", success: false);
             e.Handled = true;
             return;
         }
@@ -271,6 +292,7 @@ public partial class SettingsPage : UserControl
         var previousValue = _hotkeyValues.GetValueOrDefault(id, string.Empty);
         var valueChanged = !string.Equals(previousValue, value, StringComparison.OrdinalIgnoreCase);
         _capturing = null;
+        RestoreInputMethodAfterCapture();
         _hotkeyValues[id] = value;
         _hotkeyButtons[id].Content = HotkeySetting.Display(value);
         _hotkeyButtons[id].BorderBrush = new SolidColorBrush(Color.FromRgb(0xB9, 0xD0, 0xE2));
@@ -308,9 +330,17 @@ public partial class SettingsPage : UserControl
         }
         _capturing = null;
         _capturedMainKey = false;
+        RestoreInputMethodAfterCapture();
         return wasCapturing
             ? _tool.EndHotkeyCapture(hotkeysAlreadyRegistered: false)
             : [];
+    }
+
+    private void RestoreInputMethodAfterCapture()
+    {
+        if (!_captureInputMethodStateSaved) return;
+        InputMethod.SetIsInputMethodEnabled(this, _inputMethodWasEnabled);
+        _captureInputMethodStateSaved = false;
     }
 
     private SettingsDraft BuildDraft()
@@ -450,7 +480,7 @@ public partial class SettingsPage : UserControl
         ResultPanel.Visibility = Visibility.Visible;
         ResultPanel.Background = new SolidColorBrush(Color.FromRgb(0xEA, 0xF3, 0xFA));
         ResultPanel.BorderBrush = new SolidColorBrush(Color.FromRgb(0xD4, 0xE4, 0xF0));
-        ResultText.Text = "正在捕获热键：键盘键或鼠标侧键（4/5）；更多侧键请先在鼠标驱动映射为 F13～F24；Esc 取消";
+        ResultText.Text = "正在捕获热键：键盘键或鼠标侧键（4/5）；录制时暂时关闭此页输入法处理；Esc 取消";
         ResultText.Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x6B, 0x2D));
     }
 
@@ -469,13 +499,7 @@ public partial class SettingsPage : UserControl
             ThemedMessageBox.Show(owner, message, "设置未生效", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
-    private static Key ResolveKey(KeyEventArgs e) => e.Key switch
-    {
-        Key.System => e.SystemKey,
-        Key.ImeProcessed => e.ImeProcessedKey,
-        Key.DeadCharProcessed => e.DeadCharProcessedKey,
-        _ => e.Key,
-    };
+    private static Key ResolveKey(KeyEventArgs e) => KeyboardKeyName.Resolve(e);
 
     private static bool IsModifier(Key key)
         => key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or
@@ -511,41 +535,5 @@ public partial class SettingsPage : UserControl
         return string.Join('+', parts);
     }
 
-    internal static string? KeyName(Key key)
-    {
-        if (key is >= Key.A and <= Key.Z) return key.ToString().ToUpperInvariant();
-        if (key is >= Key.D0 and <= Key.D9) return ((int)key - (int)Key.D0).ToString();
-        if (key is >= Key.NumPad0 and <= Key.NumPad9) return key.ToString();
-        if (key is >= Key.F1 and <= Key.F24) return key.ToString().ToUpperInvariant();
-        return key switch
-        {
-            Key.Enter or Key.Return => "Enter",
-            Key.Space => "Space",
-            Key.Tab => "Tab",
-            Key.Escape => "Esc",
-            Key.Back => "Backspace",
-            Key.Delete => "Delete",
-            Key.Insert => "Insert",
-            Key.Home => "Home",
-            Key.End => "End",
-            Key.PageUp => "PageUp",
-            Key.PageDown => "PageDown",
-            Key.Up => "Up",
-            Key.Down => "Down",
-            Key.Left => "Left",
-            Key.Right => "Right",
-            Key.Oem3 => "`",
-            Key.OemMinus => "-",
-            Key.OemPlus => "=",
-            Key.OemOpenBrackets => "[",
-            Key.Oem6 => "]",
-            Key.Oem5 => "\\",
-            Key.Oem1 => ";",
-            Key.OemQuotes => "'",
-            Key.OemComma => ",",
-            Key.OemPeriod => ".",
-            Key.Oem2 => "/",
-            _ => null,
-        };
-    }
+    internal static string? KeyName(Key key) => KeyboardKeyName.FromKey(key);
 }

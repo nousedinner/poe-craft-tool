@@ -129,7 +129,7 @@ public static class ToolEnablement
     {
         var providers = host.RegisteredTools.OfType<IHotkeySlotConflictProvider>().ToArray();
         if (providers.Any(provider => provider.IsCapturingHotkeySlot))
-            return "正在录制按键循环槽位，请先完成或取消录制后再修改工具启用状态。";
+            return "正在录制输入按键，请先完成或取消录制后再修改工具启用状态。";
         if (!enabling) return null;
 
         var slots = host.RegisteredTools

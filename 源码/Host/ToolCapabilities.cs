@@ -38,7 +38,7 @@ public interface IHotkeySlotConflictProvider
 public static class ToolCapabilities
 {
     /// <summary>
-    /// 运行中自动化工具的统一提示。设置页修改热键、按键循环录制槽位键都必须先过这一关：
+    /// 运行中自动化工具的统一提示。设置页修改热键、录制输入槽位键都必须先过这一关：
     /// 这类操作会临时注销全部全局热键，正在跑的任务会因此失去停止入口。
     /// <paramref name="excludeToolId"/> 给“自己正在运行”的入口留出例外。
     /// </summary>

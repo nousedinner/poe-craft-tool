@@ -7,7 +7,7 @@ namespace ShiKe.Services;
 /// </summary>
 public static class SettingsDefaults
 {
-    // 热键（storage.py:106-123）
+    // 全局热键默认值（旧工具沿用 storage.py，新工具也集中在这里维护）
     public const string HotkeyStart = "F5";        // 启动洗装
     public const string HotkeyStop = "F6";         // 停止洗装
     public const string HotkeySetCoord = "F7";     // 坐标录制
@@ -15,6 +15,7 @@ public static class SettingsDefaults
     public const string ClickerHoldHotkey = "F11"; // 连点器 Hold
     public const string KeyLoopHotkey = "F9";      // 按键循环
     public const string HideoutHotkey = "F2";      // 一键回城
+    public const string PotionHotkey = "F10";      // 一键吃药
 
     // 洗装
     public const int DelayMs = 33;                            // 通货点击后首次服务器同步等待（10-200ms）
@@ -33,6 +34,9 @@ public static class SettingsDefaults
     // 按键循环
     public const bool KeyLoopEnabled = false;
     // key_loop_slots: []（阶段4 解析）
+
+    // 一键吃药
+    public const bool PotionEnabled = false;
 
     // 回城
     public const bool HideoutEnabled = false;

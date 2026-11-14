@@ -18,6 +18,8 @@ public static class HotkeySetting
         var parts = key.Split('+');
         if (MouseButtonKey.TryParse(parts[^1], out var vk))
             parts[^1] = MouseButtonKey.DisplayName(vk);
+        else if (parts[^1] == "`" || string.Equals(parts[^1], "Oem3", StringComparison.OrdinalIgnoreCase))
+            parts[^1] = "Oem3（` / ~）";
         return string.Join('+', parts);
     }
 }

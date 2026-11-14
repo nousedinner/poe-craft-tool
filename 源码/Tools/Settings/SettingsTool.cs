@@ -11,8 +11,7 @@ using ShiKe.Tools.KeyLoop;
 namespace ShiKe.Tools.Settings;
 
 /// <summary>
-/// 宿主设置抽屉。Id 使用 host，因此 settings.json 仍保持既定的五分节结构，
-/// Settings 页面本身不创建额外持久化分节。
+/// 宿主设置抽屉。Id 使用 host；Settings 页面本身不创建额外持久化分节。
 /// </summary>
 public sealed class SettingsTool : ITool, IEditableHotkeyProvider, IPassiveTool
 {
@@ -67,6 +66,8 @@ public sealed class SettingsTool : ITool, IEditableHotkeyProvider, IPassiveTool
     internal SettingsApplyResult BeginHotkeyCapture()
     {
         var host = _host ?? throw new InvalidOperationException("SettingsTool 尚未初始化");
+        if (host.RegisteredTools.OfType<IHotkeySlotConflictProvider>().Any(provider => provider.IsCapturingHotkeySlot))
+            return SettingsApplyResult.Fail("正在录制输入槽位按键，请先完成或取消录制后再修改全局热键。");
         if (RunningToolsMessage("修改热键") is { } runningMessage)
             return SettingsApplyResult.Fail(runningMessage);
         if (_hotkeysSuspendedForCapture)
@@ -120,9 +121,6 @@ public sealed class SettingsTool : ITool, IEditableHotkeyProvider, IPassiveTool
     {
         var current = CaptureDraft();
         var resolution = HotkeyConflictResolver.Resolve(current.Hotkeys.WithKey(id, key), id);
-        // 反向校验：新热键不能与按键循环已启用的槽位键相同，否则按一次键会同时走两条路径。
-        if (KeyLoopSlotConflict(resolution.Hotkeys, id) is { } slotConflict)
-            return SettingsApplyResult.Fail(slotConflict);
         var result = ApplyDraft(current with { Hotkeys = resolution.Hotkeys });
         if (!result.Success) return result;
 
@@ -137,17 +135,20 @@ public sealed class SettingsTool : ITool, IEditableHotkeyProvider, IPassiveTool
         return SettingsApplyResult.Ok(message);
     }
 
-    /// <summary>只比较本次修改的热键项，避免历史遗留冲突把整页保存一起锁死。</summary>
-    private string? KeyLoopSlotConflict(HotkeySettings hotkeys, string id)
+    /// <summary>只比较本次修改的热键项与当前启用工具的输入槽位，避免锁死整页保存。</summary>
+    private string? HotkeySlotConflict(HotkeySettings hotkeys, string id)
     {
-        var slots = new List<(string Name, string Key)>();
-        for (var index = 0; index < _keyLoop.Slots.Count; index++)
-        {
-            var slot = _keyLoop.Slots[index];
-            if (!slot.Enabled || string.IsNullOrWhiteSpace(slot.Key)) continue;
-            slots.Add(($"槽位 {index + 1}", slot.Key));
-        }
-        if (slots.Count == 0) return null;
+        var host = _host;
+        if (host is null) return null;
+        var providers = host.RegisteredTools.OfType<IHotkeySlotConflictProvider>().ToArray();
+        if (providers.Any(provider => provider.IsCapturingHotkeySlot))
+            return "正在录制输入按键，请先完成或取消录制后再修改全局热键。";
+        var slots = host.RegisteredTools
+            .Where(tool => tool is not IEnableableTool enableable || enableable.IsEnabled)
+            .OfType<IHotkeySlotConflictProvider>()
+            .SelectMany(provider => provider.GetEnabledHotkeySlots())
+            .ToArray();
+        if (slots.Length == 0) return null;
 
         var entry = hotkeys.GetEntries().Single(candidate => candidate.Id == id);
         return HotkeyConflictRules.ValidateSlotKeyConflicts([(entry.Name, entry.Key, entry.Mode)], slots).FirstOrDefault();
@@ -180,6 +181,19 @@ public sealed class SettingsTool : ITool, IEditableHotkeyProvider, IPassiveTool
         var hotkeysChanged = !previous.Hotkeys.HasSameBindings(candidate.Hotkeys);
         var targetChanged = !string.Equals(previous.TargetProcess, candidate.TargetProcess,
             StringComparison.OrdinalIgnoreCase);
+        if (hotkeysChanged)
+        {
+            var previousKeys = previous.Hotkeys.GetEntries()
+                .ToDictionary(entry => entry.Id, entry => entry.Key, StringComparer.Ordinal);
+            foreach (var entry in candidate.Hotkeys.GetEntries())
+            {
+                if (previousKeys.TryGetValue(entry.Id, out var previousKey) &&
+                    string.Equals(previousKey, entry.Key, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (HotkeySlotConflict(candidate.Hotkeys, entry.Id) is { } slotConflict)
+                    return SettingsApplyResult.Fail(slotConflict);
+            }
+        }
         if ((hotkeysChanged || targetChanged) && RunningToolsMessage("修改热键或目标进程") is { } runningMessage)
             return SettingsApplyResult.Fail(runningMessage);
 

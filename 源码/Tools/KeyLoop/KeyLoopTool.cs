@@ -205,6 +205,9 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool, IHotkeySlotCon
     {
         if (_host is null) return "按键循环尚未初始化";
         if (_hotkeysPausedForCapture) return null;
+        if (_host.RegisteredTools.OfType<IHotkeySlotConflictProvider>()
+            .Any(provider => !ReferenceEquals(provider, this) && provider.IsCapturingHotkeySlot))
+            return "另一个输入槽位正在录制，请先完成或取消录制后重试";
         if (ToolCapabilities.RunningToolsMessage(_host, "设置槽位按键", Id) is { } running)
             return running;
         _host.Hotkeys.UnregisterAll();

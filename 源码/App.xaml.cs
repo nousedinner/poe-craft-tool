@@ -7,6 +7,7 @@ using ShiKe.Tools.Clicker;
 using ShiKe.Tools.Craft;
 using ShiKe.Tools.Hideout;
 using ShiKe.Tools.KeyLoop;
+using ShiKe.Tools.Potion;
 using ShiKe.Tools.Settings;
 using ShiKe.Services.Updates;
 
@@ -101,11 +102,13 @@ public partial class App : Application
         var craftTool = new CraftTool();
         var clickerTool = new ClickerTool();
         var keyLoopTool = new KeyLoopTool();
+        var potionTool = new PotionTool();
         var hideoutTool = new HideoutTool();
         _settingsTool = new SettingsTool(craftTool, clickerTool, keyLoopTool, hideoutTool);
         registry.Register(craftTool);
         registry.Register(clickerTool);
         registry.Register(keyLoopTool);
+        registry.Register(potionTool);
         registry.Register(hideoutTool);
         registry.Register(_settingsTool);
         MarkStartup("工具注册表创建完成");
