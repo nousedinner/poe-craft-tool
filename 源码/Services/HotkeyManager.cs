@@ -137,9 +137,7 @@ public sealed class HotkeyManager
         // 1. 语义级重复检测：Ctrl+Alt+F5 与 Alt+Ctrl+F5 也属于同一个热键。
         var parsedRequests = requests.Where(request => !string.IsNullOrWhiteSpace(request.Key)).Select(request =>
         {
-            var parsed = request.Mode == HotkeyMode.Hold
-                ? HotkeyParser.ParseHold(request.Key)
-                : HotkeyParser.Parse(request.Key);
+            var parsed = HotkeyParser.ParseForMode(request.Key, request.Mode);
             return (Request: request, Parsed: parsed);
         }).ToList();
 
@@ -565,6 +563,9 @@ public static class HotkeyParser
     public static ParsedHotkey? Parse(string key) => ParseInternal(key, allowStandaloneModifier: false);
 
     public static ParsedHotkey? ParseHold(string key) => ParseInternal(key, allowStandaloneModifier: true);
+
+    internal static ParsedHotkey? ParseForMode(string key, HotkeyMode mode)
+        => mode == HotkeyMode.Hold ? ParseHold(key) : Parse(key);
 
     private static ParsedHotkey? ParseInternal(string key, bool allowStandaloneModifier)
     {

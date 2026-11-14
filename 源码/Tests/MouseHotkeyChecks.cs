@@ -301,10 +301,10 @@ internal static class MouseHotkeyChecks
 
     public static void KeyLoopSlotKeysConflictWithHotkeys()
     {
-        HotkeyEntry Hotkey(string name, string key, HotkeyMode mode = HotkeyMode.Toggle)
-            => new(string.Empty, name, key, mode);
+        (string Name, string Key, HotkeyMode Mode) Hotkey(string name, string key, HotkeyMode mode = HotkeyMode.Toggle)
+            => (name, key, mode);
 
-        var hotkeys = new List<HotkeyEntry>
+        var hotkeys = new List<(string Name, string Key, HotkeyMode Mode)>
         {
             Hotkey("连点器按住", "Mouse4", HotkeyMode.Hold),
             Hotkey("按键循环", "F9"),

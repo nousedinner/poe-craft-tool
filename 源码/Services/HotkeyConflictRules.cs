@@ -15,7 +15,8 @@ public static class HotkeyConflictRules
     /// 按下去既触发热键又发送按键，所以两个方向都必须判定。
     /// </summary>
     public static IReadOnlyList<string> ValidateSlotKeyConflicts(
-        IReadOnlyList<HotkeyEntry> hotkeys, IReadOnlyList<(string Name, string Key)> slots)
+        IReadOnlyList<(string Name, string Key, HotkeyMode Mode)> hotkeys,
+        IReadOnlyList<(string Name, string Key)> slots)
     {
         var errors = new List<string>();
         var parsedSlots = new List<(string Name, string Key, ParsedHotkey Trigger)>();
@@ -36,9 +37,7 @@ public static class HotkeyConflictRules
             foreach (var hotkey in hotkeys)
             {
                 if (string.IsNullOrWhiteSpace(hotkey.Key)) continue;
-                var trigger = hotkey.Mode == HotkeyMode.Hold
-                    ? HotkeyParser.ParseHold(hotkey.Key)
-                    : HotkeyParser.Parse(hotkey.Key);
+                var trigger = HotkeyParser.ParseForMode(hotkey.Key, hotkey.Mode);
                 if (trigger is null || trigger.Value != slot.Trigger) continue;
                 errors.Add($"按键循环{slot.Name}的按键“{slot.Key}”与「{hotkey.Name}」热键冲突");
             }

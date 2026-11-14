@@ -28,6 +28,13 @@ public interface IEditableHotkeyProvider
     void RefreshSettingsPresentation() { }
 }
 
+/// <summary>工具提供要发送的槽位按键；宿主在启用工具前用它检查全局热键冲突。</summary>
+public interface IHotkeySlotConflictProvider
+{
+    IReadOnlyList<(string Name, string Key)> GetEnabledHotkeySlots();
+    bool IsCapturingHotkeySlot { get; }
+}
+
 public static class ToolCapabilities
 {
     /// <summary>

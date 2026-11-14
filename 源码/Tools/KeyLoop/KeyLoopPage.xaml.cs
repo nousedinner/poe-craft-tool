@@ -246,10 +246,8 @@ public partial class KeyLoopPage : UserControl
     private void ClearKey(int index)
     {
         if (_tool.IsRunning) return;
-        _captureIndex = null;
-        HideCaptureHint();
-        // 恢复失败由 EndSlotCapture 直接通知，放在保存之前：保存抛异常也不会吞掉这条提示。
-        _tool.EndSlotCapture();
+        // 统一结束当前录制；如果正在录制其他行，也要恢复那一行的按钮显示。
+        CancelCapture(interactive: false);
         _tool.Slots[index].Key = string.Empty;
         _rows[index].KeyButton.Tag = string.Empty;
         RefreshKeyButton(index);

@@ -8,7 +8,7 @@ namespace ShiKe.Tools.Craft;
 /// </summary>
 internal static class HarvestLoop
 {
-    /// <summary>一轮结果。UseCount 从 1 开始；IdenticalResults 是「与上一轮完全相同的次数」，首轮为 0。</summary>
+    /// <summary>一轮结果。UseCount 从 1 开始；IdenticalResults 是首轮之后与上一轮相同的比较次数，首轮为 0。</summary>
     public sealed record Step(int UseCount, CraftItemSnapshot Item, AffixCheckResult Result, int IdenticalResults);
 
     /// <param name="convertAndCopy">点一次工艺按钮并复制工艺区域；复制失败应直接抛异常，由调用方终止任务。</param>

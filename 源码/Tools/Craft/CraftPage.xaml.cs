@@ -67,6 +67,8 @@ public partial class CraftPage : UserControl
     internal void RefreshHotkeyHints(string startHotkey, string stopHotkey, string coordinateHotkey)
     {
         CraftHotkeyHint.Text = $"{HotkeySetting.Display(startHotkey)} 启动 · {HotkeySetting.Display(stopHotkey)} 停止 · {HotkeySetting.Display(coordinateHotkey)} 录坐标";
+        if (!string.IsNullOrWhiteSpace(coordinateHotkey))
+            CraftExceptionText.Text = string.Empty;
         if (_host.Coordinates.ActiveSlot is not { } slot) return;
         if (string.IsNullOrWhiteSpace(coordinateHotkey))
         {

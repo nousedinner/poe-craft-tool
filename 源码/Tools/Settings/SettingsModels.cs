@@ -96,17 +96,13 @@ internal static class HotkeyConflictResolver
         var candidate = requested.Normalize();
         var entries = candidate.GetEntries();
         var preferred = entries.Single(entry => entry.Id == preferredId);
-        var trigger = preferred.Mode == HotkeyMode.Hold
-            ? HotkeyParser.ParseHold(preferred.Key)
-            : HotkeyParser.Parse(preferred.Key);
+        var trigger = HotkeyParser.ParseForMode(preferred.Key, preferred.Mode);
         var clearedNames = new List<string>();
         if (trigger is null) return (candidate, clearedNames);
 
         foreach (var entry in entries.Where(entry => entry.Id != preferredId))
         {
-            var other = entry.Mode == HotkeyMode.Hold
-                ? HotkeyParser.ParseHold(entry.Key)
-                : HotkeyParser.Parse(entry.Key);
+            var other = HotkeyParser.ParseForMode(entry.Key, entry.Mode);
             if (other != trigger) continue;
             candidate = candidate.WithKey(entry.Id, string.Empty);
             clearedNames.Add(entry.Name);
@@ -176,9 +172,7 @@ public static class SettingsValidation
         foreach (var entry in hotkeys.GetEntries())
         {
             if (string.IsNullOrWhiteSpace(entry.Key)) continue;
-            var trigger = entry.Mode == HotkeyMode.Hold
-                ? HotkeyParser.ParseHold(entry.Key)
-                : HotkeyParser.Parse(entry.Key);
+            var trigger = HotkeyParser.ParseForMode(entry.Key, entry.Mode);
             if (trigger is null)
             {
                 errors.Add($"{entry.Name}热键“{entry.Key}”无法识别");

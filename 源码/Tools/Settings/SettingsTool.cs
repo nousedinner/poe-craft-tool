@@ -150,7 +150,7 @@ public sealed class SettingsTool : ITool, IEditableHotkeyProvider, IPassiveTool
         if (slots.Count == 0) return null;
 
         var entry = hotkeys.GetEntries().Single(candidate => candidate.Id == id);
-        return HotkeyConflictRules.ValidateSlotKeyConflicts([entry], slots).FirstOrDefault();
+        return HotkeyConflictRules.ValidateSlotKeyConflicts([(entry.Name, entry.Key, entry.Mode)], slots).FirstOrDefault();
     }
 
     public SettingsApplyResult ApplyDraft(SettingsDraft requested)

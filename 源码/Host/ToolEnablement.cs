@@ -21,7 +21,7 @@ public static class ToolEnablement
         Action stopWhenDisabled,
         Action saveSettings)
         => TryApply(tool, enabled, applyState, stopWhenDisabled, saveSettings,
-            () => ValidateCompatibility(host.RegisteredTools),
+            () => ValidateCompatibility(host.RegisteredTools) ?? ValidateHotkeySlotState(host, enabled),
             () => host.Hotkeys.ReRegister(host.BuildHotkeyRequests()));
 
     // 内部回归替换注册/保存操作，不创建宿主或发送真实输入。
@@ -123,5 +123,25 @@ public static class ToolEnablement
             not null => true,
             _ => false,
         };
+    }
+
+    private static string? ValidateHotkeySlotState(ToolHost host, bool enabling)
+    {
+        var providers = host.RegisteredTools.OfType<IHotkeySlotConflictProvider>().ToArray();
+        if (providers.Any(provider => provider.IsCapturingHotkeySlot))
+            return "正在录制按键循环槽位，请先完成或取消录制后再修改工具启用状态。";
+        if (!enabling) return null;
+
+        var slots = host.RegisteredTools
+            .Where(tool => tool is not IEnableableTool enableable || enableable.IsEnabled)
+            .OfType<IHotkeySlotConflictProvider>()
+            .SelectMany(provider => provider.GetEnabledHotkeySlots())
+            .ToArray();
+        if (slots.Length == 0) return null;
+
+        var hotkeys = host.BuildHotkeyRequests()
+            .Select(request => (request.DisplayName, request.Key, request.Mode))
+            .ToArray();
+        return HotkeyConflictRules.ValidateSlotKeyConflicts(hotkeys, slots).FirstOrDefault();
     }
 }

@@ -7,7 +7,7 @@ using ShiKe.Tools.Settings;
 
 namespace ShiKe.Tools.KeyLoop;
 
-public sealed partial class KeyLoopTool : ITool, IEnableableTool
+public sealed partial class KeyLoopTool : ITool, IEnableableTool, IHotkeySlotConflictProvider
 {
     private ToolHost? _host;
     private KeyLoopEngine? _engine;
@@ -152,7 +152,7 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
         if (enabledCount == 0) return "请至少启用一个按键槽位";
 
         // 槽位键与全局热键、槽位与槽位都不能共用同一个触发器，否则一次按键会同时触发两条路径。
-        return HotkeyConflictRules.ValidateSlotKeyConflicts(RegisteredHotkeyEntries(), SlotKeyBindings(null))
+        return HotkeyConflictRules.ValidateSlotKeyConflicts(RegisteredHotkeyBindings(), SlotKeyBindings(null))
             .FirstOrDefault();
     }
 
@@ -160,16 +160,16 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
     internal string? ValidateSlotKey(int index, string key)
     {
         if (string.IsNullOrWhiteSpace(key)) return null;
-        return HotkeyConflictRules.ValidateSlotKeyConflicts(RegisteredHotkeyEntries(), SlotKeyBindings(index, key))
+        return HotkeyConflictRules.ValidateSlotKeyConflicts(RegisteredHotkeyBindings(), SlotKeyBindings(index, key))
             .FirstOrDefault();
     }
 
-    private IReadOnlyList<HotkeyEntry> RegisteredHotkeyEntries()
+    private IReadOnlyList<(string Name, string Key, HotkeyMode Mode)> RegisteredHotkeyBindings()
         => _host is null
             ? []
             : _host.BuildHotkeyRequests()
                 .Where(request => !string.IsNullOrWhiteSpace(request.Key))
-                .Select(request => new HotkeyEntry(string.Empty, request.DisplayName, request.Key, request.Mode))
+                .Select(request => (request.DisplayName, request.Key, request.Mode))
                 .ToList();
 
     /// <summary>启用中的槽位键；<paramref name="editingIndex"/> 用候选键替换该槽位当前值。</summary>
@@ -188,6 +188,11 @@ public sealed partial class KeyLoopTool : ITool, IEnableableTool
             bindings.Add(($"槽位 {target + 1}", candidateKey));
         return bindings;
     }
+
+    IReadOnlyList<(string Name, string Key)> IHotkeySlotConflictProvider.GetEnabledHotkeySlots()
+        => SlotKeyBindings(null);
+
+    bool IHotkeySlotConflictProvider.IsCapturingHotkeySlot => _hotkeysPausedForCapture;
 
     /// <summary>
     /// 进入槽位录制：临时注销全部全局热键。

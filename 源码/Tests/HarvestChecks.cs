@@ -184,7 +184,6 @@ internal static class HarvestChecks
         Require(CraftEngine.CheckCoordinates(rules, both, false, false) is null, "两个工艺坐标齐全时必须允许启动");
 
         // 庄园工艺不再要求背包装备坐标，反之通货模式也不该被工艺坐标满足。
-        Require(!both.ContainsKey(CraftSlot.Item), "庄园工艺的坐标集合不应包含背包装备槽位");
         var single = new CraftRules { Mode = CraftMode.Single, SingleCurrency = Currency.Alteration };
         var harvestOnly = new Dictionary<string, Point>
         {
