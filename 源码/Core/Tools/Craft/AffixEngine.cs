@@ -51,13 +51,19 @@ public static class AffixEngine
     // 首次解析时保存固定表达式，避免35条过滤规则反复挤出静态Regex缓存。
     private static readonly Regex ChineseRarity = new(@"^稀\s*有\s*度\s*[:：]\s*(\S+)");
     private static readonly Regex EnglishRarity = new(@"^Rarity\s*:\s*(\S+)", RegexOptions.IgnoreCase);
-    private static readonly Regex ChineseExplicitHeader = new(@"^\{\s*(?:前[缀綴]|[后後][缀綴])(?:[属屬]性)?(?=\s|[""“])");
+    private const string ChineseAffixKind = @"(?:前[缀綴]|[后後][缀綴])(?:[属屬]性)?(?=\s|[""“])";
+    private static readonly Regex ChineseExplicitHeader = new(@"^\{\s*" + ChineseAffixKind);
+    private static readonly Regex ChineseFracturedHeader = new(@"^\{\s*破碎的\s+" + ChineseAffixKind);
+    private static readonly Regex EnglishFracturedHeader = new(@"^\{\s*Fractured\s+(?:Prefix|Suffix)\s+Modifier\b", RegexOptions.IgnoreCase);
 
     /// <summary>
     /// 解析物品文本为双视图：MatchLines 用于宽松匹配；ExplicitAffixes 用于真实词缀计数。
     /// 高级描述中的显式词缀头形如 { 前缀属性 ... } / { 後綴 ... } / { Prefix Modifier ... }。
     /// </summary>
     public static ItemParseResult ParseItem(string clipboardText)
+        => ParseItem(clipboardText, includeFracturedAffixes: false);
+
+    internal static ItemParseResult ParseItem(string clipboardText, bool includeFracturedAffixes)
     {
         var result = new ItemParseResult();
         var rawLines = clipboardText.Split('\n');
@@ -100,6 +106,7 @@ public static class AffixEngine
             if (line.StartsWith("--------")) continue;   // 分段符
             if (IsSkipped(line)) continue;               // 元数据行
             if (IsParentheticalNote(line)) continue;      // 机制说明，不是物品词缀
+            result.IsFractured |= line == "分裂之物" || line.Equals("Fractured Item", StringComparison.OrdinalIgnoreCase);
             result.MatchLines.Add(line);
             matchLinesByIndex[i] = line;
         }
@@ -110,7 +117,11 @@ public static class AffixEngine
         for (var i = 0; i < rawLines.Length; i++)
         {
             var header = rawLines[i].Trim();
-            if (!IsExplicitAffixHeader(header)) continue;
+            if (!header.StartsWith('{')) continue;
+            var fracturedChinese = ChineseFracturedHeader.IsMatch(header);
+            if (!fracturedChinese && !IsExplicitAffixHeader(header)) continue;
+            result.IsFractured |= fracturedChinese || EnglishFracturedHeader.IsMatch(header);
+            if (fracturedChinese && !includeFracturedAffixes) continue;
 
             var affix = new ParsedItemAffix { Header = header };
             explicitLineIndices.Add(i);
@@ -205,8 +216,6 @@ public static class AffixEngine
 
     private static bool IsExplicitAffixHeader(string line)
     {
-        if (!line.StartsWith('{')) return false;
-
         // 前/后缀类型必须紧跟左花括号；繁体描述可以没有“屬性”。
         // 階層只是头里的附加信息，不要求它出现，也不把基底/附魔头里的前后缀名字误计数。
         var chinese = ChineseExplicitHeader.IsMatch(line);

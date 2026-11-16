@@ -47,6 +47,13 @@ public static class CraftStateSync
         return !string.Equals(NormalizeItemText(baseline), NormalizeItemText(candidate), StringComparison.Ordinal);
     }
 
+    /// <summary>符合条件的破碎蓝装使用改造石后，两次有效复制相同即可判定词缀。</summary>
+    internal static bool CanAcceptUnchangedAlteration(CraftMode mode, CraftCurrencyOperation operation,
+        CraftItemSnapshot item)
+        => mode is CraftMode.Single or CraftMode.AltAug && operation == CraftCurrencyOperation.Alteration &&
+           item.State is { Rarity: ItemRarity.Magic, ExplicitAffixCount: 1 or 2 } &&
+           item.Parsed.IsFractured && !item.IsCorrupted;
+
     /// <summary>
     /// 根据通货种类校验服务器返回的状态转换。
     /// 先要求完整文本发生变化，再检查稀有度和真实显式词缀数。

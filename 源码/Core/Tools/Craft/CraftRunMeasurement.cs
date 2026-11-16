@@ -124,10 +124,16 @@ internal sealed class CraftRunMeasurement
         _lastText = text;
     }
 
+    public void RecordUnchangedResult(string text)
+    {
+        // 复制到相同词缀可以判定规则，通货消耗仍无法从文本确认。
+        if (_step is { ClickSent: true }) _step.AfterText = text;
+    }
+
     public void CompleteMatching(string text, AffixCheckResult result)
     {
-        // 启动基线及重复判定不能制造成功循环；必须对应已发送且已确认的本次点击。
-        if (_step is not { Confirmed: true } || _step.AfterText != text) return;
+        // 每次匹配须对应已发送的点击和复制结果；启动基线不参与计数。
+        if (_step is not { ClickSent: true } || _step.AfterText != text) return;
         _matched++;
         if (_matchDurations.Count < SampleLimit) _matchDurations.Add(ActiveMs - _step.StartedActiveMs);
         FinishStep(result);

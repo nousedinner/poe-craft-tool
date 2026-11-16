@@ -9,14 +9,16 @@ internal sealed class CraftItemSnapshot
     public string Text { get; }
     public ItemParseResult Parsed { get; }
     public CraftItemState State => new(Parsed.Rarity, Parsed.ExplicitAffixCount);
+    internal bool IsCorrupted => Text.Contains("已污染", StringComparison.Ordinal) ||
+        Text.Contains("Corrupted", StringComparison.OrdinalIgnoreCase);
     private string NormalizedText { get; }
 
-    public CraftItemSnapshot(string text)
+    public CraftItemSnapshot(string text, bool includeFracturedAffixes = false)
     {
         ArgumentNullException.ThrowIfNull(text);
         Text = text;
         NormalizedText = CraftStateSync.NormalizeItemText(text);
-        Parsed = AffixEngine.ParseItem(text);
+        Parsed = AffixEngine.ParseItem(text, includeFracturedAffixes);
     }
 
     public bool HasChangedTo(string candidate)

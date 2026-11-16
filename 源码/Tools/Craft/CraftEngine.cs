@@ -549,6 +549,14 @@ public sealed class CraftEngine
     private Task<CraftItemSnapshot> CopyBaselineWithRetryAsync(string context, CancellationToken token)
         => CopyWithRetryAsync(context, CraftSlot.Item, isBaseline: true, token);
 
+    private CraftItemSnapshot CreateItemSnapshot(string text)
+        => new(text, includeFracturedAffixes: _rules.Mode switch
+        {
+            CraftMode.Single => _rules.SingleCurrency == Currency.Alteration,
+            CraftMode.AltAug => !_mode2ScourAlch,
+            _ => false,
+        });
+
     /// <summary>
     /// 复制物品文本并允许重试，避免一次丢失的 Ctrl+Alt+C 直接终止任务。
     /// isBaseline=true 表示启动基线（只记基线，不要求与上一次不同）；
@@ -572,7 +580,7 @@ public sealed class CraftEngine
                 _environment.Log(isBaseline
                     ? $"[同步] {context} 启动基线已建立: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}, {text.Length} chars"
                     : $"[同步] {context} 复制成功: total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}, {text.Length} chars");
-                var snapshot = new CraftItemSnapshot(text);
+                var snapshot = CreateItemSnapshot(text);
                 if (isBaseline) _runMeasurement?.RecordBaseline(text);
                 else _runMeasurement?.ConfirmTransition(text);
                 return snapshot;
@@ -622,7 +630,7 @@ public sealed class CraftEngine
                 {
                     _environment.Log($"[同步] Mode1 物品状态已变化: total={stopwatch.ElapsedMilliseconds}ms, " +
                              $"attempts={attempts}, unchanged={unchangedCopies}, empty={emptyCopies}");
-                    var snapshot = new CraftItemSnapshot(candidate);
+                    var snapshot = CreateItemSnapshot(candidate);
                     _runMeasurement?.ConfirmTransition(candidate);
                     return snapshot;
                 }
@@ -657,11 +665,12 @@ public sealed class CraftEngine
     }
 
     /// <summary>
-    /// Mode 2/3 操作后门禁：重试复制直到观察到该通货应有的稀有度/词缀数转换。
-    /// 未观察到预期转换时绝不发送下一次鼠标点击。
+    /// 重试复制直到观察到该通货应有的稀有度/词缀数转换。
+    /// Mode 1/2 的破碎蓝装改造可接受两次新复制的相同物品文本。
     /// </summary>
-    private async Task<CraftItemSnapshot> WaitForExpectedTransitionAsync(CraftItemSnapshot baseline,
-        CraftCurrencyOperation operation, string operationLabel, CancellationToken token)
+    internal async Task<CraftItemSnapshot> WaitForExpectedTransitionAsync(CraftItemSnapshot baseline,
+        CraftCurrencyOperation operation, string operationLabel, CancellationToken token,
+        bool startedOnFracturedItem = false, Func<CancellationToken, Task<string?>>? copyItem = null)
     {
         var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
         var stopwatch = Stopwatch.StartNew();
@@ -670,6 +679,9 @@ public sealed class CraftEngine
         var emptyCopies = 0;
         var before = baseline.State;
         var lastReason = "未收到有效物品文本";
+        var allowUnchanged = startedOnFracturedItem &&
+            CraftStateSync.CanAcceptUnchangedAlteration(_rules.Mode, operation, baseline);
+        var unchangedCopies = 0;
 
         var firstWaitMs = _timing.FirstWaitMs(_delayMs);
         if (firstWaitMs > 0)
@@ -679,8 +691,9 @@ public sealed class CraftEngine
         {
             token.ThrowIfCancellationRequested();
             attempts++;
-            var candidate = await TryCopyClipboardOnceAsync(
-                CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token);
+            var candidate = copyItem is null
+                ? await TryCopyClipboardOnceAsync(CraftStateSync.CopyAttemptTimeoutMs, throwOnClearFailure: false, token)
+                : await copyItem(token);
 
             if (candidate is null)
             {
@@ -690,7 +703,7 @@ public sealed class CraftEngine
             {
                 var changed = baseline.HasChangedTo(candidate);
                 // 旧状态无需重解析；新状态的解析与原文一起返回给后续匹配。
-                var observed = changed ? new CraftItemSnapshot(candidate) : baseline;
+                var observed = changed ? CreateItemSnapshot(candidate) : baseline;
                 var after = observed.State;
                 var check = CraftStateSync.CheckTransition(operation, before, after, changed);
                 if (check.Accepted)
@@ -703,12 +716,23 @@ public sealed class CraftEngine
                     return observed;
                 }
 
+                // 读到不符合预期的变化后恢复常规校验；只有同一状态的有效复制才计入短复查。
+                if (changed) allowUnchanged = false;
+                if (allowUnchanged && ++unchangedCopies == 2)
+                {
+                    token.ThrowIfCancellationRequested();
+                    _environment.Log($"[同步] {operationLabel} 后两次有效复制均为相同的破碎装备，按当前词缀判定: " +
+                             $"total={stopwatch.ElapsedMilliseconds}ms, attempts={attempts}, empty={emptyCopies}");
+                    _runMeasurement?.RecordUnchangedResult(baseline.Text);
+                    return baseline;
+                }
+
                 rejectedCopies++;
                 _runMeasurement?.RejectCopy(unchanged: !changed);
                 lastReason = check.Reason;
                 _environment.Log($"[同步] {operationLabel} 尚未观察到预期转换: " +
                          $"total={stopwatch.ElapsedMilliseconds}ms, attempt={attempts}, reason={lastReason}");
-                if (rejectedCopies >= Math.Max(1, _exhaustionThreshold)) break;
+                if (!allowUnchanged && rejectedCopies >= Math.Max(1, _exhaustionThreshold)) break;
             }
 
             if (stopwatch.ElapsedMilliseconds >= timeoutMs) break;
@@ -822,6 +846,8 @@ public sealed class CraftEngine
         // 启动时的装备可能已命中，但 Mode 1 的产品语义是 F5 后仍先使用一次通货。
         // 因此此处只建立点击前基线，不调用 CheckItem。
         var baseline = await CopyBaselineWithRetryAsync("Mode1", token);
+        var startedOnFracturedItem = _rules.SingleCurrency == Currency.Alteration &&
+            CraftStateSync.CanAcceptUnchangedAlteration(_rules.Mode, CraftCurrencyOperation.Alteration, baseline);
         try
         {
             while (true)
@@ -832,7 +858,10 @@ public sealed class CraftEngine
                 await ClickItemAsync(itemCoord, token);
                 UseCount++;
 
-                var text = await WaitForChangedMode1ItemAsync(baseline, token);
+                var text = startedOnFracturedItem
+                    ? await WaitForExpectedTransitionAsync(baseline, CraftCurrencyOperation.Alteration, "改造石", token,
+                        startedOnFracturedItem)
+                    : await WaitForChangedMode1ItemAsync(baseline, token);
 
                 var (result, _) = CheckItem(text);
                 MatchCount = result.TotalHits;
@@ -921,14 +950,15 @@ public sealed class CraftEngine
 
         // 启动状态只作为第一次改造的基线，不判定命中。
         var text = await CopyBaselineWithRetryAsync("Mode2", token);
-        if (text.Text.Contains("已污染", StringComparison.Ordinal) ||
-            text.Text.Contains("Corrupted", StringComparison.OrdinalIgnoreCase))
+        if (text.IsCorrupted)
             throw new InvalidOperationException("Mode 2 不支持已污染物品，未执行通货操作");
 
         var initialItem = text.Parsed;
         if (initialItem.Rarity != ItemRarity.Magic)
             throw new InvalidOperationException(
                 $"Mode 2 改造+增幅要求启动物品为魔法稀有度，当前为 {initialItem.Rarity}，未执行通货操作");
+        var startedOnFracturedItem =
+            CraftStateSync.CanAcceptUnchangedAlteration(_rules.Mode, CraftCurrencyOperation.Alteration, text);
 
         await Mode2PairedCurrencyLoop.RunAlterationAugmentationAsync(_rules,
             async workToken =>
@@ -947,7 +977,7 @@ public sealed class CraftEngine
                 await ClickItemAsync(itemCoord, workToken);
                 UseCount++;
                 text = await WaitForExpectedTransitionAsync(text,
-                    CraftCurrencyOperation.Alteration, "改造石", workToken);
+                    CraftCurrencyOperation.Alteration, "改造石", workToken, startedOnFracturedItem);
                 var (result, _) = CheckItem(text);
                 MatchCount = result.TotalHits;
                 return new Mode2AlterationStep(text, result);

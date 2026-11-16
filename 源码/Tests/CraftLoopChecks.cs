@@ -127,6 +127,103 @@ internal static class CraftLoopChecks
         Equal(1, calls, "复制异常不得触发额外通货操作");
     }
 
+    internal const string FracturedAmulet = """
+        物品类别: 项链
+        稀 有 度: 魔法
+        深蓝的海灵护身符
+        --------
+        需求:
+        等级: 55
+        --------
+        物品等级: 85
+        --------
+        { 基底属性 — 魔力 }
+        魔力再生速度提高 27(20-30)%
+        --------
+        { 破碎的 前缀属性 "深蓝的" (等阶：4) — 魔力 }
+        +62(60-64) 最大魔力
+        --------
+        分裂之物
+        --------
+        出售获得通货:非绑定
+        """;
+
+    public static void UnchangedAlterationRequiresFracturedMagicInMode1Or2()
+    {
+        foreach (var text in new[]
+        {
+            FracturedAmulet,
+            FracturedAmulet.Replace("分裂之物", "", StringComparison.Ordinal),
+            FracturedAmulet.Replace("破碎的 ", "", StringComparison.Ordinal),
+        })
+        {
+            var item = new CraftItemSnapshot(text, includeFracturedAffixes: true);
+            Require(CraftStateSync.CanAcceptUnchangedAlteration(CraftMode.Single, CraftCurrencyOperation.Alteration, item),
+                "Mode1 改造应能识别独立的分裂标记或破碎词缀头");
+            Require(CraftStateSync.CanAcceptUnchangedAlteration(CraftMode.AltAug, CraftCurrencyOperation.Alteration, item),
+                "Mode2 破碎蓝装应能接受新复制的相同改造结果");
+        }
+
+        foreach (var text in new[]
+        {
+            FracturedAmulet.Replace("分裂之物", "分裂", StringComparison.Ordinal)
+                .Replace("破碎的 ", "", StringComparison.Ordinal),
+            FracturedAmulet.Replace("魔法", "稀有", StringComparison.Ordinal),
+            FracturedAmulet + "\n--------\n已污染",
+            FracturedAmulet.Replace("{ 破碎的 前缀属性 \"深蓝的\" (等阶：4) — 魔力 }", "", StringComparison.Ordinal),
+        })
+        {
+            Require(!CraftStateSync.CanAcceptUnchangedAlteration(CraftMode.Single, CraftCurrencyOperation.Alteration,
+                new CraftItemSnapshot(text, includeFracturedAffixes: true)), "普通分裂、非蓝装、已污染或缺少高级词缀头时仍须等待变化");
+        }
+
+        var fractured = new CraftItemSnapshot(FracturedAmulet, includeFracturedAffixes: true);
+        Require(!CraftStateSync.CanAcceptUnchangedAlteration(CraftMode.Single, CraftCurrencyOperation.AnyChange, fractured),
+            "Mode1 其他通货不能接受相同结果");
+        Require(!CraftStateSync.CanAcceptUnchangedAlteration(CraftMode.AltAug, CraftCurrencyOperation.Augmentation, fractured),
+            "增幅必须观察到新词缀");
+        Require(!CraftStateSync.CanAcceptUnchangedAlteration(CraftMode.AltAugRegal, CraftCurrencyOperation.Alteration, fractured),
+            "Mode3 不使用 Mode1/2 的放行条件");
+    }
+
+    public static void Mode2FracturedAffixesControlAugmentation()
+    {
+        var lockedOnly = new CraftItemSnapshot(FracturedAmulet, includeFracturedAffixes: true);
+        var otherSuffix = WithSuffix("+31 力量");
+        var desiredSuffix = WithSuffix("目标乙");
+        Equal(1, lockedOnly.State.ExplicitAffixCount, "只有破碎词缀时已占一个词缀位");
+        Equal(2, otherSuffix.State.ExplicitAffixCount, "破碎前缀加普通后缀已占满两个词缀位");
+        Require(CraftStateSync.CheckTransition(CraftCurrencyOperation.Augmentation,
+            lockedOnly.State, desiredSuffix.State, lockedOnly.HasChangedTo(desiredSuffix.Text)).Accepted,
+            "增幅从一条锁词增加到真实的两条词缀");
+
+        var rules = Rules();
+        rules.PrimaryAffixes[0] = new AffixRule { Text = "最大魔力" };
+        var rolls = new Queue<CraftItemSnapshot>([otherSuffix, otherSuffix, lockedOnly]);
+        var operations = new List<string>();
+        var result = Mode2PairedCurrencyLoop.RunAlterationAugmentationAsync(rules,
+            _ => Task.CompletedTask, _ => Task.CompletedTask,
+            _ =>
+            {
+                operations.Add("改造");
+                return Task.FromResult(Match(rolls.Dequeue()));
+            },
+            _ =>
+            {
+                operations.Add("增幅");
+                return Task.FromResult(Match(desiredSuffix));
+            },
+            _ => { }, () => { }, CancellationToken.None).GetAwaiter().GetResult();
+        Require(operations.SequenceEqual(new[] { "改造", "改造", "改造", "增幅" }),
+            "重复读到已占两词缀位的破碎装备应继续改造，只有一条命中的锁词时才增幅");
+        Require(result.Result.MeetsFinalRules(rules), "增幅后两个不同的实际词缀可以分别命中");
+
+        Mode2AlterationStep Match(CraftItemSnapshot item) => new(item, AffixEngine.CheckAffixes(item.Parsed, rules));
+        static CraftItemSnapshot WithSuffix(string description) => new(FracturedAmulet.Replace("+62(60-64) 最大魔力",
+            $"+62(60-64) 最大魔力\n{{ 后缀属性 \"测试之\" (等阶：1) }}\n{description}", StringComparison.Ordinal),
+            includeFracturedAffixes: true);
+    }
+
     public static void SnapshotKeepsOriginalTextAndReusesParsedObject()
     {
         var original = "\r\n " + Text("目标甲", "目标乙").Replace("\n", "\r\n") + " \r\n";

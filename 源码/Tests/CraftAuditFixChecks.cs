@@ -264,6 +264,66 @@ internal static class CraftAuditFixChecks
         }
     }
 
+    public static void FracturedAlterationRepeatsOnlyOneSuccessfulCopy() => OnSta(() =>
+    {
+        var engine = new CraftEngine(new ToolHost(new ToolRegistry()), null, _ => Task.CompletedTask);
+        try
+        {
+            var fractured = new CraftItemSnapshot(CraftLoopChecks.FracturedAmulet, includeFracturedAffixes: true);
+            var withSuffix = fractured.Text.Replace("+62(60-64) 最大魔力",
+                "+62(60-64) 最大魔力\n{ 后缀属性 \"恢复之\" (等阶：2) }\n你的攻击击中每个敌人会回复 3 生命",
+                StringComparison.Ordinal);
+            var ordinary = new CraftItemSnapshot(fractured.Text.Replace("破碎的 ", "", StringComparison.Ordinal)
+                .Replace("分裂之物", "分裂", StringComparison.Ordinal));
+            var wrongRarity = fractured.Text.Replace("魔法", "稀有", StringComparison.Ordinal);
+
+            foreach (var mode in new[] { CraftMode.Single, CraftMode.AltAug })
+            {
+                Field<CraftRules>(engine, "_rules").Mode = mode;
+                Equal(withSuffix, ReadAlteration(withSuffix).Text, "有变化的首份物品文本应立即判定");
+                Equal(withSuffix, ReadAlteration(fractured.Text, withSuffix).Text, "复查读到变化时使用最新词缀");
+                Equal(fractured.Text, ReadAlteration(fractured.Text, fractured.Text).Text, "两份相同的有效复制即可放行");
+                Equal(fractured.Text, ReadAlteration(null, fractured.Text, null, fractured.Text).Text,
+                    "空复制不能计入两份相同文本，仍须等待下一份有效文本");
+            }
+
+            RequireRegularFailure(ordinary, CraftCurrencyOperation.Alteration, startedOnFracturedItem: true);
+            RequireRegularFailure(fractured, CraftCurrencyOperation.Alteration, startedOnFracturedItem: false);
+            RequireRegularFailure(fractured, CraftCurrencyOperation.Augmentation, startedOnFracturedItem: true);
+            RequireRegularFailure(fractured, CraftCurrencyOperation.Alteration, startedOnFracturedItem: true,
+                secondCopy: wrongRarity);
+
+            CraftItemSnapshot ReadAlteration(params string?[] copies)
+            {
+                var queue = new Queue<string?>(copies);
+                var item = engine.WaitForExpectedTransitionAsync(fractured, CraftCurrencyOperation.Alteration, "改造石",
+                    CancellationToken.None, startedOnFracturedItem: true, copyItem: _ => Task.FromResult(queue.Dequeue()))
+                    .GetAwaiter().GetResult();
+                Equal(0, queue.Count, "符合条件的改造应在指定的有效复制次数内完成");
+                return item;
+            }
+
+            void RequireRegularFailure(CraftItemSnapshot baseline, CraftCurrencyOperation operation,
+                bool startedOnFracturedItem, string? secondCopy = null)
+            {
+                var copies = 0;
+                try
+                {
+                    engine.WaitForExpectedTransitionAsync(baseline, operation, "测试通货", CancellationToken.None,
+                        startedOnFracturedItem, _ => Task.FromResult<string?>(++copies == 2 && secondCopy is not null
+                            ? secondCopy : baseline.Text)).GetAwaiter().GetResult();
+                }
+                catch (InvalidOperationException error) when (error.Message.Contains("未观察到预期物品变化", StringComparison.Ordinal))
+                {
+                    Equal(10, copies, "常规校验仍按默认阈值拒绝相同或异常的转换");
+                    return;
+                }
+                throw new InvalidOperationException("常规校验不能按相同文本放行");
+            }
+        }
+        finally { Shutdown(engine); }
+    });
+
     private static CraftRules Rules(string target)
     {
         var rules = new CraftRules { Mode = CraftMode.Single };

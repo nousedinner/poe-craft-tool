@@ -68,6 +68,25 @@ internal static class CraftRunChecks
         Equal(1000d / 230, summary.MatchedPerSecond, "总速度不能拿解析耗时的倒数计算");
     }
 
+    public static void UnchangedResultIsMatchedWithoutClaimingCurrencyUse()
+    {
+        const string item = "相同的破碎装备";
+        var measurement = new CraftRunMeasurement();
+        measurement.RecordBaseline(item);
+        measurement.BeginClick("改造石");
+        measurement.ClickSent();
+        measurement.RecordUnchangedResult(item);
+        measurement.CompleteMatching(item, new AffixCheckResult());
+        var summary = measurement.Stop("用户停止");
+        Require(summary.SentClicks == 1 && summary.ConfirmedTransitions == 0 &&
+            summary.MatchedCycles == 1 && summary.SyncFailures == 0,
+            "同一物品文本可判定命中，但不能计为已确认的通货转换");
+        using var report = JsonDocument.Parse(measurement.SerializeReport(summary, new { }));
+        var trace = report.RootElement.GetProperty("recentItemStates")[0];
+        Require(trace.GetProperty("beforeText").GetString() == item && trace.GetProperty("afterText").GetString() == item,
+            "报告应保留相同的点击前后物品文本");
+    }
+
     public static void ReadsAndRejectedCopiesAreDifferentCounters()
     {
         double now = 0;

@@ -143,6 +143,7 @@ public sealed class ItemParseResult
     public List<ItemMatchCandidate> MatchCandidates { get; } = [];
     public List<ParsedItemAffix> ExplicitAffixes { get; } = [];
     public int ExplicitAffixCount => ExplicitAffixes.Count;
+    internal bool IsFractured { get; set; }
 
     /// <summary>可堆叠通货/道具的正文是效果列表与使用说明，不是词缀，只能按名称匹配。</summary>
     public bool IsCurrencyItem => Rarity == ItemRarity.Currency;
