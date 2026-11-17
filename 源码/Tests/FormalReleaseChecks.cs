@@ -8,9 +8,8 @@ internal static class FormalReleaseChecks
     {
         var expected = new Dictionary<string, string>
         {
-            // 2026-11-13 用户决策：洗词缀页脚不再常驻运行状态（仅异常时显示），
-            // CraftPage.xaml 相应调整后重新确认界面哈希；其余布局与文字未动。
-            ["Tools/Craft/CraftPage.xaml"] = "2C5944634FC7B1CEDCC6E1963D742E4770B1183EB637853C35B50DFCCBC4ECF0",
+            // 2026-11-17 用户确认：固定操作延迟的排版，模式选项采用左滑块、右文字。
+            ["Tools/Craft/CraftPage.xaml"] = "D0142CA86F85D9127F2BC12F1313145B5493CF38521A355B92D4AE7C96DCEA0F",
         };
         // 已确认的 XAML 布局和文字保持。架构重构允许 C# 实现变化：
         // 动态布局由 AppearanceChecks 的真实 WPF 检查保护，配置/运行由架构回归保护。

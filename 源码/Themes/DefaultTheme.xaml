@@ -356,6 +356,11 @@
                         </Border>
                     </Grid>
                     <ControlTemplate.Triggers>
+                        <Trigger Property="HorizontalContentAlignment" Value="Right">
+                            <Setter TargetName="Track" Property="Grid.Column" Value="0"/>
+                            <Setter TargetName="SwitchLabel" Property="Grid.Column" Value="1"/>
+                            <Setter TargetName="SwitchLabel" Property="Margin" Value="10,0,0,0"/>
+                        </Trigger>
                         <Trigger Property="Content" Value="{x:Null}">
                             <Setter TargetName="SwitchLabel" Property="Margin" Value="0"/>
                         </Trigger>

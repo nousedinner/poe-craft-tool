@@ -104,8 +104,9 @@ internal static class AppearanceChecks
             CheckPageFrame(page, window, expectedBody, expectedHeader, expectedTrack);
             Require(nav.Items.Count == tools.Length, "导航应包含全部注册工具");
             Require(Find<RadioButton>(page, "Mode3Radio").IsChecked == true, "原规则模式应恢复");
-            Require((string)Find<ComboBox>(page, "SingleCurrencyCombo").SelectedValue == Currency.Chaos,
-                    "持久保存的单通货必须恢复到新的下拉选项，不能重置成改造石");
+            Require(Find<RadioButton>(page, "SingleChaosRadio").IsChecked == true &&
+                    Find<RadioButton>(page, "SingleAlterationRadio").IsChecked != true,
+                    "持久保存的混沌石应恢复到相应的互斥开关");
             Require(Find<ToggleButton>(page, "ExaltCheck").IsChecked == true, "原崇高选项应恢复");
             Require(Find<Slider>(page, "DelaySlider").Value == 55, "原延迟应恢复");
             CheckColumns(page);
@@ -133,6 +134,7 @@ internal static class AppearanceChecks
             Pump();
             CheckCraftSelections(page, craft, window, host);
             CheckCompactRuleLayout(page, craft, window);
+            CheckModeOptionsLayout(page, window);
 
             var panels = new[] { "ModePanel", "CurrencyPanel", "RulesPanel" }.Select(name => Find<Border>(page, name)).ToArray();
             Require(panels.All(panel => panel.Background is LinearGradientBrush { IsFrozen: false }), "面板应拥有独立可动画的画刷");
@@ -471,6 +473,13 @@ internal static class AppearanceChecks
         Pump();
         Require(controls.IsVisible && secondary.IsVisible, "Mode2 直接显示主次命中与两个池");
         Require(Find<StackPanel>(page, "SecondaryHitControls").IsVisible, "Mode2显示次池旁的命中选择");
+        var altAug = Find<RadioButton>(page, "Mode2AltAug");
+        var scourAlch = Find<RadioButton>(page, "Mode2ScourAlch");
+        Require(scourAlch.IsChecked == true && altAug.IsChecked != true, "应恢复保存的重铸＋点金");
+        altAug.IsChecked = true;
+        Require(scourAlch.IsChecked != true && !craft.Mode2ScourAlch, "选择改造＋增幅应关闭另一个子模式");
+        scourAlch.IsChecked = true;
+        Require(altAug.IsChecked != true && craft.Mode2ScourAlch, "选择重铸＋点金应立即同步子模式");
         CheckPoolHeaders(page, window);
         Find<RadioButton>(page, "PrimaryHit3").IsChecked = true;
         Find<RadioButton>(page, "SecondaryHit3").IsChecked = true;
@@ -487,17 +496,19 @@ internal static class AppearanceChecks
         Require(saved["primary_hit_count"]!.GetValue<int>() == 1 && saved["secondary_hit_count"]!.GetValue<int>() == 0,
                 "单通货必须真正保存一命中规则");
         Snapshot(window, "T11-WPF-Single-default.png");
-        var currency = Find<ComboBox>(page, "SingleCurrencyCombo");
-        foreach (var key in Currency.ModeCurrencies[CraftMode.Single])
+        var currencies = new[] { "SingleAlterationRadio", "SingleChaosRadio", "SingleCustomRadio" }
+            .Select(name => Find<RadioButton>(page, name)).ToArray();
+        foreach (var currency in currencies)
         {
-            currency.SelectedValue = key; page.CollectRulesFromUi();
-            Require(craft.Rules.SingleCurrency == key, "通货下拉必须真正更新运行规则");
+            currency.IsChecked = true;
+            Require(currencies.Count(option => option.IsChecked == true) == 1 &&
+                    craft.Rules.SingleCurrency == (string)currency.Tag, "通货开关应互斥并立即更新运行规则");
         }
         foreach (var card in Find<ItemsControl>(page, "CurrencyGrid").Items.Cast<Border>().Where(card => card.IsVisible))
         {
             Descendants(card).OfType<TextBlock>().First().RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, Environment.TickCount, MouseButton.Left)
             { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
-            Require((string)currency.SelectedValue == Currency.Custom, "坐标卡片名称不能改变使用通货");
+            Require(craft.Rules.SingleCurrency == Currency.Custom, "坐标卡片名称不能改变使用通货");
         }
         var presets = Find<ComboBox>(page, "PresetCombo");
         PromptChecks.WithResponse(() => presets.SelectedItem = "appearance-check-limit", MessageBoxResult.Yes);
@@ -522,7 +533,8 @@ internal static class AppearanceChecks
         }
         finally { host.Foreground.TargetProcess = previousTarget; }
         PromptChecks.WithResponse(() => presets.SelectedItem = "appearance-check-baseline", MessageBoxResult.Yes);
-        currency.SelectedValue = Currency.Alteration; page.CollectRulesFromUi();
+        Find<RadioButton>(page, "SingleAlterationRadio").IsChecked = true;
+        page.CollectRulesFromUi();
         Require(craft.Rules.Validate().Ok, "Mode3 修正为2+1后应保持原运行规则");
     }
 
@@ -585,6 +597,64 @@ internal static class AppearanceChecks
 
     private static Rect Bounds(FrameworkElement element, Window window)
         => new(element.TranslatePoint(new Point(), window), new Size(element.ActualWidth, element.ActualHeight));
+
+    private static void CheckModeOptionsLayout(CraftPage page, Window window)
+    {
+        var panel = Find<Border>(page, "ModePanel");
+        var scroll = Descendants(panel).OfType<ScrollViewer>().Single();
+        var delay = Find<Slider>(page, "DelaySlider");
+        var options = new (string Mode, string[] Switches)[]
+        {
+            ("Mode1Radio", ["SingleAlterationRadio", "SingleChaosRadio", "SingleCustomRadio"]),
+            ("Mode2Radio", ["Mode2AltAug", "Mode2ScourAlch"]),
+            ("Mode3Radio", ["ExaltCheck"]),
+            ("Mode4Radio", []),
+        };
+        var selected = options.Select(entry => Find<RadioButton>(page, entry.Mode)).Single(mode => mode.IsChecked == true);
+        var originalSize = new Size(window.Width, window.Height);
+        try
+        {
+            foreach (var size in new[] { originalSize, new Size(window.MinWidth, window.MinHeight) })
+            {
+                window.Width = size.Width;
+                window.Height = size.Height;
+                Pump();
+                var delayBounds = Bounds(delay, window);
+                foreach (var (mode, switches) in options)
+                {
+                    Find<RadioButton>(page, mode).IsChecked = true;
+                    window.UpdateLayout();
+                    Require(Bounds(delay, window) == delayBounds && delay.IsVisible &&
+                            delayBounds.Top >= Bounds(scroll, window).Bottom && delayBounds.Bottom <= Bounds(panel, window).Bottom,
+                            "四种模式均应把延迟固定在工作模式栏的滚动区下方");
+                    foreach (var name in switches)
+                    {
+                        var button = Find<ToggleButton>(page, name);
+                        var track = (Border)button.Template.FindName("Track", button);
+                        var label = (ContentPresenter)button.Template.FindName("SwitchLabel", button);
+                        Require(Bounds(track, window).Right < Bounds(label, window).Left,
+                            $"模式选项的开关应位于文字前面 {name}");
+                    }
+                    if (size == originalSize && mode == "Mode2Radio") Snapshot(window, "T11-WPF-Mode2.png");
+                    if (size == originalSize && mode == "Mode4Radio") Snapshot(window, "T11-WPF-Mode4.png");
+                }
+                Find<RadioButton>(page, "Mode1Radio").IsChecked = true;
+                window.UpdateLayout();
+                scroll.ScrollToEnd();
+                window.UpdateLayout();
+                Require(Bounds(delay, window) == delayBounds, "滚动模式选项时延迟滑条应保持原位");
+                if (size != originalSize) Snapshot(window, "T11-WPF-Single-compact.png");
+                scroll.ScrollToTop();
+            }
+        }
+        finally
+        {
+            selected.IsChecked = true;
+            window.Width = originalSize.Width;
+            window.Height = originalSize.Height;
+            Pump();
+        }
+    }
 
     private static void CheckNavigationSelectionDoesNotChangeMeasure(Window window, ListBox navigation)
     {

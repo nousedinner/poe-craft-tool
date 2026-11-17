@@ -118,7 +118,7 @@ internal static class UiArchitectureChecks
         Require(craft.Rules.PrimaryAffixes.All(rule => rule.Text != "即时编辑验证"),
             "移除词缀必须立即更新规则");
         Find<RadioButton>(craftPage, "Mode1Radio").IsChecked = true;
-        Find<ComboBox>(craftPage, "SingleCurrencyCombo").SelectedValue = Currency.Custom;
+        Find<RadioButton>(craftPage, "SingleCustomRadio").IsChecked = true;
         Require(craft.Rules.RequiredPrimaryHits == 1 && craft.Rules.RequiredSecondaryHits == 0 &&
                 craft.Rules.SingleCurrency == Currency.Custom,
             "单通货切换和币种选择必须即时同步并保留主1次0");

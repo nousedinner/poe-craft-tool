@@ -30,6 +30,10 @@
             <Setter Property="Margin" Value="0,0,0,9"/>
             <Setter Property="Padding" Value="14,12"/>
         </Style>
+        <Style x:Key="ModeOptionSwitch" TargetType="ToggleButton" BasedOn="{StaticResource ModernSwitchStyle}">
+            <Setter Property="HorizontalContentAlignment" Value="Right"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
         <Style x:Key="PoolHeading" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
             <Setter Property="FontSize" Value="13"/>
@@ -57,49 +61,55 @@
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <Border x:Name="ModePanel" Grid.Column="0" Style="{StaticResource PanelStyle}"
                     Background="{StaticResource ModePanelBackground}" theme:FlowingGradient.Flow="True">
-                <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel>
-                        <TextBlock Text="01  工作模式" Style="{StaticResource SectionTitle}"/>
-                        <RadioButton x:Name="Mode1Radio" GroupName="Mode" Tag="1" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
-                            <TextBlock Text="1 · 单通货" FontSize="14"/>
-                        </RadioButton>
-                        <RadioButton x:Name="Mode2Radio" GroupName="Mode" Tag="2" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
-                            <TextBlock Text="2 · 改造＋增幅" FontSize="14"/>
-                        </RadioButton>
-                        <RadioButton x:Name="Mode3Radio" GroupName="Mode" Tag="3" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
-                            <TextBlock Text="3 · 改造＋增幅＋富豪" FontSize="14"/>
-                        </RadioButton>
-                        <RadioButton x:Name="Mode4Radio" GroupName="Mode" Tag="4" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
-                            <TextBlock Text="4 · 庄园工艺" FontSize="14"/>
-                        </RadioButton>
-                        <StackPanel x:Name="SingleCurrencyFrame" Visibility="Collapsed" Margin="2,8,0,14">
-                            <TextBlock Text="使用通货" Style="{StaticResource PoolHeading}" Margin="0,0,0,8"/>
-                            <ComboBox x:Name="SingleCurrencyCombo" SelectedValuePath="Tag" SelectionChanged="SingleCurrency_Changed">
-                                <ComboBoxItem Content="改造石" Tag="alteration"/>
-                                <ComboBoxItem Content="混沌石" Tag="chaos"/>
-                                <ComboBoxItem Content="自定义通货" Tag="custom"/>
-                            </ComboBox>
-                        </StackPanel>
-                        <StackPanel x:Name="Mode2Frame" Visibility="Collapsed" Margin="2,8,0,14">
-                            <TextBlock Text="Mode 2 子模式" Style="{StaticResource PoolHeading}" Margin="0,0,0,8"/>
-                            <RadioButton x:Name="Mode2AltAug" Content="改造＋增幅" GroupName="M2Sub" IsChecked="True" Checked="Mode2Option_Changed" Margin="0,0,0,8"/>
-                            <RadioButton x:Name="Mode2ScourAlch" Content="重铸＋点金" GroupName="M2Sub" Checked="Mode2Option_Changed"/>
-                        </StackPanel>
-                        <StackPanel x:Name="Mode3Frame" Visibility="Collapsed" Margin="0,8,0,14">
-                            <ToggleButton x:Name="ExaltCheck" Content="富豪后使用崇高石" Style="{StaticResource ModernSwitchStyle}"
-                                          FontSize="12" Checked="ExaltCheck_Changed" Unchecked="ExaltCheck_Changed"/>
-                        </StackPanel>
-                        <Border BorderBrush="{StaticResource CardBorder}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,10,0,0">
-                            <StackPanel>
-                                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                                    <TextBlock Text="操作延迟" Style="{StaticResource PoolHeading}"/>
-                                    <TextBlock x:Name="DelayValue" Grid.Column="1" Text="33 ms" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"/>
-                                </Grid>
-                                <Slider x:Name="DelaySlider" Minimum="10" Maximum="200" Value="33" Margin="0,12,0,10"/>
+                <Grid>
+                    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel>
+                            <TextBlock Text="01  工作模式" Style="{StaticResource SectionTitle}"/>
+                            <RadioButton x:Name="Mode1Radio" GroupName="Mode" Tag="1" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
+                                <TextBlock Text="1 · 单通货" FontSize="14"/>
+                            </RadioButton>
+                            <RadioButton x:Name="Mode2Radio" GroupName="Mode" Tag="2" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
+                                <TextBlock Text="2 · 改造＋增幅" FontSize="14"/>
+                            </RadioButton>
+                            <RadioButton x:Name="Mode3Radio" GroupName="Mode" Tag="3" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
+                                <TextBlock Text="3 · 改造＋增幅＋富豪" FontSize="14"/>
+                            </RadioButton>
+                            <RadioButton x:Name="Mode4Radio" GroupName="Mode" Tag="4" Checked="Mode_Checked" Style="{StaticResource ModeButton}">
+                                <TextBlock Text="4 · 庄园工艺" FontSize="14"/>
+                            </RadioButton>
+                            <StackPanel x:Name="SingleCurrencyFrame" Visibility="Collapsed" Margin="0,8,0,14">
+                                <TextBlock Text="使用通货" Style="{StaticResource PoolHeading}" Margin="0,0,0,8"/>
+                                <RadioButton x:Name="SingleAlterationRadio" Content="改造石" Tag="alteration" GroupName="SingleCurrency"
+                                             Style="{StaticResource ModeOptionSwitch}" IsChecked="True" Checked="SingleCurrency_Changed" Margin="0,0,0,8"/>
+                                <RadioButton x:Name="SingleChaosRadio" Content="混沌石" Tag="chaos" GroupName="SingleCurrency"
+                                             Style="{StaticResource ModeOptionSwitch}" Checked="SingleCurrency_Changed" Margin="0,0,0,8"/>
+                                <RadioButton x:Name="SingleCustomRadio" Content="自定义通货" Tag="custom" GroupName="SingleCurrency"
+                                             Style="{StaticResource ModeOptionSwitch}" Checked="SingleCurrency_Changed"/>
                             </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
+                            <StackPanel x:Name="Mode2Frame" Visibility="Collapsed" Margin="0,8,0,14">
+                                <TextBlock Text="Mode 2 子模式" Style="{StaticResource PoolHeading}" Margin="0,0,0,8"/>
+                                <RadioButton x:Name="Mode2AltAug" Content="改造＋增幅" GroupName="M2Sub" Style="{StaticResource ModeOptionSwitch}"
+                                             IsChecked="True" Checked="Mode2Option_Changed" Margin="0,0,0,8"/>
+                                <RadioButton x:Name="Mode2ScourAlch" Content="重铸＋点金" GroupName="M2Sub" Style="{StaticResource ModeOptionSwitch}"
+                                             Checked="Mode2Option_Changed"/>
+                            </StackPanel>
+                            <StackPanel x:Name="Mode3Frame" Visibility="Collapsed" Margin="0,8,0,14">
+                                <ToggleButton x:Name="ExaltCheck" Content="富豪后使用崇高石" Style="{StaticResource ModeOptionSwitch}"
+                                              Checked="ExaltCheck_Changed" Unchecked="ExaltCheck_Changed"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                    <Border Grid.Row="1" BorderBrush="{StaticResource CardBorder}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Margin="0,10,0,0">
+                        <StackPanel>
+                            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="操作延迟" Style="{StaticResource PoolHeading}"/>
+                                <TextBlock x:Name="DelayValue" Grid.Column="1" Text="33 ms" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"/>
+                            </Grid>
+                            <Slider x:Name="DelaySlider" Minimum="10" Maximum="200" Value="33" Margin="0,12,0,10"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </Border>
             <Border x:Name="CurrencyPanel" Grid.Column="2" Style="{StaticResource PanelStyle}"
                     Background="{StaticResource CurrencyPanelBackground}" theme:FlowingGradient.Flow="True">

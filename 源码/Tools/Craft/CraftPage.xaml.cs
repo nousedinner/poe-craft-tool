@@ -214,7 +214,6 @@ public partial class CraftPage : UserControl
             clearBtn.Click += (_, _) => ClearSlot(key);
         }
 
-        ApplyModeVisibility();
         UpdateAllCoordButtons();
     }
 
@@ -237,9 +236,9 @@ public partial class CraftPage : UserControl
         HarvestBenchSection.Visibility = harvest ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void SingleCurrency_Changed(object sender, SelectionChangedEventArgs e)
+    private void SingleCurrency_Changed(object sender, RoutedEventArgs e)
     {
-        if (!IsLoaded || _loadingState || SingleCurrencyCombo.SelectedValue is not string key) return;
+        if (!IsLoaded || _loadingState || sender is not RadioButton { Tag: string key }) return;
         _selectedCurrency = key;
         _dirty = true;
         SynchronizeEditedRules();
@@ -816,11 +815,15 @@ public partial class CraftPage : UserControl
                 case CraftMode.Harvest: Mode4Radio.IsChecked = true; break;
                 default: Mode3Radio.IsChecked = true; break;
             }
+            var currencyOption = _tool.Rules.SingleCurrency switch
+            {
+                Currency.Chaos => SingleChaosRadio,
+                Currency.Custom => SingleCustomRadio,
+                _ => SingleAlterationRadio,
+            };
+            _selectedCurrency = (string)currencyOption.Tag;
+            currencyOption.IsChecked = true;
             ApplyModeVisibility();
-
-            _selectedCurrency = Currency.ModeCurrencies[CraftMode.Single].Contains(_tool.Rules.SingleCurrency)
-                ? _tool.Rules.SingleCurrency : Currency.Alteration;
-            SingleCurrencyCombo.SelectedValue = _selectedCurrency;
 
             ApplyHitCounts(_tool.Rules.PrimaryHitCount, _tool.Rules.SecondaryHitCount);
             foreach (var r in _tool.Rules.PrimaryAffixes) AddAffixTag("primary", r.Text);
