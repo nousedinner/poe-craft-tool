@@ -209,6 +209,35 @@ internal static class Mode2ShortcutChecks
         }
     }
 
+    public static void AltCopyReleasesOnlyItsOwnModifiers()
+    {
+        var events = new List<(bool Down, ushort Key)>();
+        CraftCopyShortcut.Send(key => events.Add((true, key)), key => events.Add((false, key)),
+            _ => throw new InvalidOperationException("正常复制无需兜底清理"), withAlt: true);
+        Require(events.SequenceEqual(new[]
+        {
+            (true, KeyCode.Control), (true, KeyCode.Alt), (true, KeyCode.C),
+            (false, KeyCode.C), (false, KeyCode.Alt), (false, KeyCode.Control),
+        }), "兼容复制应依次按下 Ctrl、Alt、C，按相反顺序释放并保留 Shift");
+
+        for (var failureAt = 0; failureAt < events.Count; failureAt++)
+        {
+            var counter = 0;
+            var released = new List<ushort>();
+            var failure = new IOException("模拟兼容复制按键失败");
+            void Input(ushort key)
+            {
+                Require(key is KeyCode.Control or KeyCode.Alt or KeyCode.C, "复制不得按放 Shift");
+                if (counter++ == failureAt) throw failure;
+            }
+            var actual = Capture<IOException>(() => CraftCopyShortcut.Send(Input, Input, released.Add, withAlt: true));
+            var expected = failureAt is > 0 and < 5
+                ? new[] { KeyCode.C, KeyCode.Alt, KeyCode.Control } : new[] { KeyCode.C, KeyCode.Control };
+            Require(ReferenceEquals(actual, failure) && released.SequenceEqual(expected),
+                "失败须传播原异常，并尽力释放本次尚未确认释放的复制按键");
+        }
+    }
+
     public static void CoordinateRequirementsKeepOtherModes()
     {
         var rules = Rules();

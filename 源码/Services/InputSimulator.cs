@@ -136,7 +136,7 @@ public sealed class InputSimulator
     private readonly object _modifierGate = new();
     private bool _shiftHeld;
 
-    private bool IsShiftHeld
+    internal bool IsShiftHeld
     {
         get { lock (_modifierGate) return _shiftHeld; }
     }
@@ -476,17 +476,32 @@ public sealed class InputSimulator
 
     /// <summary>Ctrl+C（PoE 3.29高级物品文本；Shift保持按住）。剪贴板到达由调用方轮询。</summary>
     public Task CtrlCAsync(int _, CancellationToken token)
-        => CtrlCAsync(20, 20, token);
+        => CopyItemTextAsync(20, 20, withAlt: false, captureClipboardSequence: false, token);
 
-    internal async Task CtrlCAsync(int beforeMs, int afterMs, CancellationToken token)
+    internal async Task<uint> CopyItemTextAsync(int beforeMs, int afterMs, bool withAlt,
+        bool captureClipboardSequence, CancellationToken token)
     {
         await EnsureForegroundForInputAsync(token);
+        uint sequenceBeforeCopy = 0;
+        var pressDescription = withAlt ? "Ctrl+Alt+C 的按键按下" : "Ctrl+C 的按键按下";
+        var releaseDescription = withAlt ? "Ctrl+Alt+C 的按键释放" : "Ctrl+C 的按键释放";
         await InputSendBoundary.WaitThenSendAsync(Task.Delay(beforeMs, token),
-            _foreground.IsTargetForeground, CheckEmergencyStop, () => CraftCopyShortcut.Send(
-            key => PressKeyOrThrow(key, "Ctrl+C 的按键按下"),
-            key => ReleaseKeyOrThrow(key, "Ctrl+C 的按键释放"),
-            key => SendKey(key, up: true)), token);
+            _foreground.IsTargetForeground, CheckEmergencyStop, () =>
+            {
+                if (captureClipboardSequence)
+                {
+                    sequenceBeforeCopy = ClipboardHelper.ReadSequenceNumber();
+                    if (sequenceBeforeCopy == 0) return;
+                    token.ThrowIfCancellationRequested();
+                }
+                CraftCopyShortcut.Send(
+                    key => PressKeyOrThrow(key, pressDescription),
+                    key => ReleaseKeyOrThrow(key, releaseDescription),
+                    key => SendKey(key, up: true), withAlt);
+            }, token);
+        if (captureClipboardSequence && sequenceBeforeCopy == 0) return 0;
         await Task.Delay(afterMs, token);
+        return sequenceBeforeCopy;
     }
 
     public void KeyDown(string key) => PressKeyOrThrow(KeyCode.Parse(key), $"按下 {key}");

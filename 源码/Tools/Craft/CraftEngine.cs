@@ -52,6 +52,7 @@ public sealed class CraftEngine
     private Point _activeCurrencyCoordinate;
     private readonly CraftTimingProfile _timing = CraftTimingProfile.Default;
     private CraftRunMeasurement? _runMeasurement;
+    private CraftCopyPreference? _copyPreference;
 
     // GetAsyncKeyState：轮询物理按键状态（兜底 RegisterHotKey 可能被游戏吞掉）
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
@@ -217,6 +218,8 @@ public sealed class CraftEngine
         _completionReason = null;
         _activeCurrency = null;
         _activeCurrencyCoordinate = default;
+        _copyPreference = _rules.Mode is CraftMode.Single or CraftMode.AltAug or CraftMode.AltAugRegal
+            ? new CraftCopyPreference() : null;
         _environment.Input.ResetCraftClickInterval();
         UseCount = 0;
         MatchCount = 0;
@@ -319,6 +322,7 @@ public sealed class CraftEngine
                 mode2AltShortcut = _rules.Mode == CraftMode.AltAug,
                 mode2AltSettleMs = CraftAltClick.ModifierSettleMs,
                 copyShortcut = "Ctrl+C",
+                copyShortcutFallback = _copyPreference is not null ? "Ctrl+Alt+C" : null,
                 rules = _rules.CreateSnapshot(),
             };
             _environment.Log($"[洗装时序] 稳健组合：首次等待{_timing.FirstWaitMs(_delayMs)}ms，装备移动{_timing.ItemMovementMs}ms，" +
@@ -515,22 +519,43 @@ public sealed class CraftEngine
             return null;
         }
 
+        var copyPreference = _copyPreference;
+        var shiftHeld = copyPreference is not null && _environment.Input.IsShiftHeld;
+        var withAlt = copyPreference?.UseAlt(shiftHeld) == true;
+        var shortcut = withAlt ? "Ctrl+Alt+C" : "Ctrl+C";
+        if (copyPreference?.IsTryingAlternate(shiftHeld) == true)
+            _environment.Log($"[剪贴板] 未收到有效的新物品文本，准备尝试备用复制 {shortcut}");
+
         var stopwatch = Stopwatch.StartNew();
-        await _environment.Input.CtrlCAsync(_timing.CopyBeforeMs, _timing.CopyAfterMs, token);
+        var sequenceBeforeCopy = await _environment.Input.CopyItemTextAsync(_timing.CopyBeforeMs, _timing.CopyAfterMs,
+            withAlt, captureClipboardSequence: copyPreference is not null, token);
+        if (copyPreference is not null && sequenceBeforeCopy == 0)
+        {
+            _environment.Log("[剪贴板] 发键前无法读取剪贴板写入序号，本次未发送复制快捷键");
+            _runMeasurement?.EmptyCopy();
+            return null;
+        }
         while (stopwatch.ElapsedMilliseconds < timeoutMs)
         {
             token.ThrowIfCancellationRequested();
             _runMeasurement?.ClipboardRead();
-            var text = ClipboardHelper.GetText(token);
+            var text = copyPreference is null
+                ? ClipboardHelper.GetText(token)
+                : ClipboardHelper.GetTextWrittenAfter(sequenceBeforeCopy, token);
             if (ClipboardHelper.IsItemText(text))
             {
                 _environment.Log($"[剪贴板] 获取新物品文本成功: {stopwatch.ElapsedMilliseconds}ms, {text.Length} chars");
+                if (copyPreference?.RecordAttempt(receivedFreshItem: true, shiftHeld) == true)
+                    _environment.Log($"[剪贴板] 本轮复制首选已切换至 {shortcut}");
                 return text;
             }
             await Task.Delay(_timing.ClipboardPollMs, token);
         }
 
-        _environment.Log($"[剪贴板] 本次复制未收到物品文本: {stopwatch.ElapsedMilliseconds}ms");
+        copyPreference?.RecordAttempt(receivedFreshItem: false, shiftHeld);
+        var sequenceInfo = copyPreference is null
+            ? "" : $", seqBefore={sequenceBeforeCopy}, seqNow={ClipboardHelper.ReadSequenceNumber()}";
+        _environment.Log($"[剪贴板] 本次复制未收到物品文本: {stopwatch.ElapsedMilliseconds}ms, shortcut={shortcut}{sequenceInfo}");
         _runMeasurement?.EmptyCopy();
         return null;
     }
@@ -545,7 +570,7 @@ public sealed class CraftEngine
         throw new InvalidOperationException("复制物品信息超时；请确认鼠标位于装备上且游戏支持 Ctrl+C 高级物品文本");
     }
 
-    /// <summary>启动基线允许重试复制，避免一次丢失的 Ctrl+Alt+C 直接终止任务。</summary>
+    /// <summary>启动基线允许重试复制，避免一次空读直接终止任务。</summary>
     private Task<CraftItemSnapshot> CopyBaselineWithRetryAsync(string context, CancellationToken token)
         => CopyWithRetryAsync(context, CraftSlot.Item, isBaseline: true, token);
 
@@ -558,13 +583,14 @@ public sealed class CraftEngine
         });
 
     /// <summary>
-    /// 复制物品文本并允许重试，避免一次丢失的 Ctrl+Alt+C 直接终止任务。
+    /// 复制物品文本并允许重试，避免一次空读直接终止任务。
     /// isBaseline=true 表示启动基线（只记基线，不要求与上一次不同）；
     /// false 表示点击后的结果（记为本次转换确认）。日志与失败提示沿用各自原文。
     /// </summary>
     private async Task<CraftItemSnapshot> CopyWithRetryAsync(string context, string slot,
         bool isBaseline, CancellationToken token)
     {
+        _copyPreference?.BeginItemRead();
         var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
         var stopwatch = Stopwatch.StartNew();
         var attempts = 0;
@@ -602,10 +628,11 @@ public sealed class CraftEngine
 
     /// <summary>
     /// Mode 1 点击后的状态门禁：只有复制到与点击前不同的完整物品文本才允许进入词缀判定。
-    /// 剪贴板未写入或仍为旧状态时只重发 Ctrl+C，绝不再次点击通货。
+    /// 剪贴板未写入或仍为旧状态时只重发复制快捷键，绝不再次点击通货。
     /// </summary>
     private async Task<CraftItemSnapshot> WaitForChangedMode1ItemAsync(CraftItemSnapshot baseline, CancellationToken token)
     {
+        _copyPreference?.BeginItemRead();
         var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
         var stopwatch = Stopwatch.StartNew();
         var attempts = 0;
@@ -672,6 +699,7 @@ public sealed class CraftEngine
         CraftCurrencyOperation operation, string operationLabel, CancellationToken token,
         bool startedOnFracturedItem = false, Func<CancellationToken, Task<string?>>? copyItem = null)
     {
+        _copyPreference?.BeginItemRead();
         var timeoutMs = CraftStateSync.CalculateChangeTimeoutMs(_delayMs);
         var stopwatch = Stopwatch.StartNew();
         var attempts = 0;

@@ -25,6 +25,9 @@ public static class ClipboardHelper
     [DllImport("user32.dll")]
     private static extern nint GetClipboardData(uint uFormat);
 
+    [DllImport("user32.dll")]
+    private static extern uint GetClipboardSequenceNumber();
+
     [DllImport("kernel32.dll")]
     private static extern nint GlobalLock(nint hMem);
 
@@ -40,6 +43,32 @@ public static class ClipboardHelper
         Updates.UpdateAcceptanceContext.ForbidNativeOperation("OpenClipboard(read)");
         return WithOpenClipboard(static () => OpenClipboard(IntPtr.Zero), ReadOpenedText,
             static () => CloseClipboard(), string.Empty, token);
+    }
+
+    internal static uint ReadSequenceNumber()
+    {
+        Updates.UpdateAcceptanceContext.ForbidNativeOperation("GetClipboardSequenceNumber");
+        return GetClipboardSequenceNumber();
+    }
+
+    internal static string GetTextWrittenAfter(uint sequenceBeforeCopy, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        Updates.UpdateAcceptanceContext.ForbidNativeOperation("OpenClipboard(read)");
+        return WithOpenClipboard(static () => OpenClipboard(IntPtr.Zero),
+            () => ReadOpenedTextWrittenAfter(sequenceBeforeCopy, ReadOpenedText, GetClipboardSequenceNumber),
+            static () => CloseClipboard(), string.Empty, token);
+    }
+
+    internal static string ReadOpenedTextWrittenAfter(uint sequenceBeforeCopy, Func<string> readText, Func<uint> getSequenceNumber)
+    {
+        if (sequenceBeforeCopy == 0) return string.Empty;
+
+        // 游戏的新写入可能没有所有者窗口。以发键前后的剪贴板序号判断是否有新数据。
+        // 延迟渲染的剪贴板格式可在读取时才生成，读取之后再比较同一打开期间的序号。
+        var text = readText();
+        var sequenceNumber = getSequenceNumber();
+        return sequenceNumber != 0 && sequenceNumber != sequenceBeforeCopy ? text : string.Empty;
     }
 
     private static string ReadOpenedText()

@@ -9,6 +9,7 @@ internal static class ClipboardPerformanceChecks
         stop.Cancel();
         ExpectCancellation(() => ClipboardHelper.GetText(stop.Token));
         ExpectCancellation(() => ClipboardHelper.TryClear(stop.Token));
+        ExpectCancellation(() => ClipboardHelper.GetTextWrittenAfter(10, stop.Token));
         var opens = 0;
         ExpectCancellation(() => ClipboardHelper.WithOpenClipboard(() => { opens++; return true; },
             () => "value", () => { }, "", stop.Token));
@@ -90,6 +91,63 @@ internal static class ClipboardPerformanceChecks
         waiting.Cancel();
         Require(work.Wait(TimeSpan.FromSeconds(1)), "可取消等待不应继续睡满固定时长");
         Console.WriteLine($"INFO clipboard cancellable-wait completion={clock.Elapsed.TotalMilliseconds:F2}ms (synthetic wait)");
+    }
+
+    public static void ClipboardRequiresANewWrite()
+    {
+        const string item = "物品类别: 节杖\n稀有度: 稀有";
+        const uint before = 20;
+        Require(Read(20) == "", "发键后仍是原序号，有效格式的旧物品文本也必须拒绝");
+        Require(Read(21) == item, "有新写入即读取内容，游戏没有登记剪贴板所有者也可通过");
+        Require(Read(0) == "", "无法读取当前序号时不能沿用物品文本");
+
+        var sequence = before;
+        var rendered = ClipboardHelper.ReadOpenedTextWrittenAfter(before, () =>
+        {
+            sequence++;
+            return item;
+        }, () => sequence);
+        Require(rendered == item, "延迟渲染的复制在取得文本后才比较序号");
+
+        string Read(uint currentSequence)
+            => ClipboardHelper.ReadOpenedTextWrittenAfter(before, () => item, () => currentSequence);
+    }
+
+    public static void CopyFallbackRequiresShiftAndFreshSuccess()
+    {
+        const string item = "物品类别: 节杖\n稀有度: 稀有";
+        var copy = new CraftCopyPreference();
+        var stale = ClipboardHelper.ReadOpenedTextWrittenAfter(20, () => item, () => 20);
+        Require(!copy.UseAlt(shiftHeld: true) && !copy.IsTryingAlternate(shiftHeld: true), "新任务优先尝试 Ctrl+C");
+        Require(!copy.RecordAttempt(receivedFreshItem: false, shiftHeld: false) && !copy.IsTryingAlternate(shiftHeld: true),
+            "未保持 Shift 的启动复制失败不能预定备用按法");
+        Require(!copy.RecordAttempt(ClipboardHelper.IsItemText(stale), shiftHeld: true) &&
+                copy.UseAlt(shiftHeld: true) && copy.IsTryingAlternate(shiftHeld: true),
+            "旧的有效物品文本不能阻止备用复制");
+        Require(!copy.UseAlt(shiftHeld: false) && !copy.IsTryingAlternate(shiftHeld: false),
+            "即使备用按法已待用，未保持 Shift 时也只能使用 Ctrl+C");
+        var fresh = ClipboardHelper.ReadOpenedTextWrittenAfter(21, () => item, () => 22);
+        Require(copy.RecordAttempt(ClipboardHelper.IsItemText(fresh), shiftHeld: true), "备用按法取得新文本后应切换首选");
+        copy.BeginItemRead();
+        Require(copy.UseAlt(shiftHeld: true) && !copy.IsTryingAlternate(shiftHeld: true), "下一次读取沿用本轮验证过的 Ctrl+Alt+C");
+        Require(!copy.UseAlt(shiftHeld: false) && !copy.RecordAttempt(receivedFreshItem: true, shiftHeld: false) &&
+                copy.UseAlt(shiftHeld: true), "未保持 Shift 的普通复制成功不能覆盖已验证的组合键");
+        Require(!copy.RecordAttempt(receivedFreshItem: true, shiftHeld: true) && !copy.IsTryingAlternate(shiftHeld: true),
+            "成功读到同一文本仍是一次成功复制");
+
+        copy.RecordAttempt(receivedFreshItem: false, shiftHeld: true);
+        Require(!copy.UseAlt(shiftHeld: true) && copy.IsTryingAlternate(shiftHeld: true), "已选按法后来失败时也允许一次反向备用复制");
+        Require(!copy.RecordAttempt(receivedFreshItem: false, shiftHeld: true) &&
+                copy.UseAlt(shiftHeld: true) && !copy.IsTryingAlternate(shiftHeld: true),
+            "备用失败时保持此前验证的首选");
+        copy.RecordAttempt(receivedFreshItem: false, shiftHeld: true);
+        Require(!copy.IsTryingAlternate(shiftHeld: true), "同一次物品读取最多试一次备用按法");
+
+        copy.BeginItemRead();
+        copy.RecordAttempt(receivedFreshItem: false, shiftHeld: true);
+        Require(copy.IsTryingAlternate(shiftHeld: true) && !copy.UseAlt(shiftHeld: true), "下一次读取可重新进行一次备用尝试");
+        Require(copy.RecordAttempt(receivedFreshItem: true, shiftHeld: true) && !copy.UseAlt(shiftHeld: true),
+            "反向备用取得新文本后应恢复 Ctrl+C 首选");
     }
 
     private static void ExpectCancellation(Action action)
